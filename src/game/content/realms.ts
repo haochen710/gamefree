@@ -107,7 +107,7 @@ export const REALMS: RealmDef[] = [
   {
     name: '化神期',
     layerCount: 9,
-    baseLayerCost: 2.4e5,
+    baseLayerCost: 3.2e5,
     costGrowth: 2.0,
     layerBonus: 0.12,
     realmMultiplier: 81,
@@ -123,7 +123,7 @@ export const REALMS: RealmDef[] = [
   {
     name: '炼虚期',
     layerCount: 9,
-    baseLayerCost: 4e6,
+    baseLayerCost: 8.5e6,
     costGrowth: 2.05,
     layerBonus: 0.15,
     realmMultiplier: 243,
@@ -139,7 +139,7 @@ export const REALMS: RealmDef[] = [
   {
     name: '合体期',
     layerCount: 9,
-    baseLayerCost: 6e7,
+    baseLayerCost: 1.15e8,
     costGrowth: 2.1,
     layerBonus: 0.18,
     realmMultiplier: 729,
@@ -155,7 +155,7 @@ export const REALMS: RealmDef[] = [
   {
     name: '大乘期',
     layerCount: 9,
-    baseLayerCost: 1e9,
+    baseLayerCost: 1.3e9,
     costGrowth: 2.15,
     layerBonus: 0.22,
     realmMultiplier: 2187,

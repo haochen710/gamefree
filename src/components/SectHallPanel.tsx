@@ -14,8 +14,8 @@
  * 建筑的建造仍然在「洞府」页的宗门建筑分组里，这里只做控制与说明。
  */
 import { fmtDuration } from '../game/decimal';
-import { REALMS } from '../game/content';
-import { getBuildingCount, getCultivationSpeedMultiplier } from '../game/engine';
+import { INSIGHT_SPEED_PER_POINT, REALMS } from '../game/content';
+import { getBuildingCount, getCultivationSpeedMultiplier, getInsightMax } from '../game/engine';
 import {
   ARENA_BUFF_SECONDS,
   ARENA_INTERVAL_SECONDS,
@@ -57,7 +57,7 @@ export function SectHallPanel() {
 
         <p className="panel__note">
           大比是宗门唯一的集体盛事：<strong>十年一度</strong>，
-          比完全宗弟子修行速度<strong>翻倍</strong>、持续<strong>一年</strong>，
+          比完全宗弟子修行速度<strong>+50%</strong>、持续<strong>一年</strong>，
           并各得一份心得。它是唯一由你决定开不开的宗门建筑 ——
           其余弟子用建筑都是弟子自发的随机事件。
         </p>
@@ -89,7 +89,7 @@ export function SectHallPanel() {
 
             {buffActive && (
               <div className="realm-card__power realm-card__power--good">
-                大比加成生效中，全宗修行速度 ×2
+                大比加成生效中，全宗修行速度 +50%
                 <em>（剩余 {fmtDuration(game.arenaBuffSeconds)}）</em>
               </div>
             )}
@@ -128,7 +128,9 @@ export function SectHallPanel() {
 
         <p className="panel__note">
           弟子闲暇时会自发前往这些建筑（随机事件，约每 45 秒判定一次）。
-          弟子探索秘境归来会积累<strong>心得</strong>，每点心得使该弟子修行速度 +1%，最多 +100%。
+          弟子探索秘境归来会积累<strong>心得</strong>，每点心得使该弟子修行速度 +0.5%；
+          上限随掌门境界增长（当前 {getInsightMax(game)} 点）。
+          心得与宗门建筑、大比处在<strong>同一个加算池</strong>里，不会互相翻倍。
         </p>
 
         {eventBuildings.length === 0 && (
@@ -163,9 +165,10 @@ export function SectHallPanel() {
               <div key={d.id} className="inv-row inv-row--wrap">
                 <span className="inv-row__icon">📖</span>
                 <span className="inv-row__name">{d.name}</span>
-                <span className="inv-row__count">心得 {Math.round(d.insight)}</span>
+                <span className="inv-row__count">心得 {Math.round(d.insight)}/{getInsightMax(game)}</span>
                 <span className="inv-row__effect">
-                  {REALMS[d.realmIndex].name} · 修行 +{Math.min(Math.round(d.insight), 100)}%
+                  {REALMS[d.realmIndex].name} · 修行 +
+                  {(Math.min(d.insight, getInsightMax(game)) * INSIGHT_SPEED_PER_POINT * 100).toFixed(1)}%
                 </span>
               </div>
             ))

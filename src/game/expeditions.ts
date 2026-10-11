@@ -55,9 +55,10 @@ import {
   getRealmCooldown,
   getStructureBonus,
   getUndiscoveredCandidates,
-  growDiscoveryPity,
+  isDiscoveryGuaranteed,
   isRealmAvailable,
   isRealmDiscovered,
+  recordDiscoveryFailure,
 } from './engine';
 import { getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
 import { addSeeds } from './planting';
@@ -323,8 +324,8 @@ export function resolveExpedition(
   let discovered: ExpeditionOutcome['discovered'] = null;
   const candidates = getUndiscoveredCandidates(working);
   if (candidates.length > 0) {
-    const extra = Math.max(0, partySize - def.minParty);
-    if (random() < getDiscoveryChance(working, extra)) {
+    // 硬保底：连续失败够多次就必然发现一次（它不在概率公式里，见 engine）
+    if (isDiscoveryGuaranteed(working) || random() < getDiscoveryChance(working)) {
       const [found] = weightedDraw(
         candidates.map((c) => ({ ...c, weight: c.discoveryWeight })),
         1,
@@ -335,8 +336,8 @@ export function resolveExpedition(
         discovered = { id: found.id, name: found.name, icon: found.icon };
       }
     } else {
-      // 没发现也长保底，避免运气差的玩家永远停在第一处秘境
-      working = growDiscoveryPity(working);
+      // 没发现就累积失败次数，避免运气差的玩家永远停在第一处秘境
+      working = recordDiscoveryFailure(working);
     }
   }
 

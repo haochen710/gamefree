@@ -567,7 +567,16 @@ export type ArtifactEffect =
   /** 探索伤亡率 -reduction */
   | { kind: 'expeditionSafety'; reduction: number }
   /** 秘境产出 +bonus */
-  | { kind: 'expeditionYield'; bonus: number };
+  | { kind: 'expeditionYield'; bonus: number }
+  /**
+   * 发现新秘境的概率 +bonus（每次探索结算时生效）。
+   *
+   * 这是**全游戏唯一**能提升发现概率的东西 —— 山门 / 通天塔 / 照天镜
+   * 都已经不再提供发现加成了。原因见 secretRealms.ts 的
+   * DISCOVERY_MAX_CHANCE 注释：几个建筑都往同一个上限上挤，
+   * 后期它们之间就没有区分度了。
+   */
+  | { kind: 'discovery'; bonus: number };
 
 export interface ArtifactDef {
   id: string;
@@ -614,7 +623,7 @@ export const ARTIFACTS: ArtifactDef[] = [
   {
     id: 'compass',
     name: '洞天罗盘',
-    icon: '🧭',
+    icon: '🌀',
     tier: 4,
     category: 'support',
     desc: '可勘破秘境路径，探索速度 +25%。',
@@ -724,6 +733,34 @@ export const ARTIFACTS: ArtifactDef[] = [
       qi: 1e13,
     },
     effect: { kind: 'combat', bonus: 1 },
+  },
+  {
+    id: 'treasureCompass',
+    name: '寻宝宝盘',
+    icon: '🧭',
+    tier: 7,
+    category: 'support',
+    desc:
+      '以仙玉为盘、魂火为针，能循着天地间的宝气找到藏起来的秘境。' +
+      '每持有一面，发现新秘境的概率 +4%。**这是唯一能提升发现概率的东西。**',
+    // 刻意做成全器物里最贵的一档：七品炼器才能铸，且要吃五样稀有材料。
+    // 它是"发现"这条线上的唯一投入口，所以贵一点才合理 ——
+    // 便宜的代价是整个发现机制退化成"建几座建筑就自动开图"。
+    // （基础材料也要凑够三种：品阶下限规则要求七品配方至少有 3 种基础材料。）
+    cost: {
+      blackIron: 9000,
+      spiritSilk: 6000,
+      fireMarrow: 3500,
+      coldJade: 2500,
+      lunarCrystal: 500,
+      dragonBlood: 600,
+      netherFlame: 180,
+      immortalJade: 150,
+      chaosQi: 12,
+      ore: 2e6,
+      qi: 5e12,
+    },
+    effect: { kind: 'discovery', bonus: 0.04 },
   },
 ];
 

@@ -27,8 +27,10 @@ import {
 } from '../game/content';
 import {
   canReachRegion,
-  getDiscoveryChance,
   getDiscoveredRealms,
+  getDiscoveryBonusFromArtifacts,
+  getDiscoveryChance,
+  getDiscoveryPityRemaining,
   getExplorationRange,
   getRealmCooldown,
   getRealmGate,
@@ -305,8 +307,9 @@ function RegionSection({ region, state }: { region: MapRegionDef; state: GameSta
           {hidden > 0 && (
             <p className="panel__note">
               此地尚有 <strong>{hidden}</strong> 处秘境未被发现 ——
-              派弟子探索或掌门亲自游历都有机会找到（当前发现概率约{' '}
-              {Math.round(getDiscoveryChance(state) * 100)}%）。
+              派弟子探索或掌门亲自游历都有机会找到（当前发现概率{' '}
+              {(getDiscoveryChance(state) * 100).toFixed(1)}%，
+              {getDiscoveryBonusFromArtifacts(state) > 0 ? '含寻宝宝盘加成' : '只有寻宝宝盘能提高它'}）。
             </p>
           )}
           {realms.map((def) => (
@@ -332,6 +335,8 @@ export function MapPanel() {
   const travel = game.personalTravel;
   const travelDef = travel ? TRAVEL_REGION_MAP[travel.regionId] : null;
   const undiscovered = getUndiscoveredCount(game);
+  const compassBonus = getDiscoveryBonusFromArtifacts(game);
+  const pityLeft = getDiscoveryPityRemaining(game);
 
   return (
     <>
@@ -348,6 +353,20 @@ export function MapPanel() {
           每区各有两三处秘境 —— 已发现的秘境会<strong>永久固定</strong>在对应区域里，
           但每次探索后都要等冷却结束才能再探。
         </p>
+
+        {/* 发现机制要讲清楚：概率只有一个来源（寻宝宝盘），保底是另一条独立机制 */}
+        {undiscovered > 0 && (
+          <p className="panel__note panel__note--warn">
+            发现新秘境：<strong>{(getDiscoveryChance(game) * 100).toFixed(1)}%</strong>
+            {compassBonus > 0 ? `（寻宝宝盘 +${(compassBonus * 100).toFixed(1)}%）` : '（只有寻宝宝盘能提高它）'}
+            {' · '}
+            {pityLeft > 0 ? (
+              <>再连续 {pityLeft} 次没发现就必定发现一处（保底）</>
+            ) : (
+              <strong>下一次探索必定发现一处</strong>
+            )}
+          </p>
+        )}
 
         <div className="map">
           {MAP_REGIONS.map((region) => (

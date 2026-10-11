@@ -149,8 +149,13 @@ export interface GameState {
   discoveredRealms: Record<string, boolean>;
   /** 各秘境的冷却剩余秒数（需求 1：每次探索后要隔一段时间才能再探） */
   realmCooldowns: Record<string, number>;
-  /** 连续未发现新秘境的保底累积（防止运气差永远发现不了） */
-  discoveryPity: number;
+  /**
+   * 连续「没发现新秘境」的次数（需求 1 的硬保底）。
+   *
+   * 达到 DISCOVERY_PITY_FAILURES 时下一次探索必然发现。
+   * 它**不参与**发现概率的计算 —— 概率只由寻宝宝盘提升。
+   */
+  discoveryFailures: number;
 
   /** 丹药库存 */
   pills: ItemCountMap;
@@ -313,7 +318,7 @@ export function createInitialState(now = Date.now()): GameState {
     unlockedBuildings: createEmptyUnlocked(),
     discoveredRealms: createEmptyDiscoveredRealms(),
     realmCooldowns: {},
-    discoveryPity: 0,
+    discoveryFailures: 0,
     pills: {},
     artifacts: {},
     realmIndex: 0,

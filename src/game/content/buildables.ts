@@ -131,8 +131,13 @@ export interface StructureDef extends BuildableBase {
   expeditionYieldBonus?: number;
   /** 探索伤亡率削减（加算，0.08 = -8%） */
   casualtyReduction?: number;
-  /** 发现新秘境的概率加成（加算） */
-  discoveryBonus?: number;
+  /**
+   * ⚠️ 这里**没有** discoveryBonus。
+   *
+   * 发现新秘境的概率只能靠「寻宝宝盘」提升（见 recipes.ts 的 ARTIFACTS）。
+   * 早先山门 / 通天塔 / 照天镜各给一点，几个来源全都撞在
+   * DISCOVERY_MAX_CHANCE 上，后期它们之间就没有区分度了。
+   */
   /** 弟子心得获取加成（加算） */
   insightBonus?: number;
   /** 商行货位加成（每多一座多上架几件商品） */
@@ -499,8 +504,8 @@ export const STRUCTURES: StructureDef[] = [
     group: 'hall',
     name: '山门',
     icon: '⛩',
-    desc: '山门越高，门下弟子走得越远。每座使发现新秘境的概率 +4%。',
-    discoveryBonus: 0.04,
+    desc: '山门气象一新，四方灵气自然汇聚。全局产量 +2%/座。',
+    productionBonus: 0.02,
     baseCost: { qi: 2e4, wood: 1500, stone: 800 },
     costGrowth: 1.32,
     unlock: {},
@@ -513,7 +518,7 @@ export const STRUCTURES: StructureDef[] = [
     group: 'hall',
     name: '比武台',
     icon: '🥋',
-    desc: '十年一度的宗门大比在此举行。开启后每十年自动开办，比完全宗弟子修行速度翻倍、持续一年。需钻研比武之礼。',
+    desc: '十年一度的宗门大比在此举行。开启后每十年自动开办，比完全宗弟子修行速度 +50%、持续一年。需钻研比武之礼。',
     arena: true,
     baseCost: { qi: 3e5, wood: 8000, blackIron: 120 },
     costGrowth: 1,
@@ -544,8 +549,8 @@ export const STRUCTURES: StructureDef[] = [
     group: 'hall',
     name: '功法殿',
     icon: '📜',
-    desc: '供奉宗门功法之处。弟子修炼速度 +12%/座，且弟子会自发入殿参悟、修为骤进。需钻研传法之道。',
-    cultivationBonus: 0.12,
+    desc: '供奉宗门功法之处。弟子修炼速度 +8%/座，且弟子会自发入殿参悟、修为骤进。需钻研传法之道。',
+    cultivationBonus: 0.08,
     sectEvent: 'cultivate',
     baseCost: { qi: 5e5, wood: 8000, herb: 2e4 },
     costGrowth: 1.3,
@@ -560,9 +565,8 @@ export const STRUCTURES: StructureDef[] = [
     group: 'hall',
     name: '通天塔',
     icon: '🗼',
-    desc: '登塔可远眺千里。秘境产出 +15%/座、发现概率 +3%/座，且弟子登塔后可望见远处秘境。需钻研通天营造。',
+    desc: '登塔可远眺千里。秘境产出 +15%/座，且弟子登塔后有所见闻，能让保底更快触发（连续失败的计数 -2）。需钻研通天营造。',
     expeditionYieldBonus: 0.15,
-    discoveryBonus: 0.03,
     sectEvent: 'discover',
     baseCost: { qi: 5e7, stone: 5e5, lunarCrystal: 60 },
     costGrowth: 1.35,
@@ -580,8 +584,8 @@ export const STRUCTURES: StructureDef[] = [
     group: 'sect',
     name: '讲道堂',
     icon: '📖',
-    desc: '开坛讲道之处，弟子修炼速度 +15%。需钻研传道之术。',
-    cultivationBonus: 0.15,
+    desc: '开坛讲道之处，弟子修炼速度 +5%/座。需钻研传道之术。',
+    cultivationBonus: 0.05,
     baseCost: { qi: 3e5, wood: 5000, stone: 8000 },
     costGrowth: 1.3,
     unlock: { stone: 5000 },
@@ -687,8 +691,9 @@ export const STRUCTURES: StructureDef[] = [
     group: 'sect',
     name: '照天镜',
     icon: '🪞',
-    desc: '镜面映照万里山河，发现新秘境的概率 +6%/座。需持有照天镜图。',
-    discoveryBonus: 0.06,
+    desc: '镜面映照万里山河，队伍寻路更快、伤亡更少：探索速度 +12%/座、伤亡 -5%/座。需持有照天镜图。',
+    expeditionSpeedBonus: 0.12,
+    casualtyReduction: 0.05,
     baseCost: { qi: 5e6, lunarCrystal: 40, coldJade: 2000 },
     costGrowth: 1.38,
     unlock: { lunarCrystal: 20 },

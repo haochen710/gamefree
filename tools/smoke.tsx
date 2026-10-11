@@ -45,10 +45,16 @@ import {
   BASE_MATERIAL_IDS,
   BLUEPRINTS,
   BLUEPRINT_MAP,
+  ARTIFACT_MAP,
   BUILDABLES,
   BUILDABLE_MAP,
-  DISCOVERY_PER_DISTANCE,
-  DISCOVERY_PITY_CAP,
+  DISCOVERY_BASE_CHANCE,
+  DISCOVERY_MAX_CHANCE,
+  DISCOVERY_PITY_FAILURES,
+  INSIGHT_MAX_BASE,
+  INSIGHT_MAX_PER_REALM,
+  INSIGHT_SPEED_PER_POINT,
+  ARENA_BUFF_BONUS,
   BUILD_GROUPS,
   GENERATORS,
   INJURY_PRODUCTION_PENALTY,
@@ -1851,7 +1857,7 @@ section('[21] 新字段的存档往返');
     // 需求 1 / 4 的新字段
     discoveredRealms: { sunsetValley: true, blackWindRidge: true },
     realmCooldowns: { blackWindRidge: 123 },
-    discoveryPity: 0.24,
+    discoveryFailures: 3,
     arenaEnabled: true,
     arenaTimer: 77,
     arenaBuffSeconds: 8,
@@ -1872,7 +1878,7 @@ section('[21] 新字段的存档往返');
     check('商行货架保留', round.shop.offers.length === 1 && round.shop.secondsLeft === 42);
     check('已发现秘境保留', engine.isRealmDiscovered(round, SECRET_REALM_MAP.blackWindRidge));
     check('秘境冷却保留', engine.getRealmCooldown(round, 'blackWindRidge') === 123);
-    check('发现保底保留', Math.abs(round.discoveryPity - 0.24) < 1e-9);
+    check('发现保底的失败计数保留', round.discoveryFailures === 3);
     check('大比开关保留', round.arenaEnabled === true);
     check('大比计时保留', round.arenaTimer === 77 && round.arenaBuffSeconds === 8);
     check('宗门事件计时保留', round.sectEventTimer === 31);
@@ -1891,7 +1897,7 @@ section('[21] 新字段的存档往返');
     sh: { offers: [{ kind: 'seed', item: 'notAGood' }], secondsLeft: 'x' },
     pv: { regionId: 'notARegion' },
     rc: { notARealm: 500, blackWindRidge: -3 },
-    dp: 99,
+    df: 99,
     ae: 'yes',
     arn: -5,
     arb: 'x',
@@ -1908,7 +1914,7 @@ section('[21] 新字段的存档往返');
     check('非法货品被丢弃', junk.shop.offers.length === 0);
     check('非法游历被丢弃', junk.personalTravel === null);
     check('非法冷却被丢弃', Object.keys(junk.realmCooldowns).length === 0);
-    check('越界的发现保底被夹回上限', junk.discoveryPity <= DISCOVERY_PITY_CAP);
+    check('越界的失败计数被夹回上限', junk.discoveryFailures <= DISCOVERY_PITY_FAILURES);
     check('非布尔的大比开关按 false 处理', junk.arenaEnabled === false);
     check('负数的大比计时被夹回 0', junk.arenaTimer >= 0);
     check('非法的大比加速时长被夹回 0', junk.arenaBuffSeconds === 0);
@@ -1994,7 +2000,7 @@ section('[22] 界面：非空状态渲染');
     autoRefineLevel: 2,
     discoveredRealms: { sunsetValley: true, blackWindRidge: true, boneField: true },
     realmCooldowns: { blackWindRidge: 90 },
-    discoveryPity: 0.2,
+    discoveryFailures: 2,
     arenaEnabled: true,
     arenaTimer: 60,
     arenaBuffSeconds: 5,
@@ -2321,18 +2327,98 @@ section('[24] 地图与探索距离（需求 5）');
     `${range8.distance} 里`,
   );
 
-  /* ---- 灵舟坊提高探索距离（造物加成） ---- */
+  /* ---- 灵舟坊提高探索距离（只影响"能到多远"，不再影响发现概率） ---- */
   const withBoat = forceBuild(engine.refreshUnlocks(grant(atRealm(8), { blackIron: '1e6' })), 'spiritBoat', 2);
   const boatRange = engine.getExplorationRange(withBoat);
   check('灵舟坊提高探索距离', boatRange.distance > range8.distance, `${range8.distance} → ${boatRange.distance}`);
-  check('探索距离加成同时提高发现概率', engine.getDiscoveryChance(withBoat) > engine.getDiscoveryChance(atRealm(8)));
+
+  /* ---- 本轮核心约束：发现概率只能靠寻宝宝盘提升 ---- */
   {
-    // 2 座灵舟坊 = +50% 距离 → 按 DISCOVERY_PER_DISTANCE 折算 +25% 发现概率
-    const delta = engine.getDiscoveryChance(withBoat) - engine.getDiscoveryChance(atRealm(8));
+    const base = engine.getDiscoveryChance(atRealm(8));
     check(
-      '距离折算发现概率用的是专门的换算常量（不再和 0.25 重复相乘）',
-      Math.abs(delta - 2 * 0.25 * DISCOVERY_PER_DISTANCE) < 1e-9,
-      `+${(delta * 100).toFixed(1)}%`,
+      '没有宝盘时发现概率就等于基础概率',
+      Math.abs(base - DISCOVERY_BASE_CHANCE) < 1e-9,
+      `${(base * 100).toFixed(1)}%`,
+    );
+    // 灵舟坊（探索距离）曾经按一个换算常量折成发现概率，现在不该有任何影响
+    check(
+      '探索距离不再影响发现概率',
+      Math.abs(engine.getDiscoveryChance(withBoat) - base) < 1e-9,
+      `${(base * 100).toFixed(1)}%`,
+    );
+
+    // 把所有"曾经给发现加成"的建筑都建满，概率也不许动
+    let built = grant(atRealm(8), { qi: '1e18', wood: '1e12', stone: '1e12', lunarCrystal: '1e9', coldJade: '1e9' });
+    built = forceBuild(withTech(built, 'towerArt'), 'masterHall', 1);
+    built = forceBuild(built, 'mountainGate', 5);
+    built = forceBuild(built, 'heavenTower', 5);
+    check(
+      '建筑不再提供任何发现概率',
+      Math.abs(engine.getDiscoveryChance(built) - base) < 1e-9,
+      `${(engine.getDiscoveryChance(built) * 100).toFixed(1)}%`,
+    );
+
+    // 寻宝宝盘：五名弟子持五面 → 基础 + 5 × 4%
+    const five = Array.from({ length: 5 }, (_, i) => disciples.rollDisciple(8, i + 1, makeRandom(i + 40)));
+    const armed: GameState = {
+      ...built,
+      artifacts: { ...built.artifacts, treasureCompass: 5 },
+      sect: { ...built.sect, founded: true, level: 9, disciples: five },
+    };
+    check(
+      '寻宝宝盘是唯一能提高发现概率的东西',
+      Math.abs(engine.getDiscoveryChance(armed) - (DISCOVERY_BASE_CHANCE + 5 * 0.04)) < 1e-9,
+      `${(engine.getDiscoveryChance(armed) * 100).toFixed(1)}%`,
+    );
+    // 器物受"每名弟子只能持一件"的约束，人不够就发挥不出全部
+    const fewHolders: GameState = { ...armed, sect: { ...armed.sect, disciples: [five[0]] } };
+    check(
+      '宝盘也受"一名弟子只能持一件"的约束',
+      Math.abs(engine.getDiscoveryChance(fewHolders) - (DISCOVERY_BASE_CHANCE + 0.04)) < 1e-9,
+      `${(engine.getDiscoveryChance(fewHolders) * 100).toFixed(1)}%`,
+    );
+    // 堆到上限
+    const many = Array.from({ length: 40 }, (_, i) => disciples.rollDisciple(8, i + 1, makeRandom(i + 90)));
+    const maxed: GameState = {
+      ...built,
+      artifacts: { ...built.artifacts, treasureCompass: 40 },
+      sect: { ...built.sect, founded: true, level: 9, disciples: many },
+    };
+    check(
+      '宝盘堆满后被 DISCOVERY_MAX_CHANCE 封顶',
+      Math.abs(engine.getDiscoveryChance(maxed) - DISCOVERY_MAX_CHANCE) < 1e-9,
+      `${(engine.getDiscoveryChance(maxed) * 100).toFixed(1)}%`,
+    );
+    check(
+      '寻宝宝盘挂在七品炼器上',
+      ARTIFACT_MAP.treasureCompass.tier === 7 && ARTIFACT_MAP.treasureCompass.effect.kind === 'discovery',
+      `tier ${ARTIFACT_MAP.treasureCompass.tier}`,
+    );
+    check(
+      '寻宝宝盘的材料含超级稀有的混沌紫气',
+      (ARTIFACT_MAP.treasureCompass.cost.chaosQi ?? 0) > 0,
+      `混沌紫气 ×${ARTIFACT_MAP.treasureCompass.cost.chaosQi}`,
+    );
+
+    /* ---- 硬保底：独立于概率公式的一条机制 ---- */
+    check('失败次数不够时不触发硬保底', !engine.isDiscoveryGuaranteed(armed));
+    const pityState: GameState = { ...armed, discoveryFailures: DISCOVERY_PITY_FAILURES };
+    check('连续失败到阈值就触发硬保底', engine.isDiscoveryGuaranteed(pityState));
+    check(
+      '还差几次可以算出来（界面提示用）',
+      engine.getDiscoveryPityRemaining({ ...armed, discoveryFailures: 4 }) === DISCOVERY_PITY_FAILURES - 4,
+    );
+    check(
+      '硬保底不写进概率公式（概率不受失败次数影响）',
+      Math.abs(engine.getDiscoveryChance(pityState) - engine.getDiscoveryChance(armed)) < 1e-9,
+    );
+    check(
+      '发现失败时失败计数 +1',
+      engine.recordDiscoveryFailure(armed).discoveryFailures === armed.discoveryFailures + 1,
+    );
+    check(
+      '发现新秘境时失败计数清零',
+      engine.discoverRealm({ ...armed, discoveryFailures: 7 }, 'wolfRavine').discoveryFailures === 0,
     );
   }
 
@@ -2391,7 +2477,6 @@ section('[25] 建筑与图纸扩充（需求 3）');
     'disciplePowerBonus',
     'expeditionYieldBonus',
     'casualtyReduction',
-    'discoveryBonus',
     'insightBonus',
     'expeditionDistanceBonus',
   ] as const;
@@ -2399,6 +2484,11 @@ section('[25] 建筑与图纸扩充（需求 3）');
     const owner = STRUCTURES.find((s) => s[key]);
     check(`效果「${key}」有建筑提供`, Boolean(owner), owner?.name ?? '无');
   }
+  // 反向保证：建筑不许再提供发现概率（那是寻宝宝盘的专属领域）
+  check(
+    '没有任何建筑提供发现概率加成',
+    STRUCTURES.every((s) => !('discoveryBonus' in s)),
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -2463,12 +2553,22 @@ section('[26] 宗门建筑与大比（需求 4）');
   check('到点自动举办大比', afterInterval.arenaBuffSeconds > 0);
   check('大比后弟子获得心得', afterInterval.sect.disciples.every((d) => d.insight > 0));
   const speedAfter = disciples.getDiscipleSpeed(afterInterval, afterInterval.sect.disciples[0]);
+  // 本轮把大比从「乘算 ×2」改成了「加算 +50%」：它和建筑加成相乘会
+  // 把修行倍率天花板推到 ×7 以上，而大比本该只是个十年一次的节日。
   check(
-    '大比使全宗修行倍率翻倍',
-    Math.abs(engine.getCultivationSpeedMultiplier(afterInterval) / multBefore - 2) < 1e-9,
+    '大比是加算而不是乘算（+50%）',
+    Math.abs(
+      engine.getCultivationSpeedMultiplier(afterInterval) -
+        (multBefore + ARENA_BUFF_BONUS),
+    ) < 1e-9,
+    `${multBefore.toFixed(2)} → ${engine.getCultivationSpeedMultiplier(afterInterval).toFixed(2)}`,
+  );
+  check(
+    '修行倍率天花板被压到 3 倍以内',
+    engine.getCultivationSpeedMultiplier(afterInterval) < 3,
     `×${engine.getCultivationSpeedMultiplier(afterInterval).toFixed(2)}`,
   );
-  check('心得与大比叠加，实际速度更高', speedAfter / speedBefore > 2, `×${(speedAfter / speedBefore).toFixed(2)}`);
+  check('心得与大比叠加速度更快', speedAfter > speedBefore, `×${(speedAfter / speedBefore).toFixed(2)}`);
   check('大比写入了记事', afterInterval.journal.some((e) => e.text.includes('宗门大比')));
 
   const expired = sectActivity.tickArena(afterInterval, sectActivity.ARENA_BUFF_SECONDS + 1);
@@ -2480,21 +2580,141 @@ section('[26] 宗门建筑与大比（需求 4）');
   );
   check('停办后不再自动开比', sectActivity.tickArena({ ...running, arenaEnabled: false }, 1e6).arenaBuffSeconds === 0);
 
+  /* ---- 修行倍率天花板（本轮要压的问题之一） ----
+     早先 功法殿×10(+120%) 与 讲道堂×10(+150%) 是加算，但大比是**乘算 ×2**，
+     再加上心得，三者互相乘出 ×7.4。这里把满配状态钉死。 */
+  {
+    let maxed: GameState = grant({ ...sect, realmIndex: 8 }, { qi: '1e15', stone: '1e12', lunarCrystal: '1e9' });
+    maxed = forceBuild(withTech(maxed, 'scriptureArt'), 'masterHall', 1);
+    // 讲道堂与功法殿的 max 都是 10，要建满才算"满配"——
+    // 这里原先只建了 1 座讲道堂，于是断言把一个偏低的数当成了天花板
+    maxed = forceBuild(maxed, 'scriptureHall', 10);
+    maxed = forceBuild(withTech(maxed, 'preachingArt'), 'sectHall', 10);
+    maxed = { ...maxed, arenaBuffSeconds: 100, realmIndex: 8 };
+    check(
+      '满配建筑加成 = 功法殿 80% + 讲道堂 50% + 大比 50%',
+      Math.abs(engine.getCultivationSpeedMultiplier(maxed) - 2.8) < 1e-9,
+      `×${engine.getCultivationSpeedMultiplier(maxed).toFixed(2)}`,
+    );
+    const ceiling = engine.getCultivationSpeedMultiplier(maxed);
+    check(
+      '满配建筑 + 大比时修行倍率在 3 倍以内',
+      ceiling < 3,
+      `×${ceiling.toFixed(2)}`,
+    );
+
+    // 连心得一起算（弟子修行速度 = 资质 × (建筑 + 大比 + 心得)，同一个加算池）
+    const best = disciples.rollDisciple(8, 1, makeRandom(7));
+    const insightMaxed: GameState = {
+      ...maxed,
+      sect: {
+        ...maxed.sect,
+        disciples: [{ ...best, aptitude: 'heaven' as typeof best.aptitude, insight: engine.getInsightMax(maxed) }],
+      },
+    };
+    check(
+      '心得与建筑处在同一个加算池（不是再乘一次）',
+      Math.abs(
+        disciples.getInsightSpeedBonus(insightMaxed, insightMaxed.sect.disciples[0]) +
+          engine.getCultivationSpeedMultiplier(insightMaxed) -
+          disciples.getDiscipleSpeed(insightMaxed, insightMaxed.sect.disciples[0]) /
+            APTITUDE_MAP.heaven.speed,
+      ) < 1e-9,
+    );
+    const fullSpeed = disciples.getDiscipleSpeed(insightMaxed, insightMaxed.sect.disciples[0]);
+    check(
+      '连心得算上，天灵根弟子的修行速度天花板也在 4.5 倍以内',
+      fullSpeed < 4.5,
+      `×${fullSpeed.toFixed(2)}`,
+    );
+  }
+
+  /* ---- 寻宝宝盘要真的被"七品炼器"卡住 ---- */
+  {
+    const poor: GameState = { ...sect, refiningTier: 6, materials: {} as GameState['materials'] };
+    check(
+      '炼器术不到七品时铸不出寻宝宝盘',
+      !crafting.canCraftArtifact(poor, 'treasureCompass').ok,
+      crafting.canCraftArtifact(poor, 'treasureCompass').reason ?? '',
+    );
+    const rich: GameState = {
+      ...sect,
+      refiningTier: 7,
+      materials: {
+        ...sect.materials,
+        blackIron: D('1e9'),
+        spiritSilk: D('1e9'),
+        fireMarrow: D('1e9'),
+        coldJade: D('1e9'),
+        lunarCrystal: D('1e9'),
+        dragonBlood: D('1e9'),
+        netherFlame: D('1e9'),
+        immortalJade: D('1e9'),
+        chaosQi: D('1e9'),
+      },
+      resources: { ...sect.resources, ore: D('1e12'), qi: D('1e15') },
+    };
+    check('七品炼器 + 材料齐全才能铸', crafting.canCraftArtifact(rich, 'treasureCompass').ok);
+    const crafted = crafting.craftArtifact(rich, 'treasureCompass', 1);
+    check('铸出的宝盘进入器物栏', (crafted.artifacts.treasureCompass ?? 0) === 1);
+  }
+
   /* ---- 需求 4：弟子探索后增加心得，加快进境 ---- */
   const withInsight: GameState = {
     ...sect,
+    // 心得上限随境界增长，所以这里要把境界放高，50 点才在上限之内
+    realmIndex: 8,
     sect: { ...sect.sect, disciples: sect.sect.disciples.map((d) => ({ ...d, insight: 50 })) },
   };
-  check('心得提高修行速度', disciples.getInsightSpeedBonus(withInsight.sect.disciples[0]) > 0);
+  check('心得提高修行速度', disciples.getInsightSpeedBonus(withInsight, withInsight.sect.disciples[0]) > 0);
   check(
-    '每点心得 +1%',
-    Math.abs(disciples.getInsightSpeedBonus(withInsight.sect.disciples[0]) - 0.5) < 1e-9,
+    '每点心得 +0.5%',
+    Math.abs(disciples.getInsightSpeedBonus(withInsight, withInsight.sect.disciples[0]) - 0.25) < 1e-9,
   );
-  const maxed: GameState = {
-    ...sect,
-    sect: { ...sect.sect, disciples: sect.sect.disciples.map((d) => ({ ...d, insight: 9999 })) },
-  };
-  check('心得加速有上限（+100%）', Math.abs(disciples.getInsightSpeedBonus(maxed.sect.disciples[0]) - 1) < 1e-9);
+
+  /* ---- 心得上限随掌门境界增长（本轮需求） ---- */
+  {
+    const at = (realmIndex: number, insight: number): GameState => ({
+      ...sect,
+      realmIndex,
+      sect: {
+        ...sect.sect,
+        disciples: sect.sect.disciples.map((d) => ({ ...d, insight })),
+      },
+    });
+    const low = at(0, 9999);
+    const high = at(8, 9999);
+    check(
+      '心得上限随境界变高',
+      engine.getInsightMax(high) > engine.getInsightMax(low),
+      `炼气 ${engine.getInsightMax(low)} → 渡劫 ${engine.getInsightMax(high)}`,
+    );
+    check(
+      '炼气期心得上限就是基数',
+      engine.getInsightMax(low) === INSIGHT_MAX_BASE,
+      `${engine.getInsightMax(low)}`,
+    );
+    check(
+      '每升一境上限增加固定值',
+      engine.getInsightMax(high) === INSIGHT_MAX_BASE + 8 * INSIGHT_MAX_PER_REALM,
+    );
+    // 上限不是墙：同一个 9999 点心得，在高境界能拿到更多加速
+    check(
+      '同一个心得值在高境界给出更多加速',
+      disciples.getInsightSpeedBonus(high, high.sect.disciples[0]) >
+        disciples.getInsightSpeedBonus(low, low.sect.disciples[0]),
+      `${disciples.getInsightSpeedBonus(low, low.sect.disciples[0]).toFixed(3)} → ${disciples
+        .getInsightSpeedBonus(high, high.sect.disciples[0])
+        .toFixed(3)}`,
+    );
+    check(
+      '加速不会超过「上限 × 每点收益」',
+      Math.abs(
+        disciples.getInsightSpeedBonus(high, high.sect.disciples[0]) -
+          engine.getInsightMax(high) * INSIGHT_SPEED_PER_POINT,
+      ) < 1e-9,
+    );
+  }
 
   /* ---- 随机事件：弟子自发使用宗门建筑 ---- */
   let hall: GameState = forceBuild(withTechs, 'masterHall', 1);

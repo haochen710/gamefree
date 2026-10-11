@@ -10,7 +10,7 @@
 import Decimal, { D } from './decimal';
 import {
   ALCHEMY_SLOT_REQUIREMENT,
-  ARENA_BUFF_MULTIPLIER,
+  ARENA_BUFF_BONUS,
   ARTIFACTS,
   AUTO_REFINE_LEVEL_MAX,
   AUTO_REFINE_RATES,
@@ -27,16 +27,15 @@ import {
   DAO_YUN_EXPONENT,
   DISCOVERY_BASE_CHANCE,
   DISCOVERY_MAX_CHANCE,
-  DISCOVERY_PER_DISTANCE,
-  DISCOVERY_PER_EXTRA_MEMBER,
-  DISCOVERY_PITY_CAP,
-  DISCOVERY_PITY_STEP,
+  DISCOVERY_PITY_FAILURES,
   FINAL_REALM_INDEX,
   GENERATORS,
   INJURY_FALLBACK_SECONDS,
   INJURY_FROM_REALM,
   INJURY_PRODUCTION_PENALTY,
   INJURY_SECONDS,
+  INSIGHT_MAX_BASE,
+  INSIGHT_MAX_PER_REALM,
   ITEM_MAP,
   MAP_REGIONS,
   MAP_REGION_MAP,
@@ -136,6 +135,8 @@ export interface ArtifactBonuses {
   expeditionSpeed: number;
   expeditionSafety: number;
   expeditionYield: number;
+  /** 发现新秘境的概率加成（只由寻宝宝盘提供） */
+  discovery: number;
 }
 
 /**
@@ -144,6 +145,8 @@ export interface ArtifactBonuses {
  * 关键约束：每件器物最多只有「弟子人数」份生效 ——
  * 相当于每名弟子只能持有一件。这样既要多造器物，也必须有足够弟子，
  * 否则玩家可以靠刷几百把铁剑把战力堆到天上。
+ *
+ * 寻宝宝盘（发现概率）也受这条约束：想堆发现概率就得同时有弟子和材料。
  */
 export function getArtifactBonuses(state: GameState): ArtifactBonuses {
   const holders = Math.max(1, state.sect.disciples.length);
@@ -153,6 +156,7 @@ export function getArtifactBonuses(state: GameState): ArtifactBonuses {
     expeditionSpeed: 0,
     expeditionSafety: 0,
     expeditionYield: 0,
+    discovery: 0,
   };
 
   for (const def of ARTIFACTS) {
@@ -176,6 +180,9 @@ export function getArtifactBonuses(state: GameState): ArtifactBonuses {
         break;
       case 'expeditionYield':
         acc.expeditionYield += effect.bonus * effective;
+        break;
+      case 'discovery':
+        acc.discovery += effect.bonus * effective;
         break;
     }
   }
@@ -253,7 +260,6 @@ export type StructureBonusKey =
   | 'expeditionDistanceBonus'
   | 'expeditionYieldBonus'
   | 'casualtyReduction'
-  | 'discoveryBonus'
   | 'insightBonus'
   | 'breakthroughBonus'
   | 'productionBonus';
@@ -273,13 +279,27 @@ export function getStructureBonus(state: GameState, key: StructureBonusKey): num
  * 弟子修炼速度倍率。
  *
  * = 1 + 建筑加成（讲道堂 / 功法殿）+ 大比加成（需求 4）
- * 大比每次持续一个游戏年，效果是翻倍 —— 十年一比，
- * 折算下来长期收益约 +10%，是个"节日型"的加成而不是常驻强度。
+ *
+ * ⚠️ 大比原本是**乘算**的 ×2，本轮改成加算 +50%。
+ * 原因：它和建筑加成相乘，把整个修行倍率的天花板推到了 ×7.4 左右，
+ * 而大比本来只是个"十年一次的节日"，不该是乘区里最重的一块。
+ * 改成加算之后：满配 功法殿 80% + 讲道堂 50% + 大比 50% = ×2.80。
+ * （心得也在这个加算池里，由 disciples.getDiscipleSpeed 相加，满配 ×4.15。）
  */
 export function getCultivationSpeedMultiplier(state: GameState): number {
-  const base = 1 + getStructureBonus(state, 'cultivationBonus');
-  const arena = state.arenaBuffSeconds > 0 ? ARENA_BUFF_MULTIPLIER : 1;
-  return base * arena;
+  const buildings = getStructureBonus(state, 'cultivationBonus');
+  const arena = state.arenaBuffSeconds > 0 ? ARENA_BUFF_BONUS : 0;
+  return 1 + buildings + arena;
+}
+
+/**
+ * 心得上限（需求：「让心得上限随玩家等级增长」）。
+ *
+ * 早先是写死的 100 点，既摸不到（实测 21 天最高 52）又是个墙。
+ * 现在 = 基数 + 掌门境界 × 每境界增量，于是它跟着玩家等级一起长。
+ */
+export function getInsightMax(state: GameState): number {
+  return INSIGHT_MAX_BASE + Math.max(0, state.realmIndex) * INSIGHT_MAX_PER_REALM;
 }
 
 /* ------------------------------------------------------------------ */
@@ -314,7 +334,7 @@ export function isRegionVisible(state: GameState, def: MapRegionDef): boolean {
  *
  * 境界决定能到哪些区域（「境界越高可以飞行，所以探索距离可以增加」），
  * 灵舟坊这类造物再给一个距离倍率 —— 它不改变能去的区域，
- * 而是让同样的境界望得更远（转化为发现秘境的概率，见 getDiscoveryChance）。
+ * 而是让同样的境界望得更远（探索距离本身只是进度指标）。
  */
 export function getExplorationRange(state: GameState): ExplorationRange {
   const distanceMultiplier = 1 + getStructureBonus(state, 'expeditionDistanceBonus');
@@ -383,29 +403,40 @@ export function getUndiscoveredCandidates(state: GameState): SecretRealmDef[] {
 /**
  * 一次探索结束时的「发现新秘境」概率。
  *
- * = 基础 + 保底累积 + 建筑加成（山门 / 通天塔 / 照天镜）+ 人数加成
- *   + 探索距离加成折算
+ * = 基础概率 + 寻宝宝盘加成
  *
- * 保底是必要的：纯随机的话运气差的玩家可能永远发现不了第二处秘境，
- * 而秘境是稀有材料的唯一来源。
+ * ⚠️ 这是**全游戏唯一**的发现概率公式，也是唯一一个能提升它的东西。
+ * 早先这里还叠加了建筑加成（山门 / 通天塔 / 照天镜）、探索距离折算、
+ * 队伍人数加成 —— 五个来源全挤在 DISCOVERY_MAX_CHANCE 这一个上限上，
+ * 后期无论建哪一座都被砍到同一个数，几座建筑之间完全没有区分度。
+ * 现在只有寻宝宝盘（七品炼器 + 超稀有材料）能往上加。
+ *
+ * 保底**不在这个公式里**：它是独立的一条机制（见 isDiscoveryGuaranteed），
+ * 连续失败太多次时直接兜一次底，所以"概率"确实只有一个来源。
  */
-export function getDiscoveryChance(state: GameState, extraMembers = 0): number {
-  const pity = Math.min(state.discoveryPity, DISCOVERY_PITY_CAP);
-  const buildings = getStructureBonus(state, 'discoveryBonus');
-  // 距离换发现概率：用专门的换算常量，避免和「每座灵舟坊 +25% 距离」的常量混用
-  const distance = getStructureBonus(state, 'expeditionDistanceBonus') * DISCOVERY_PER_DISTANCE;
-  const members = Math.max(0, extraMembers) * DISCOVERY_PER_EXTRA_MEMBER;
-
-  return Math.min(DISCOVERY_BASE_CHANCE + pity + buildings + distance + members, DISCOVERY_MAX_CHANCE);
+export function getDiscoveryChance(state: GameState): number {
+  const compass = getArtifactBonuses(state).discovery;
+  return Math.min(DISCOVERY_BASE_CHANCE + compass, DISCOVERY_MAX_CHANCE);
 }
 
-/** 发现失败时累积保底 */
-export function growDiscoveryPity(state: GameState): GameState {
-  if (state.discoveryPity >= DISCOVERY_PITY_CAP) return state;
-  return {
-    ...state,
-    discoveryPity: Math.min(state.discoveryPity + DISCOVERY_PITY_STEP, DISCOVERY_PITY_CAP),
-  };
+/** 寻宝宝盘带来的发现概率加成（界面用来解释"为什么概率是这个数"） */
+export function getDiscoveryBonusFromArtifacts(state: GameState): number {
+  return getArtifactBonuses(state).discovery;
+}
+
+/** 连续失败太多次 → 下一次必然发现（硬保底，独立于概率公式） */
+export function isDiscoveryGuaranteed(state: GameState): boolean {
+  return state.discoveryFailures >= DISCOVERY_PITY_FAILURES;
+}
+
+/** 还差几次失败才触发硬保底（界面提示用） */
+export function getDiscoveryPityRemaining(state: GameState): number {
+  return Math.max(0, DISCOVERY_PITY_FAILURES - state.discoveryFailures);
+}
+
+/** 发现失败时累积一次失败计数 */
+export function recordDiscoveryFailure(state: GameState): GameState {
+  return { ...state, discoveryFailures: state.discoveryFailures + 1 };
 }
 
 /** 秘境的冷却剩余秒数 */
@@ -794,8 +825,8 @@ export function discoverRealm(state: GameState, realmId: string): GameState {
   return {
     ...state,
     discoveredRealms: { ...state.discoveredRealms, [realmId]: true },
-    // 发现了新的，保底清零
-    discoveryPity: 0,
+    // 发现了新的，硬保底的失败计数清零
+    discoveryFailures: 0,
   };
 }
 

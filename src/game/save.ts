@@ -14,9 +14,9 @@ import {
   AUTO_REFINE_LEVEL_MAX,
   BLUEPRINT_MAP,
   BUILDABLES,
-  DISCOVERY_PITY_CAP,
+  DISCOVERY_PITY_FAILURES,
   FINAL_REALM_INDEX,
-  INSIGHT_MAX,
+  INSIGHT_MAX_ABSOLUTE,
   ITEM_MAP,
   MATERIAL_IDS,
   MATERIAL_MAP,
@@ -127,8 +127,8 @@ export interface SerializedGame {
   sh?: ShopState;
   /** realmCooldowns：各秘境的冷却剩余秒数（需求 1） */
   rc?: Record<string, number>;
-  /** discoveryPity：发现新秘境的保底累积（需求 1） */
-  dp?: number;
+  /** discoveryFailures：连续没发现新秘境的次数，用于硬保底（需求 1） */
+  df?: number;
   /** arenaEnabled / arenaTimer / arenaBuffSeconds：宗门大比（需求 4） */
   ae?: boolean;
   arn?: number;
@@ -192,7 +192,7 @@ export function serialize(state: GameState): SerializedGame {
     bpr: { ...state.blueprints },
     sh: state.shop,
     rc: { ...state.realmCooldowns },
-    dp: state.discoveryPity,
+    df: state.discoveryFailures,
     ae: state.arenaEnabled,
     arn: state.arenaTimer,
     arb: state.arenaBuffSeconds,
@@ -276,7 +276,7 @@ function sanitizeDisciple(raw: unknown, index: number): Disciple | null {
     realmIndex: toInt(d.realmIndex, 0, 0, FINAL_REALM_INDEX),
     progress: toFloat(d.progress, 0, 0, 1e9),
     age: toFloat(d.age, 16, 0, 1e9),
-    insight: toFloat(d.insight, 0, 0, INSIGHT_MAX),
+    insight: toFloat(d.insight, 0, 0, INSIGHT_MAX_ABSOLUTE),
     // status 交给 repairState 依据探索列表重新推导，这里先一律置空闲
     status: 'idle',
   };
@@ -653,7 +653,9 @@ export function deserialize(raw: unknown): GameState | null {
     blueprints: toBoolMap(data.bpr, Object.keys(BLUEPRINT_MAP)),
     shop: sanitizeShop(data.sh),
     realmCooldowns: sanitizeCooldowns(data.rc),
-    discoveryPity: toFloat(data.dp, 0, 0, DISCOVERY_PITY_CAP),
+    // 旧存档的 `dp` 是"累积保底概率"（0~0.5 的小数），与现在的"连续失败次数"
+    // 语义不同，所以直接丢弃不用。丢掉最多只是少一点保底进度，不会损坏存档。
+    discoveryFailures: toFloat(data.df, 0, 0, DISCOVERY_PITY_FAILURES),
     arenaEnabled: data.ae === true,
     arenaTimer: toFloat(data.arn, ARENA_INTERVAL_SECONDS, 0, 1e9),
     arenaBuffSeconds: toFloat(data.arb, 0, 0, 1e9),

@@ -39,8 +39,9 @@ import {
   getDiscoveryChance,
   getStructureBonus,
   getUndiscoveredCandidates,
-  growDiscoveryPity,
+  isDiscoveryGuaranteed,
   isRegionVisible,
+  recordDiscoveryFailure,
 } from './engine';
 import { pushJournal } from './disciples';
 import { addSeeds } from './planting';
@@ -218,7 +219,8 @@ export function resolveTravel(
   let discovered: TravelOutcome['discovered'] = null;
   const candidates = getUndiscoveredCandidates(working);
   if (candidates.length > 0) {
-    if (random() < getDiscoveryChance(working, 0)) {
+    // 硬保底与探索共用同一个失败计数（发现概率只有寻宝宝盘能提升）
+    if (isDiscoveryGuaranteed(working) || random() < getDiscoveryChance(working)) {
       const [found] = weightedDraw(
         candidates.map((c) => ({ ...c, weight: c.discoveryWeight })),
         1,
@@ -229,7 +231,7 @@ export function resolveTravel(
         discovered = { id: found.id, name: found.name, icon: found.icon };
       }
     } else {
-      working = growDiscoveryPity(working);
+      working = recordDiscoveryFailure(working);
     }
   }
 

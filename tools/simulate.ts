@@ -64,7 +64,15 @@ interface SimConfig {
 }
 
 const CONFIG: SimConfig = {
-  budget: 60 * 60 * 24 * 21,
+  /**
+   * 模拟时长。
+   *
+   * 这个窗口必须**覆盖到渡劫期**，否则模拟器就看不到终盘 ——
+   * 而终盘恰恰是最容易藏死锁与数值断裂的地方。
+   * 本轮把修行节奏压低之后，渡劫期落在 20 天出头，
+   * 所以窗口从 21 天放宽到 30 天（多留一点余量看渡劫之后的表现）。
+   */
+  budget: 60 * 60 * 24 * 30,
   clicksPerSecond: 4,
   seeds: 5,
 };
@@ -181,7 +189,6 @@ function payback(state: GameState, id: string, prices: Record<string, number>): 
     def.expeditionYieldBonus ??
     def.cultivationBonus ??
     def.expeditionSpeedBonus ??
-    def.discoveryBonus ??
     def.insightBonus ??
     def.breakthroughBonus ??
     0;

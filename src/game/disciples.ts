@@ -16,7 +16,6 @@ import {
   APTITUDE_ORDER,
   GAME_DAYS_PER_SECOND,
   GAME_DAYS_PER_YEAR,
-  INSIGHT_SPEED_CAP,
   INSIGHT_SPEED_PER_POINT,
   REALMS,
   randomDiscipleName,
@@ -26,6 +25,7 @@ import {
 import {
   getArtifactBonuses,
   getCultivationSpeedMultiplier,
+  getInsightMax,
   getDiscipleCapacity,
   getStructureBonus,
 } from './engine';
@@ -75,18 +75,35 @@ export function rollDisciple(sectLevel: number, id: number, random: RandomSource
 /**
  * 心得带来的修行速度加成（需求 4：弟子探索后增加心得，加快进境）。
  *
- * 每点心得 +1%，最多 +100%（100 点封顶）。
- * 上限定成 100 点，是为了让"心得"是**成长曲线**而不是无限叠加的乘区 ——
- * 探索几百次之后弟子仍要靠境界和资质往前走。
+ * 每点心得 +0.5%，上限随掌门境界增长（见 engine.getInsightMax）：
+ * 炼气期 30 点（+15%）→ 渡劫期 270 点（+135%）。
+ * （300 是「仙人」那一档，也就是 INSIGHT_MAX_ABSOLUTE，只用于存档清洗。）
+ *
+ * 早先上限写死 100 点（+100%），既是个墙（探索到顶之后心得就不涨了），
+ * 又因为秘境从 8 处扩到 44 处而被摊薄到摸不着（实测最高 52）。
+ * 现在上限跟着境界走，单点收益从 +1% 降到 +0.5% ——
+ * 上限放开的同时不能让修行倍率随境界一起失控。
  */
-export function getInsightSpeedBonus(disciple: Disciple): number {
-  return Math.min(disciple.insight * INSIGHT_SPEED_PER_POINT, INSIGHT_SPEED_CAP);
+export function getInsightSpeedBonus(state: GameState, disciple: Disciple): number {
+  const capped = Math.min(disciple.insight, getInsightMax(state));
+  return capped * INSIGHT_SPEED_PER_POINT;
 }
 
-/** 弟子的综合修行速度倍率：资质 × (1 + 心得) × 建筑/大比 */
+/**
+ * 弟子的综合修行速度倍率。
+ *
+ * = 资质 × (1 + 建筑 + 大比 + 心得)
+ *
+ * ⚠️ 这里原来是 `资质 × (1 + 心得) × 建筑大比` —— 心得和建筑是**两个乘区**，
+ * 而且大比在建筑那一项里又是乘算 ×2，三者互相放大：
+ * 满配时 (1 + 心得) × (1 + 建筑) × 2 能到 ×9 以上（更早一版的实测是 ×7.4）。
+ * 现在三者全部并进同一个加算池：
+ *   1 + 功法殿 80% + 讲道堂 50% + 大比 50% + 心得 135% = ×4.15
+ * 好处不只是"数字变小"：加算池不会随着以后再加内容而互相放大。
+ */
 export function getDiscipleSpeed(state: GameState, disciple: Disciple): number {
   const aptitude = APTITUDE_MAP[disciple.aptitude].speed;
-  return aptitude * (1 + getInsightSpeedBonus(disciple)) * getCultivationSpeedMultiplier(state);
+  return aptitude * (getCultivationSpeedMultiplier(state) + getInsightSpeedBonus(state, disciple));
 }
 
 export interface RecruitResult {

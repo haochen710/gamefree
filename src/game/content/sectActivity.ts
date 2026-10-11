@@ -20,18 +20,27 @@
 /* 心得（弟子探索后增加，加快进境）                                      */
 /* ------------------------------------------------------------------ */
 
-/** 每点心得提供的修行速度加成（0.01 = +1%） */
-export const INSIGHT_SPEED_PER_POINT = 0.01;
-/** 心得加速的上限（1.0 = 最多 +100%） */
-export const INSIGHT_SPEED_CAP = 1;
+/** 每点心得提供的修行速度加成（0.005 = +0.5%） */
+export const INSIGHT_SPEED_PER_POINT = 0.005;
 /**
- * 心得上限。
+ * 心得上限的基数与每境界增量（需求：「让心得上限随玩家等级增长」）。
  *
- * 刻意就定在「加速刚好满」的那一点（100 点 = +100%），
- * 而不是给一个更大的数 —— 否则界面上会看到"心得 878"这种
- * 早已不再产生任何效果的数字，玩家会以为它还在起作用。
+ * 早先上限写死 100 点（正好 +100%），有两个毛病：
+ *   1. 上限是个**墙**：探索到 100 点之后心得就再也不涨了，
+ *      界面上的数字变成死数；
+ *   2. 秘境从 8 处扩到 44 处之后，同样的探索次数被摊薄，
+ *      实测 21 天最高只有 52 点 —— 上限既摸不到、又卡在中间。
+ * 现在上限 = INSIGHT_MAX_BASE + 掌门境界 × INSIGHT_MAX_PER_REALM，
+ * 于是它跟着玩家等级一起长：炼气 30 点 → 渡劫 270 点（30 + 8×30）。
+ * （300 是「仙人」那一档的值，也就是 INSIGHT_MAX_ABSOLUTE，只用于存档清洗。）
+ *
+ * 同时把每点收益从 +1% 降到 +0.5%：上限既然放开了，
+ * 单点就不能还那么贵，否则修行倍率会随境界一起失控（这是本轮要压的问题之一）。
  */
-export const INSIGHT_MAX = INSIGHT_SPEED_CAP / INSIGHT_SPEED_PER_POINT;
+export const INSIGHT_MAX_BASE = 30;
+export const INSIGHT_MAX_PER_REALM = 30;
+/** 绝对上限，只用于存档清洗（按最终境界算） */
+export const INSIGHT_MAX_ABSOLUTE = INSIGHT_MAX_BASE + 9 * INSIGHT_MAX_PER_REALM;
 /** 一次秘境探索，每名参与者获得的基础心得 */
 export const INSIGHT_PER_EXPEDITION = 2;
 /** 秘境越深，心得越多：每 1 级 minRealm 追加 */
@@ -54,8 +63,13 @@ export const EVENT_CULTIVATE_RATIO = 0.05;
 export const EVENT_MARTIAL_INSIGHT = 3;
 /** 通天塔事件：获得多少心得（更高，因为塔本身稀有） */
 export const EVENT_TOWER_INSIGHT = 5;
-/** 通天塔事件额外提供的发现保底（相当于一次失败的探索） */
-export const EVENT_TOWER_DISCOVERY_PITY = 0.05;
+/**
+ * 通天塔事件额外推进的「发现保底」：相当于白攒了几次探索失败。
+ *
+ * 注意它**不**提高发现概率 —— 发现概率只有寻宝宝盘能提升。
+ * 它做的是把「连续失败计数」往前推，也就是让你更快撞到硬保底。
+ */
+export const EVENT_TOWER_DISCOVERY_PITY = 2;
 
 /* ------------------------------------------------------------------ */
 /* 大比（比武台）                                                       */
@@ -65,8 +79,18 @@ export const EVENT_TOWER_DISCOVERY_PITY = 0.05;
 export const ARENA_INTERVAL_GAME_YEARS = 10;
 /** 大比后的修行加速持续多少游戏年 */
 export const ARENA_BUFF_GAME_YEARS = 1;
-/** 大比带来的修行速度倍率（2 = 翻倍） */
-export const ARENA_BUFF_MULTIPLIER = 2;
+/**
+ * 大比带来的修行速度加成（0.5 = +50%）。
+ *
+ * ⚠️ 这里原本是「倍率 ×2」，本轮改成了加算。
+ * 原因是它和建筑加成**相乘**，把修行倍率的天花板一路推到了 ×7.4：
+ *   (1 + 建筑加成) × 2（大比） × (1 + 心得) ≈ 7.4
+ * 大比因此从一个"节日型"的小加成变成了乘区里最重的一块。
+ * 改成本项与建筑加成相加之后，天花板回到 ×4 上下：
+ *   1 + 功法殿 80% + 讲道堂 50% + 大比 50% + 心得 135% = ×4.15
+ * 大比仍然是全宗最值得期待的事（一次性 +50%），但不再是倍率放大器。
+ */
+export const ARENA_BUFF_BONUS = 0.5;
 /** 大比结束后全宗弟子获得的心得 */
 export const ARENA_INSIGHT_REWARD = 5;
 /** 只有比武台这一座建筑能触发大比 */

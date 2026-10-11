@@ -52,7 +52,7 @@ function describeEffect(def: StructureDef): string {
   if (def.expeditionDistanceBonus) parts.push(`探索距离 +${Math.round(def.expeditionDistanceBonus * 100)}%`);
   if (def.expeditionYieldBonus) parts.push(`秘境产出 +${Math.round(def.expeditionYieldBonus * 100)}%`);
   if (def.casualtyReduction) parts.push(`伤亡率 -${Math.round(def.casualtyReduction * 100)}%`);
-  if (def.discoveryBonus) parts.push(`发现秘境 +${Math.round(def.discoveryBonus * 100)}%`);
+  // 建筑一律不给"发现秘境"加成 —— 那只有寻宝宝盘能给（见 BALANCE 第六节）
   if (def.insightBonus) parts.push(`弟子心得 +${Math.round(def.insightBonus * 100)}%`);
   if (def.breakthroughBonus) parts.push(`突破成功率 +${Math.round(def.breakthroughBonus * 100)}%`);
   if (def.productionBonus) parts.push(`全局产量 +${Math.round(def.productionBonus * 100)}%`);

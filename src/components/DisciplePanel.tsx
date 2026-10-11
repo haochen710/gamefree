@@ -7,7 +7,7 @@
 import { useMemo, useState } from 'react';
 import { GAME_DAYS_PER_SECOND, GAME_DAYS_PER_YEAR, APTITUDE_MAP, APTITUDES, REALMS } from '../game/content';
 import { aptitudeRank, getDiscipleCapReason, getDiscipleSpeed } from '../game/disciples';
-import { getDiscipleCapacity } from '../game/engine';
+import { getDiscipleCapacity, getInsightMax } from '../game/engine';
 import { useGame } from '../game/store';
 import type { Disciple } from '../game/state';
 
@@ -35,7 +35,7 @@ function DiscipleRow({ disciple }: { disciple: Disciple }) {
   const ageRatio = Number.isFinite(lifespan) ? Math.min(1, disciple.age / lifespan) : 0;
   const progressRatio =
     atCap || realm.cultivationYears <= 0 ? 1 : Math.min(1, disciple.progress / realm.cultivationYears);
-  // 实际修行速度 = 资质 × (1 + 心得) × 宗门建筑/大比（需求 4）
+  // 实际修行速度 = 资质 × (建筑 + 大比 + 心得)，三者同一个加算池（需求 4）
   const speed = getDiscipleSpeed(game, disciple);
   const yearsLeft = atCap ? 0 : (realm.cultivationYears - disciple.progress) / speed;
 
@@ -55,8 +55,11 @@ function DiscipleRow({ disciple }: { disciple: Disciple }) {
         </span>
         <span className="disciple__realm">{realm.name}</span>
         {disciple.insight > 0 && (
-          <span className="disciple__tag" title="心得：每点 +1% 修行速度，最多 +100%">
-            心得 {Math.round(disciple.insight)}
+          <span
+                  className="disciple__tag"
+                  title={`心得：每点 +0.5% 修行速度，上限随掌门境界增长（当前 ${Math.round(disciple.insight)}/${getInsightMax(game)}）`}
+                >
+            心得 {Math.round(disciple.insight)}/{getInsightMax(game)}
           </span>
         )}
         {disciple.status === 'exploring' && <span className="disciple__tag">探索中</span>}

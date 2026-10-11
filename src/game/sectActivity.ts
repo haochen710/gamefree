@@ -21,14 +21,13 @@ import {
   EVENT_TOWER_INSIGHT,
   GAME_DAYS_PER_SECOND,
   GAME_DAYS_PER_YEAR,
-  INSIGHT_MAX,
   REALMS,
   SECT_EVENT_CHANCE,
   SECT_EVENT_INTERVAL,
   STRUCTURES,
   type SectEventKind,
 } from './content';
-import { getBuildingCount, getStructureBonus } from './engine';
+import { getBuildingCount, getInsightMax, getStructureBonus } from './engine';
 import { pushJournal } from './disciples';
 import { gameRandom, type RandomSource } from './random';
 import type { Disciple, GameState } from './state';
@@ -100,7 +99,7 @@ export function runArena(state: GameState): ArenaResult {
         ...state.sect,
         disciples: disciples.map((d) => ({
           ...d,
-          insight: Math.min(INSIGHT_MAX, d.insight + reward),
+          insight: Math.min(getInsightMax(state), d.insight + reward),
         })),
       },
       arenaTimer: ARENA_INTERVAL_SECONDS,
@@ -108,7 +107,7 @@ export function runArena(state: GameState): ArenaResult {
       journal: pushJournal(state.journal, {
         time: state.playTime,
         kind: 'good',
-        text: `宗门大比落幕，弟子们各有所得（心得 +${reward}），全宗修行速度翻倍，持续一年`,
+        text: `宗门大比落幕，弟子们各有所得（心得 +${reward}），全宗修行速度大增，持续一年`,
       }),
     },
     participants: disciples.length,
@@ -197,7 +196,7 @@ function applyEvent(
           sect: {
             ...state.sect,
             disciples: state.sect.disciples.map((d) =>
-              d.id === disciple.id ? { ...d, insight: Math.min(INSIGHT_MAX, d.insight + gain) } : d,
+              d.id === disciple.id ? { ...d, insight: Math.min(getInsightMax(state), d.insight + gain) } : d,
             ),
           },
         },
@@ -212,11 +211,11 @@ function applyEvent(
       return {
         state: {
           ...state,
-          discoveryPity: Math.min(1, state.discoveryPity + EVENT_TOWER_DISCOVERY_PITY),
+          discoveryFailures: Math.max(0, state.discoveryFailures - EVENT_TOWER_DISCOVERY_PITY),
           sect: {
             ...state.sect,
             disciples: state.sect.disciples.map((d) =>
-              d.id === disciple.id ? { ...d, insight: Math.min(INSIGHT_MAX, d.insight + gain) } : d,
+              d.id === disciple.id ? { ...d, insight: Math.min(getInsightMax(state), d.insight + gain) } : d,
             ),
           },
         },
