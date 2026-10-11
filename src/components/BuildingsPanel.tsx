@@ -5,12 +5,18 @@
  *   只要**曾经**达成过解锁条件，或者已经建过，就永远显示。
  *   早期版本用「当前资源是否达标」来判断，导致玩家一花掉灵气，
  *   已经建了好几座的灵木林就从面板上消失了。
+ *
+ * 需求 6 之后，建筑卡上还会显示「需钻研某某技术」「需某某图纸」，
+ * 技术与图纸门槛**不隐藏**建筑 —— 玩家得先看见目标，才知道该钻研什么。
  */
 import { fmt } from '../game/decimal';
 import {
+  BLUEPRINT_MAP,
   BUILDABLES,
   BUILD_GROUPS,
+  REALMS,
   RESOURCE_MAP,
+  TECH_MAP,
   type BuildableDef,
   type BuildGroupId,
   type ResourceId,
@@ -34,9 +40,15 @@ import CostList from './CostList';
 /** 建筑效果的一行短说明（只用于不产出资源的建筑） */
 function describeEffect(def: StructureDef): string {
   const parts: string[] = [];
-  if (def.capacity) parts.push(`弟子位 +${def.capacity}`);
+  if (def.capacity) parts.push(`居所 +${def.capacity}`);
+  if (def.plots) parts.push(`灵植地块 +${def.plots}`);
   if (def.alchemySlots) parts.push(`炼丹位 +${def.alchemySlots}`);
   if (def.refiningSlots) parts.push(`炼器位 +${def.refiningSlots}`);
+  if (def.shopSlots) parts.push(`商行货位 +${def.shopSlots}`);
+  if (def.cultivationBonus) parts.push(`弟子修炼 +${Math.round(def.cultivationBonus * 100)}%`);
+  if (def.expeditionSpeedBonus) parts.push(`探索速度 +${Math.round(def.expeditionSpeedBonus * 100)}%`);
+  if (def.breakthroughBonus) parts.push(`突破成功率 +${Math.round(def.breakthroughBonus * 100)}%`);
+  if (def.productionBonus) parts.push(`全局产量 +${Math.round(def.productionBonus * 100)}%`);
   if (def.storage) {
     const storage = (Object.entries(def.storage) as [ResourceId, number][])
       .map(([id, amount]) => `${RESOURCE_MAP[id].icon}+${fmt(amount)}`)
@@ -44,6 +56,51 @@ function describeEffect(def: StructureDef): string {
     parts.push(`储存上限 ${storage}`);
   }
   return parts.join(' · ') || '—';
+}
+
+/**
+ * 门槛标签。
+ *
+ * `getBuildGate` 只返回第一个未满足的条件（决定按钮能不能点），
+ * 但玩家想知道"到底要满足几件事"，所以这里把所有硬性门槛都列出来。
+ */
+function GateTags({ def, state }: { def: BuildableDef; state: GameState }) {
+  const tags: { text: string; done: boolean }[] = [];
+
+  if (def.requiresTech) {
+    tags.push({
+      text: `技术：${TECH_MAP[def.requiresTech]?.name ?? def.requiresTech}`,
+      done: state.techs[def.requiresTech] === true,
+    });
+  }
+  if (def.requiresBlueprint) {
+    tags.push({
+      text: `图纸：${BLUEPRINT_MAP[def.requiresBlueprint]?.name ?? def.requiresBlueprint}`,
+      done: state.blueprints[def.requiresBlueprint] === true,
+    });
+  }
+  if (def.requiresRealm !== undefined && def.requiresRealm > 0) {
+    tags.push({
+      text: `需 ${REALMS[def.requiresRealm].name}`,
+      done: state.realmIndex >= def.requiresRealm,
+    });
+  }
+  if (def.requiresSectLevel) {
+    tags.push({ text: `${def.requiresSectLevel}品宗门`, done: state.sect.level >= def.requiresSectLevel });
+  }
+
+  if (tags.length === 0) return null;
+
+  return (
+    <div className="gate-tags">
+      {tags.map((tag) => (
+        <span key={tag.text} className={tag.done ? 'gate-tag gate-tag--done' : 'gate-tag'}>
+          {tag.done ? '✓ ' : ''}
+          {tag.text}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
@@ -54,7 +111,7 @@ function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
   const atMax = owned >= maxCount;
   const cost1 = getCost(def, owned, 1);
   const cost10 = getCost(def, owned, 10);
-  // 境界 / 宗门门槛未到时按钮必须禁用（gate 会说明原因）
+  // 技术 / 图纸 / 境界 / 宗门四道门槛任一未过，按钮都必须禁用
   const gate = getBuildGate(def, state);
   const blocked = gate !== null || atMax;
   const canBuy1 = !blocked && canAfford(state, cost1);
@@ -86,6 +143,7 @@ function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
                 : '—'}
           </div>
           <div className="generator__desc">{def.desc}</div>
+          <GateTags def={def} state={state} />
         </div>
       </div>
 

@@ -11,22 +11,31 @@ import Decimal, { D } from './decimal';
 import { gameRandom, type RandomSource } from './random';
 import {
   APTITUDE_ORDER,
+  AUTO_REFINE_LEVEL_MAX,
+  BLUEPRINT_MAP,
   BUILDABLES,
   FINAL_REALM_INDEX,
   ITEM_MAP,
   MATERIAL_IDS,
+  MATERIAL_MAP,
   PILL_MAP,
   REALMS,
   RESOURCE_IDS,
   SECRET_REALMS,
   SECRET_REALM_MAP,
+  SEED_MAP,
   SERVANT_JOB_MAP,
+  SHOP_GOOD_MAP,
+  TECHS,
+  TECH_MAP,
+  TRAVEL_REGION_MAP,
   createEmptyBuffs,
   type ActiveBuffs,
   type AptitudeId,
   type ItemId,
   type MaterialId,
   type ResourceId,
+  type ShopOffer,
 } from './content';
 import { applyTick } from './tick';
 import { refreshUnlocks } from './engine';
@@ -37,6 +46,7 @@ import {
   createEmptyMaterials,
   createEmptyResources,
   createEmptySect,
+  createEmptyShop,
   createEmptyUnlocked,
   createEmptyUnlockedRealms,
   createInitialState,
@@ -45,7 +55,11 @@ import {
   type GameState,
   type JournalEntry,
   type MaterialMap,
+  type PersonalTravel,
+  type Planting,
+  type ResearchState,
   type ResourceMap,
+  type ShopState,
 } from './state';
 
 export const SAVE_KEY = 'xiantu.save.v2';
@@ -91,6 +105,23 @@ export interface SerializedGame {
   sv: Record<string, number>;
   /** injurySeconds：道伤剩余秒数 */
   inj: number;
+  /** personalTravel：掌门游历（需求 1） */
+  pv?: PersonalTravel | null;
+  /** autoRefineLevel / autoRefineProgress：自动合成（需求 4） */
+  au?: number;
+  ap?: number;
+  /** seeds：材料种子（需求 5） */
+  sd?: Record<string, number>;
+  /** plantings / nextPlantingId：地块（需求 5） */
+  pg?: Planting[];
+  npi?: number;
+  /** techs / research：钻研（需求 6） */
+  tc?: Record<string, boolean>;
+  rs?: ResearchState | null;
+  /** blueprints：图纸（需求 6） */
+  bpr?: Record<string, boolean>;
+  /** shop：商行货架（需求 3） */
+  sh?: ShopState;
   dy: string;
   asc: number;
   tq: string;
@@ -137,6 +168,16 @@ export function serialize(state: GameState): SerializedGame {
     mp: state.mindProgress,
     sv: { ...state.servants },
     inj: state.injurySeconds,
+    pv: state.personalTravel,
+    au: state.autoRefineLevel,
+    ap: state.autoRefineProgress,
+    sd: { ...state.seeds },
+    pg: state.plantings,
+    npi: state.nextPlantingId,
+    tc: { ...state.techs },
+    rs: state.research,
+    bpr: { ...state.blueprints },
+    sh: state.shop,
     dy: state.daoYun.toString(),
     asc: state.ascensions,
     tq: state.totalQi.toString(),
@@ -301,6 +342,108 @@ function repairState(state: GameState): GameState {
   return { ...state, sect: { ...state.sect, disciples }, expeditions };
 }
 
+/* ------------------------------------------------------------------ */
+/* 新增字段的读档校验                                                   */
+/* ------------------------------------------------------------------ */
+
+/** 只保留已知 key 的布尔表（技术 / 图纸） */
+function toBoolMap(raw: unknown, allowed: string[]): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  if (raw === null || typeof raw !== 'object') return out;
+  const source = raw as Record<string, unknown>;
+  for (const key of allowed) {
+    if (source[key] === true) out[key] = true;
+  }
+  return out;
+}
+
+/** 种子表：只保留已知材料，数量取正整并设上限 */
+function toSeedMap(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (raw === null || typeof raw !== 'object') return out;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(key in SEED_MAP)) continue;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) continue;
+    out[key] = Math.min(Math.floor(value), 1e9);
+  }
+  return out;
+}
+
+function sanitizeTravel(raw: unknown): PersonalTravel | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const t = raw as Partial<PersonalTravel>;
+  if (typeof t.regionId !== 'string' || !TRAVEL_REGION_MAP[t.regionId]) return null;
+
+  const def = TRAVEL_REGION_MAP[t.regionId];
+  return {
+    regionId: t.regionId,
+    progress: toFloat(t.progress, 0, 0, 1e9),
+    duration: toFloat(t.duration, def.duration, 1, 1e9),
+  };
+}
+
+function sanitizePlantings(raw: unknown, nextId: number): Planting[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Planting[] = [];
+  for (let i = 0; i < raw.length && i < 500; i += 1) {
+    const entry = raw[i];
+    if (entry === null || typeof entry !== 'object') continue;
+    const p = entry as Partial<Planting>;
+    if (typeof p.material !== 'string' || !(p.material in MATERIAL_MAP)) continue;
+
+    const seed = SEED_MAP[p.material];
+    out.push({
+      id: typeof p.id === 'string' && p.id ? p.id : `p${nextId + i}`,
+      material: p.material as MaterialId,
+      progress: toFloat(p.progress, 0, 0, 1e9),
+      duration: toFloat(p.duration, seed?.growSeconds ?? 300, 1, 1e9),
+    });
+  }
+  return out;
+}
+
+function sanitizeResearch(raw: unknown): ResearchState | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const r = raw as Partial<ResearchState>;
+  if (typeof r.id !== 'string' || !TECH_MAP[r.id]) return null;
+  return {
+    id: r.id,
+    remaining: toFloat(r.remaining, TECH_MAP[r.id].seconds, 0, 1e9),
+  };
+}
+
+function sanitizeShop(raw: unknown): ShopState {
+  const empty = createEmptyShop();
+  if (raw === null || typeof raw !== 'object') return empty;
+  const s = raw as Partial<ShopState>;
+  const offers: ShopOffer[] = [];
+
+  if (Array.isArray(s.offers)) {
+    for (let i = 0; i < s.offers.length && i < 40; i += 1) {
+      const entry = s.offers[i];
+      if (entry === null || typeof entry !== 'object') continue;
+      const o = entry as Partial<ShopOffer>;
+      if (typeof o.item !== 'string') continue;
+      // 商品必须在货品表里，且图纸不能是已经拿到的
+      const good = SHOP_GOOD_MAP[`${o.kind}:${o.item}`];
+      if (!good) continue;
+      offers.push({
+        id: typeof o.id === 'string' && o.id ? o.id : `o${i}`,
+        kind: good.kind,
+        item: good.item,
+        amount: toInt(o.amount, good.baseAmount, 1, 1e12),
+        price: toInt(o.price, good.basePrice, 1, 1e15),
+        sold: o.sold === true,
+      });
+    }
+  }
+
+  return {
+    offers,
+    secondsLeft: toFloat(s.secondsLeft, 0, 0, 1e9),
+  };
+}
+
 /** 兼容 v1 存档：那版把丹药当成资源，设施存在 g 字段里 */
 function migrateFromV1(raw: Record<string, unknown>): Record<string, unknown> {
   const legacyResources = (raw.r ?? {}) as Record<string, unknown>;
@@ -339,8 +482,10 @@ export function deserialize(raw: unknown): GameState | null {
   let data = raw as Record<string, unknown>;
   if (typeof data.v !== 'number') return null;
 
-  // v1 → v2 迁移
-  if (data.v < SAVE_VERSION) data = migrateFromV1(data);
+  // v1 → 当前版本迁移。
+  // 必须精确判断「是不是 v1」：早先写的是 data.v < SAVE_VERSION，
+  // 一旦 SAVE_VERSION 从 2 升到 3，所有 v2 存档都会被当成 v1 洗掉。
+  if (data.v < 2) data = migrateFromV1(data);
 
   const fresh = createInitialState();
 
@@ -441,6 +586,10 @@ export function deserialize(raw: unknown): GameState | null {
     servants[job] = Math.min(Math.floor(count), 1e6);
   }
 
+  /* ---- 新增字段（需求 1 / 3 / 4 / 5 / 6） ---- */
+  const nextPlantingId = toInt(data.npi, 1, 1, Number.MAX_SAFE_INTEGER);
+  const plantings = sanitizePlantings(data.pg, nextPlantingId);
+
   const state: GameState = {
     version: SAVE_VERSION,
     resources,
@@ -458,6 +607,16 @@ export function deserialize(raw: unknown): GameState | null {
     mindProgress: toFloat(data.mp, 0, 0, 1e6),
     servants,
     injurySeconds: toFloat(data.inj, 0, 0, 1e9),
+    personalTravel: sanitizeTravel(data.pv),
+    autoRefineLevel: toInt(data.au, 0, 0, AUTO_REFINE_LEVEL_MAX),
+    autoRefineProgress: toFloat(data.ap, 0, 0, 1e6),
+    seeds: toSeedMap(data.sd),
+    plantings,
+    nextPlantingId,
+    techs: toBoolMap(data.tc, TECHS.map((t) => t.id)),
+    research: sanitizeResearch(data.rs),
+    blueprints: toBoolMap(data.bpr, Object.keys(BLUEPRINT_MAP)),
+    shop: sanitizeShop(data.sh),
     daoYun: toDec(data.dy, 0),
     ascensions: toInt(data.asc, 0, 0, Number.MAX_SAFE_INTEGER),
     totalQi: toDec(data.tq, 0),
@@ -554,6 +713,10 @@ export interface OfflineReport {
   gains: { id: ResourceId; amount: Decimal }[];
   materialGains: { id: MaterialId; amount: Decimal }[];
   pillGains: OfflineLoot[];
+  /** 离线期间带回来的材料种子（游历 / 探索，需求 5） */
+  seedGains: OfflineLoot[];
+  /** 离线期间寻获的图纸（需求 6） */
+  blueprintGains: OfflineLoot[];
   /** 离线期间发生的事件（弟子突破、陨落、探索归来等） */
   journal: JournalEntry[];
 }
@@ -607,9 +770,32 @@ export function applyOffline(
   const newCount = Math.max(0, after.journal.length - before.journal.length);
   const journal = after.journal.slice(0, newCount);
 
+  const seedGains: OfflineLoot[] = [];
+  for (const [id, count] of Object.entries(after.seeds)) {
+    const beforeCount = before.seeds[id] ?? 0;
+    if (count > beforeCount) {
+      const def = SEED_MAP[id];
+      seedGains.push({
+        id,
+        name: def?.name ?? id,
+        icon: def?.icon ?? '🌰',
+        amount: count - beforeCount,
+      });
+    }
+  }
+
+  const blueprintGains: OfflineLoot[] = Object.keys(after.blueprints)
+    .filter((id) => before.blueprints[id] !== true)
+    .map((id) => ({
+      id,
+      name: BLUEPRINT_MAP[id]?.name ?? id,
+      icon: BLUEPRINT_MAP[id]?.icon ?? '📜',
+      amount: 1,
+    }));
+
   return {
     state: after,
-    report: { seconds, gains, materialGains, pillGains, journal },
+    report: { seconds, gains, materialGains, pillGains, seedGains, blueprintGains, journal },
   };
 }
 

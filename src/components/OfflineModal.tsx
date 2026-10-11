@@ -10,7 +10,12 @@ export function OfflineModal() {
 
   if (!offline) return null;
 
-  const hasGains = offline.gains.length > 0 || offline.materialGains.length > 0 || offline.pillGains.length > 0;
+  const hasGains =
+    offline.gains.length > 0 ||
+    offline.materialGains.length > 0 ||
+    offline.pillGains.length > 0 ||
+    (offline.seedGains?.length ?? 0) > 0 ||
+    (offline.blueprintGains?.length ?? 0) > 0;
 
   return (
     <div className="modal-mask" role="dialog" aria-modal="true">
@@ -54,6 +59,30 @@ export function OfflineModal() {
                 <span className="modal__icon">{entry.icon}</span>
                 {entry.name}
                 <strong> +{entry.amount}</strong>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {(offline.seedGains?.length ?? 0) > 0 && (
+          <ul className="modal__list">
+            {offline.seedGains.map((entry) => (
+              <li key={entry.id}>
+                <span className="modal__icon">{entry.icon}</span>
+                {entry.name}
+                <strong> +{entry.amount}</strong>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {(offline.blueprintGains?.length ?? 0) > 0 && (
+          <ul className="modal__list">
+            {offline.blueprintGains.map((entry) => (
+              <li key={entry.id}>
+                <span className="modal__icon">{entry.icon}</span>
+                {entry.name}
+                <strong> 已寻获</strong>
               </li>
             ))}
           </ul>

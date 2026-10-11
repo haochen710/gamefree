@@ -26,3 +26,34 @@ export const gameRandom: RandomSource = Math.random;
 export function randomId(prefix: string, random: RandomSource = gameRandom): string {
   return `${prefix}${Math.floor(random() * 0xffffffff).toString(36)}`;
 }
+
+/**
+ * 按权重**不放回**地抽取 count 项。
+ *
+ * 秘境掉落、游历掉落、商行上架都用它 —— 三处的抽取规则必须完全一致，
+ * 否则玩家会发现"同样的权重在不同的地方概率不一样"。
+ */
+export function weightedDraw<T extends { weight: number }>(
+  pool: T[],
+  count: number,
+  random: RandomSource,
+): T[] {
+  const available = [...pool];
+  const picked: T[] = [];
+  while (picked.length < count && available.length > 0) {
+    const total = available.reduce((sum, item) => sum + item.weight, 0);
+    if (total <= 0) break;
+    let roll = random() * total;
+    let index = available.length - 1;
+    for (let i = 0; i < available.length; i += 1) {
+      roll -= available[i].weight;
+      if (roll <= 0) {
+        index = i;
+        break;
+      }
+    }
+    picked.push(available[index]);
+    available.splice(index, 1);
+  }
+  return picked;
+}

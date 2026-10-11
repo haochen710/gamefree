@@ -1,15 +1,28 @@
 /**
  * 丹方与器方（需求 2）
  *
+ * 需求原文：「炼丹和炼器材料细分，炼制丹药和器物由基础材料和稀有材料构成。
+ *           其中越高等级的丹药和器物，越需要稀有材料，种类也增加。」
+ *
+ * 因此每一条配方都由三部分构成：
+ *   基础资源（灵气 / 灵草 / 灵矿）
+ * + 基础材料（妖丹、玄铁、灵蚕丝、地火髓、寒玉）
+ * + 稀有材料（月华露 … 鸿蒙道果）
+ *
+ * 而**稀有材料的种类数随品阶递增** —— 这条规律由 RARE_KINDS_MIN 固化下来，
+ * 冒烟测试会逐条检查，谁改配方改坏了会被立刻发现。
+ *
  * 三类丹药：
  *   - breakthrough 境界丹：突破大境界时服用，大幅提升成功率（需求 5）
  *   - support      辅助型：增益自身修行
  *   - combat       战斗型：增益弟子与秘境探索
- *
- * 每个品阶（1~9）都同时有辅助型和战斗型，品阶越高效果越强、材料越稀有。
- * 炼制需要对应的炼丹 / 炼器品阶，而品阶又受丹房 / 炼器房数量限制。
  */
-import type { ItemId } from './resources';
+import {
+  BASE_MATERIAL_IDS,
+  RARE_MATERIAL_IDS,
+  type ItemId,
+  type MaterialId,
+} from './resources';
 
 /* ------------------------------------------------------------------ */
 /* 效果                                                                */
@@ -42,6 +55,36 @@ export type Effect =
   | { kind: 'completeExpeditions' };
 
 /* ------------------------------------------------------------------ */
+/* 材料种类数的规律（需求 2 的量化标准）                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 第 N 品配方至少需要几种**基础材料** / 几种**稀有材料**（下标 = 品阶）。
+ *
+ * 这就是"越高等级的丹药和器物，越需要稀有材料，种类也增加"的硬性下限：
+ *   一品 0 种稀有 → 九品 5 种稀有
+ * 下限而不是定值，是为了给个别配方留出特色空间（例如渡劫丹可以用到 6 种）。
+ */
+export const BASE_KINDS_MIN = [0, 1, 2, 2, 2, 2, 2, 3, 3, 3];
+export const RARE_KINDS_MIN = [0, 0, 1, 1, 2, 2, 3, 3, 4, 5];
+
+/** 一条配方里用到了几种基础 / 稀有材料 */
+export function countMaterialKinds(cost: Partial<Record<ItemId, number>>): {
+  base: number;
+  rare: number;
+} {
+  const baseSet = new Set<MaterialId>(BASE_MATERIAL_IDS);
+  const rareSet = new Set<MaterialId>(RARE_MATERIAL_IDS);
+  let base = 0;
+  let rare = 0;
+  for (const id of Object.keys(cost) as ItemId[]) {
+    if (baseSet.has(id as MaterialId)) base += 1;
+    else if (rareSet.has(id as MaterialId)) rare += 1;
+  }
+  return { base, rare };
+}
+
+/* ------------------------------------------------------------------ */
 /* 配方                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -68,7 +111,7 @@ export const PILLS: PillDef[] = [
     tier: 2,
     category: 'breakthrough',
     desc: '助修士凝练道基。突破至筑基期时服用，成功率大增。',
-    cost: { herb: 100, demonCore: 10, qi: 5e3 },
+    cost: { herb: 100, demonCore: 10, spiritSilk: 4, moonDew: 2, qi: 5e3 },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
@@ -78,7 +121,7 @@ export const PILLS: PillDef[] = [
     tier: 3,
     category: 'breakthrough',
     desc: '以妖丹为引凝结金丹。突破至金丹期时服用。',
-    cost: { herb: 300, demonCore: 30, blackIron: 20, qi: 1e5 },
+    cost: { herb: 300, demonCore: 30, blackIron: 20, moonDew: 6, qi: 1e5 },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
@@ -88,7 +131,7 @@ export const PILLS: PillDef[] = [
     tier: 4,
     category: 'breakthrough',
     desc: '金丹化婴之关键。突破至元婴期时服用。',
-    cost: { herb: 800, blackIron: 80, starSand: 20, qi: 2e6 },
+    cost: { herb: 800, blackIron: 80, fireMarrow: 12, moonDew: 10, starSand: 12, qi: 2e6 },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
@@ -98,7 +141,14 @@ export const PILLS: PillDef[] = [
     tier: 5,
     category: 'breakthrough',
     desc: '神识化虚之资。突破至化神期时服用。',
-    cost: { herb: 2000, starSand: 60, dragonBlood: 15, qi: 4e7 },
+    cost: {
+      herb: 2000,
+      fireMarrow: 40,
+      coldJade: 20,
+      starSand: 60,
+      lunarCrystal: 8,
+      qi: 4e7,
+    },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
@@ -108,7 +158,15 @@ export const PILLS: PillDef[] = [
     tier: 6,
     category: 'breakthrough',
     desc: '炼化虚空之凭依。突破至炼虚期时服用。',
-    cost: { herb: 5000, starSand: 150, dragonBlood: 50, qi: 8e8 },
+    cost: {
+      herb: 5000,
+      coldJade: 60,
+      fireMarrow: 80,
+      starSand: 150,
+      lunarCrystal: 25,
+      dragonBlood: 30,
+      qi: 8e8,
+    },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
@@ -118,7 +176,16 @@ export const PILLS: PillDef[] = [
     tier: 7,
     category: 'breakthrough',
     desc: '法体合一之契机。突破至合体期时服用。',
-    cost: { herb: 1.2e4, dragonBlood: 150, immortalJade: 20, qi: 1.6e10 },
+    cost: {
+      herb: 1.2e4,
+      fireMarrow: 100,
+      coldJade: 120,
+      spiritSilk: 400,
+      lunarCrystal: 50,
+      dragonBlood: 150,
+      immortalJade: 20,
+      qi: 1.6e10,
+    },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
@@ -128,7 +195,17 @@ export const PILLS: PillDef[] = [
     tier: 8,
     category: 'breakthrough',
     desc: '大乘圆满之关窍。突破至大乘期时服用。',
-    cost: { herb: 3e4, dragonBlood: 400, immortalJade: 60, qi: 3e11 },
+    cost: {
+      herb: 3e4,
+      fireMarrow: 300,
+      coldJade: 200,
+      spiritSilk: 500,
+      lunarCrystal: 80,
+      dragonBlood: 400,
+      netherFlame: 40,
+      immortalJade: 60,
+      qi: 3e11,
+    },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
@@ -138,7 +215,18 @@ export const PILLS: PillDef[] = [
     tier: 9,
     category: 'breakthrough',
     desc: '抵御九重雷劫。突破至渡劫期时服用。',
-    cost: { herb: 8e4, immortalJade: 200, qi: 6e12 },
+    cost: {
+      herb: 8e4,
+      fireMarrow: 600,
+      coldJade: 400,
+      spiritSilk: 800,
+      lunarCrystal: 200,
+      dragonBlood: 600,
+      netherFlame: 120,
+      immortalJade: 200,
+      chaosQi: 30,
+      qi: 6e12,
+    },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
@@ -148,7 +236,19 @@ export const PILLS: PillDef[] = [
     tier: 9,
     category: 'breakthrough',
     desc: '传说中打开仙门的最后一味。突破至仙人时服用。',
-    cost: { herb: 2e5, immortalJade: 600, qi: 1.2e14 },
+    cost: {
+      herb: 2e5,
+      fireMarrow: 1000,
+      coldJade: 700,
+      spiritSilk: 1500,
+      lunarCrystal: 500,
+      dragonBlood: 1500,
+      netherFlame: 400,
+      immortalJade: 600,
+      chaosQi: 80,
+      primordialFruit: 15,
+      qi: 1.2e14,
+    },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
 
@@ -160,7 +260,7 @@ export const PILLS: PillDef[] = [
     tier: 1,
     category: 'support',
     desc: '服下后气血翻涌，吸纳灵气速度大涨。',
-    cost: { herb: 30, qi: 1e3 },
+    cost: { herb: 30, demonCore: 3, qi: 1e3 },
     effect: { kind: 'productionBuff', multiplier: 1.5, duration: 300 },
   },
   {
@@ -170,7 +270,7 @@ export const PILLS: PillDef[] = [
     tier: 2,
     category: 'support',
     desc: '宁神静气，立即回满心神。',
-    cost: { herb: 120, demonCore: 10, qi: 8e3 },
+    cost: { herb: 120, demonCore: 10, spiritSilk: 6, moonDew: 3, qi: 8e3 },
     effect: { kind: 'restoreMind' },
   },
   {
@@ -180,7 +280,7 @@ export const PILLS: PillDef[] = [
     tier: 3,
     category: 'support',
     desc: '固本培元，立即获得相当于 5 分钟产量的灵气。',
-    cost: { herb: 400, demonCore: 40, qi: 2e5 },
+    cost: { herb: 400, demonCore: 40, blackIron: 20, moonDew: 8, starSand: 4, qi: 2e5 },
     effect: { kind: 'grantQiSeconds', seconds: 300 },
   },
   {
@@ -190,7 +290,14 @@ export const PILLS: PillDef[] = [
     tier: 4,
     category: 'support',
     desc: '洗涤经脉，随机一名弟子的资质提升一档。',
-    cost: { herb: 1000, starSand: 30, dragonBlood: 5, qi: 5e6 },
+    cost: {
+      herb: 1000,
+      blackIron: 100,
+      fireMarrow: 20,
+      starSand: 30,
+      lunarCrystal: 6,
+      qi: 5e6,
+    },
     effect: { kind: 'aptitudeUp' },
   },
   {
@@ -200,7 +307,14 @@ export const PILLS: PillDef[] = [
     tier: 5,
     category: 'support',
     desc: '青春永驻，全体弟子的寿元上限永久提升 10%。',
-    cost: { herb: 3000, dragonBlood: 20, qi: 1e8 },
+    cost: {
+      herb: 3000,
+      fireMarrow: 60,
+      coldJade: 30,
+      starSand: 90,
+      lunarCrystal: 12,
+      qi: 1e8,
+    },
     effect: { kind: 'lifespanBonus', amount: 0.1 },
   },
   {
@@ -210,7 +324,15 @@ export const PILLS: PillDef[] = [
     tier: 6,
     category: 'support',
     desc: '顿悟天地至理，立即获得相当于 20 分钟产量的灵气。',
-    cost: { herb: 8000, starSand: 200, qi: 2e9 },
+    cost: {
+      herb: 8000,
+      coldJade: 80,
+      fireMarrow: 100,
+      lunarCrystal: 40,
+      dragonBlood: 50,
+      netherFlame: 8,
+      qi: 2e9,
+    },
     effect: { kind: 'grantQiSeconds', seconds: 1200 },
   },
   {
@@ -220,7 +342,17 @@ export const PILLS: PillDef[] = [
     tier: 7,
     category: 'support',
     desc: '稳固道基，此后所有突破的成功率永久 +5%。',
-    cost: { herb: 1e4, starSand: 300, dragonBlood: 100, qi: 2e10 },
+    cost: {
+      herb: 1e4,
+      fireMarrow: 120,
+      coldJade: 100,
+      spiritSilk: 300,
+      starSand: 300,
+      dragonBlood: 100,
+      netherFlame: 25,
+      immortalJade: 15,
+      qi: 2e10,
+    },
     effect: { kind: 'breakthroughBonus', amount: 0.05 },
   },
   {
@@ -230,7 +362,18 @@ export const PILLS: PillDef[] = [
     tier: 8,
     category: 'support',
     desc: '夺天地之造化，全局产量提升至 3 倍，持续 10 分钟。',
-    cost: { herb: 5e4, dragonBlood: 300, immortalJade: 40, qi: 1e12 },
+    cost: {
+      herb: 5e4,
+      fireMarrow: 400,
+      coldJade: 250,
+      spiritSilk: 800,
+      lunarCrystal: 100,
+      dragonBlood: 300,
+      netherFlame: 80,
+      immortalJade: 40,
+      chaosQi: 15,
+      qi: 1e12,
+    },
     effect: { kind: 'productionBuff', multiplier: 3, duration: 600 },
   },
   {
@@ -240,7 +383,19 @@ export const PILLS: PillDef[] = [
     tier: 9,
     category: 'support',
     desc: '九转方成，服下即刻圆满当前境界的所有小境界。',
-    cost: { herb: 1.5e5, immortalJade: 300, qi: 1e13 },
+    cost: {
+      herb: 1.5e5,
+      fireMarrow: 1000,
+      coldJade: 600,
+      spiritSilk: 2000,
+      lunarCrystal: 250,
+      dragonBlood: 800,
+      netherFlame: 200,
+      immortalJade: 300,
+      chaosQi: 50,
+      primordialFruit: 10,
+      qi: 1e13,
+    },
     effect: { kind: 'completeLayers' },
   },
 
@@ -252,7 +407,7 @@ export const PILLS: PillDef[] = [
     tier: 1,
     category: 'combat',
     desc: '淬炼肉身，弟子战力提升 10%，持续 10 分钟。',
-    cost: { herb: 40, demonCore: 5, qi: 2e3 },
+    cost: { herb: 40, demonCore: 6, qi: 2e3 },
     effect: { kind: 'expeditionPower', multiplier: 1.1, duration: 600 },
   },
   {
@@ -262,7 +417,7 @@ export const PILLS: PillDef[] = [
     tier: 2,
     category: 'combat',
     desc: '筋骨如铁，探索伤亡率降低 25%，持续 10 分钟。',
-    cost: { herb: 150, demonCore: 15, blackIron: 10, qi: 1e4 },
+    cost: { herb: 150, demonCore: 15, blackIron: 10, spiritSilk: 8, moonDew: 4, qi: 1e4 },
     effect: { kind: 'expeditionSafety', reduction: 0.25, duration: 600 },
   },
   {
@@ -272,7 +427,7 @@ export const PILLS: PillDef[] = [
     tier: 3,
     category: 'combat',
     desc: '血气沸腾，秘境产出提升 50%，持续 10 分钟。',
-    cost: { herb: 500, demonCore: 50, qi: 3e5 },
+    cost: { herb: 500, demonCore: 50, blackIron: 30, moonDew: 10, starSand: 6, qi: 3e5 },
     effect: { kind: 'expeditionYield', multiplier: 1.5, duration: 600 },
   },
   {
@@ -282,7 +437,14 @@ export const PILLS: PillDef[] = [
     tier: 4,
     category: 'combat',
     desc: '置之死地而后生，弟子战力提升 30%，持续 10 分钟。',
-    cost: { herb: 1200, blackIron: 100, qi: 6e6 },
+    cost: {
+      herb: 1200,
+      blackIron: 100,
+      fireMarrow: 25,
+      moonDew: 12,
+      starSand: 40,
+      qi: 6e6,
+    },
     effect: { kind: 'expeditionPower', multiplier: 1.3, duration: 600 },
   },
   {
@@ -292,7 +454,14 @@ export const PILLS: PillDef[] = [
     tier: 5,
     category: 'combat',
     desc: '身轻如燕，探索速度提升 50%，持续 10 分钟。',
-    cost: { herb: 2500, starSand: 50, qi: 1e8 },
+    cost: {
+      herb: 2500,
+      fireMarrow: 50,
+      coldJade: 25,
+      starSand: 100,
+      lunarCrystal: 15,
+      qi: 1e8,
+    },
     effect: { kind: 'expeditionSpeed', multiplier: 1.5, duration: 600 },
   },
   {
@@ -302,7 +471,15 @@ export const PILLS: PillDef[] = [
     tier: 6,
     category: 'combat',
     desc: '破军之势不可挡，秘境产出提升 100%，持续 10 分钟。',
-    cost: { herb: 6000, starSand: 180, dragonBlood: 30, qi: 1.5e9 },
+    cost: {
+      herb: 6000,
+      coldJade: 70,
+      fireMarrow: 120,
+      lunarCrystal: 45,
+      dragonBlood: 70,
+      netherFlame: 10,
+      qi: 1.5e9,
+    },
     effect: { kind: 'expeditionYield', multiplier: 2, duration: 600 },
   },
   {
@@ -312,7 +489,16 @@ export const PILLS: PillDef[] = [
     tier: 7,
     category: 'combat',
     desc: '天罡护体，探索期间弟子免疫伤亡，持续 10 分钟。',
-    cost: { herb: 1.5e4, dragonBlood: 120, immortalJade: 15, qi: 2e10 },
+    cost: {
+      herb: 1.5e4,
+      fireMarrow: 200,
+      coldJade: 150,
+      spiritSilk: 500,
+      starSand: 400,
+      dragonBlood: 120,
+      immortalJade: 15,
+      qi: 2e10,
+    },
     effect: { kind: 'expeditionSafety', reduction: 1, duration: 600 },
   },
   {
@@ -322,7 +508,17 @@ export const PILLS: PillDef[] = [
     tier: 8,
     category: 'combat',
     desc: '荡平诸魔，立即完成所有进行中的秘境探索。',
-    cost: { herb: 4e4, dragonBlood: 350, immortalJade: 50, qi: 5e11 },
+    cost: {
+      herb: 4e4,
+      fireMarrow: 500,
+      coldJade: 300,
+      spiritSilk: 1000,
+      lunarCrystal: 120,
+      dragonBlood: 350,
+      netherFlame: 100,
+      immortalJade: 50,
+      qi: 5e11,
+    },
     effect: { kind: 'completeExpeditions' },
   },
   {
@@ -332,7 +528,19 @@ export const PILLS: PillDef[] = [
     tier: 9,
     category: 'combat',
     desc: '仙灵附体，弟子战力翻倍且免疫伤亡，持续 10 分钟。',
-    cost: { herb: 1e5, immortalJade: 400, qi: 8e12 },
+    cost: {
+      herb: 1e5,
+      fireMarrow: 1200,
+      coldJade: 700,
+      spiritSilk: 2500,
+      lunarCrystal: 300,
+      dragonBlood: 900,
+      netherFlame: 250,
+      immortalJade: 400,
+      chaosQi: 60,
+      primordialFruit: 12,
+      qi: 8e12,
+    },
     effect: { kind: 'expeditionPower', multiplier: 2, duration: 600 },
   },
 ];
@@ -390,7 +598,7 @@ export const ARTIFACTS: ArtifactDef[] = [
     tier: 2,
     category: 'support',
     desc: '随身佩戴可聚拢灵气，全局产量 +8%。',
-    cost: { demonCore: 50, ore: 1500, qi: 5e4 },
+    cost: { demonCore: 50, spiritSilk: 12, moonDew: 6, ore: 1500, qi: 5e4 },
     effect: { kind: 'production', bonus: 0.08 },
   },
   {
@@ -400,7 +608,7 @@ export const ARTIFACTS: ArtifactDef[] = [
     tier: 3,
     category: 'combat',
     desc: '剑身蕴灵，弟子战力 +12%。',
-    cost: { blackIron: 40, starSand: 20, ore: 5000, qi: 1e6 },
+    cost: { blackIron: 40, spiritSilk: 20, moonDew: 12, starSand: 10, ore: 5000, qi: 1e6 },
     effect: { kind: 'combat', bonus: 0.12 },
   },
   {
@@ -410,7 +618,14 @@ export const ARTIFACTS: ArtifactDef[] = [
     tier: 4,
     category: 'support',
     desc: '可勘破秘境路径，探索速度 +25%。',
-    cost: { blackIron: 150, starSand: 60, ore: 2e4, qi: 5e6 },
+    cost: {
+      blackIron: 150,
+      fireMarrow: 30,
+      moonDew: 15,
+      starSand: 60,
+      ore: 2e4,
+      qi: 5e6,
+    },
     effect: { kind: 'expeditionSpeed', bonus: 0.25 },
   },
   {
@@ -420,7 +635,14 @@ export const ARTIFACTS: ArtifactDef[] = [
     tier: 5,
     category: 'combat',
     desc: '重剑无锋，大巧不工。弟子战力 +25%。',
-    cost: { starSand: 200, dragonBlood: 40, ore: 6e4, qi: 1e8 },
+    cost: {
+      fireMarrow: 80,
+      coldJade: 50,
+      starSand: 200,
+      lunarCrystal: 30,
+      ore: 6e4,
+      qi: 1e8,
+    },
     effect: { kind: 'combat', bonus: 0.25 },
   },
   {
@@ -430,7 +652,15 @@ export const ARTIFACTS: ArtifactDef[] = [
     tier: 6,
     category: 'support',
     desc: '危急时刻自动护主，探索伤亡率 -30%。',
-    cost: { starSand: 300, dragonBlood: 60, ore: 2e5, qi: 2e9 },
+    cost: {
+      coldJade: 120,
+      fireMarrow: 150,
+      lunarCrystal: 60,
+      dragonBlood: 50,
+      netherFlame: 15,
+      ore: 2e5,
+      qi: 2e9,
+    },
     effect: { kind: 'expeditionSafety', reduction: 0.3 },
   },
   {
@@ -440,7 +670,17 @@ export const ARTIFACTS: ArtifactDef[] = [
     tier: 7,
     category: 'combat',
     desc: '一剑光寒十九洲。弟子战力 +50%。',
-    cost: { dragonBlood: 200, immortalJade: 40, ore: 5e5, qi: 1e10 },
+    cost: {
+      fireMarrow: 300,
+      coldJade: 200,
+      spiritSilk: 600,
+      starSand: 500,
+      dragonBlood: 200,
+      netherFlame: 40,
+      immortalJade: 30,
+      ore: 5e5,
+      qi: 1e10,
+    },
     effect: { kind: 'combat', bonus: 0.5 },
   },
   {
@@ -450,7 +690,17 @@ export const ARTIFACTS: ArtifactDef[] = [
     tier: 8,
     category: 'support',
     desc: '内有乾坤，可多带回五成秘境收获。',
-    cost: { dragonBlood: 400, immortalJade: 80, ore: 1e6, qi: 1e12 },
+    cost: {
+      fireMarrow: 700,
+      coldJade: 450,
+      spiritSilk: 1500,
+      lunarCrystal: 150,
+      dragonBlood: 400,
+      netherFlame: 100,
+      immortalJade: 80,
+      ore: 1e6,
+      qi: 1e12,
+    },
     effect: { kind: 'expeditionYield', bonus: 0.5 },
   },
   {
@@ -460,7 +710,19 @@ export const ARTIFACTS: ArtifactDef[] = [
     tier: 9,
     category: 'combat',
     desc: '传自上古凶兵，弟子战力 +100%。',
-    cost: { immortalJade: 800, ore: 3e6, qi: 1e13 },
+    cost: {
+      fireMarrow: 1500,
+      coldJade: 900,
+      spiritSilk: 3000,
+      lunarCrystal: 400,
+      dragonBlood: 1200,
+      netherFlame: 300,
+      immortalJade: 800,
+      chaosQi: 70,
+      primordialFruit: 12,
+      ore: 3e6,
+      qi: 1e13,
+    },
     effect: { kind: 'combat', bonus: 1 },
   },
 ];

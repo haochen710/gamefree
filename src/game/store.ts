@@ -10,11 +10,15 @@
  */
 import { create } from 'zustand';
 import { fmt, fmtDuration } from './decimal';
-import { BUILDABLE_MAP, SERVANT_JOB_MAP, type ServantJobId } from './content';
+import { AUTO_REFINE_LEVEL_MAX, BUILDABLE_MAP, SERVANT_JOB_MAP, type MaterialId, type ServantJobId } from './content';
 import * as engine from './engine';
 import * as disciples from './disciples';
 import * as expeditions from './expeditions';
 import * as crafting from './crafting';
+import * as research from './research';
+import * as planting from './planting';
+import * as shop from './shop';
+import * as travel from './travel';
 import { applyTick } from './tick';
 import { createAscendedState, createInitialState, type GameState } from './state';
 import {
@@ -41,8 +45,27 @@ export interface GameStore {
   advanceLayer(): void;
   breakthrough(usePill: boolean): void;
   refineStone(times: number): void;
+  setAutoRefine(level: number): void;
   ascend(): void;
   hardReset(): void;
+
+  /* 个人游历（需求 1） */
+  startTravel(regionId: string): void;
+  cancelTravel(): void;
+
+  /* 种植（需求 5） */
+  plantSeed(material: string): void;
+  plantAllSeeds(): void;
+  harvest(id: string): void;
+  harvestAll(): void;
+  hastenPlanting(id: string, currency: planting.HastenCurrency): void;
+
+  /* 钻研（需求 6） */
+  startResearch(id: string): void;
+  cancelResearch(): void;
+
+  /* 商行（需求 3） */
+  buyShopOffer(offerId: string): void;
 
   /* 仆人 */
   recruitServant(job: string): void;
@@ -159,6 +182,118 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       const updated = nextGame(s.game, engine.refineStone(s.game, times));
       return updated.game ? { ...updated, notice: '灵石合成完成' } : {};
+    });
+  },
+
+  setAutoRefine: (level) => {
+    set((s) => {
+      const clamped = Math.min(Math.max(Math.floor(level), 0), AUTO_REFINE_LEVEL_MAX);
+      if (clamped === s.game.autoRefineLevel) return {};
+      const rate = clamped > 0 ? engine.getAutoRefineRate({ ...s.game, autoRefineLevel: clamped }) : 0;
+      return {
+        game: { ...s.game, autoRefineLevel: clamped, autoRefineProgress: clamped > 0 ? s.game.autoRefineProgress : 0 },
+        notice:
+          clamped === 0
+            ? '已关闭灵石自动合成'
+            : `灵石自动合成已开启（${rate} 批/秒）`,
+      };
+    });
+  },
+
+  /* ------------------------------------------------------ 个人游历（需求 1） */
+
+  startTravel: (regionId) => {
+    set((s) => {
+      const check = travel.canStartTravel(s.game, regionId);
+      if (!check.ok) return { notice: check.reason ?? '无法出行' };
+      const next = travel.startTravel(s.game, regionId);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '掌门已启程，洞府产量下降' };
+    });
+  },
+
+  cancelTravel: () => {
+    set((s) => {
+      if (!s.game.personalTravel) return { notice: '掌门并未在外' };
+      return { ...nextGame(s.game, travel.cancelTravel(s.game)), notice: '掌门已折返' };
+    });
+  },
+
+  /* --------------------------------------------------------- 种植（需求 5） */
+
+  plantSeed: (material) => {
+    set((s) => {
+      const check = planting.canPlant(s.game, material as MaterialId);
+      if (!check.ok) return { notice: check.reason ?? '无法种植' };
+      const next = planting.plantSeed(s.game, material as MaterialId);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '已种下种子' };
+    });
+  },
+
+  plantAllSeeds: () => {
+    set((s) => {
+      const next = planting.plantAll(s.game);
+      if (next === s.game) return { notice: '没有可种的种子，或地块已满' };
+      return {
+        ...nextGame(s.game, next),
+        notice: `已种下 ${next.plantings.length - s.game.plantings.length} 块地`,
+      };
+    });
+  },
+
+  harvest: (id) => {
+    set((s) => {
+      const result = planting.harvestPlanting(s.game, id);
+      if (result.gains.length === 0) return { notice: '这块地还没成熟' };
+      const gain = result.gains[0];
+      return { ...nextGame(s.game, result.state), notice: `收获 ${gain.name}×${gain.amount}` };
+    });
+  },
+
+  harvestAll: () => {
+    set((s) => {
+      const result = planting.harvestAll(s.game);
+      if (result.gains.length === 0) return { notice: '没有成熟的地块' };
+      const summary = result.gains.map((g) => `${g.name}×${g.amount}`).join('、');
+      return { ...nextGame(s.game, result.state), notice: `收获 ${summary}` };
+    });
+  },
+
+  hastenPlanting: (id, currency) => {
+    set((s) => {
+      const result = planting.hastenPlanting(s.game, id, currency);
+      if (result.state === s.game) return { notice: result.message };
+      return { ...nextGame(s.game, result.state), notice: result.message };
+    });
+  },
+
+  /* --------------------------------------------------------- 钻研（需求 6） */
+
+  startResearch: (id) => {
+    set((s) => {
+      const check = research.canStartResearch(s.game, id);
+      if (!check.ok) return { notice: check.reason ?? '无法钻研' };
+      const next = research.startResearch(s.game, id);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '已开始钻研' };
+    });
+  },
+
+  cancelResearch: () => {
+    set((s) => {
+      if (!s.game.research) return { notice: '当前没有在钻研的技术' };
+      return { ...nextGame(s.game, research.cancelResearch(s.game)), notice: '已放弃钻研，材料不退' };
+    });
+  },
+
+  /* --------------------------------------------------------- 商行（需求 3） */
+
+  buyShopOffer: (offerId) => {
+    set((s) => {
+      const result = shop.buyShopOffer(s.game, offerId);
+      if (result.state === s.game) return { notice: result.message };
+      return { ...nextGame(s.game, result.state), notice: result.message };
     });
   },
 

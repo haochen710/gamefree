@@ -21,7 +21,7 @@ import {
   recruitCost,
   rollAptitude,
 } from './content';
-import { getArtifactBonuses, getDiscipleCapacity } from './engine';
+import { getArtifactBonuses, getCultivationSpeedMultiplier, getDiscipleCapacity } from './engine';
 import { JOURNAL_LIMIT, type Disciple, type GameState, type JournalEntry } from './state';
 
 /** 弟子一生最多一次跨多少个境界（防止极端离线时间把循环跑爆） */
@@ -176,7 +176,8 @@ function pushJournal(journal: JournalEntry[], entry: JournalEntry): JournalEntry
 export function tickDisciples(state: GameState, dt: number): GameState {
   if (state.sect.disciples.length === 0 || dt <= 0) return state;
 
-  const years = (dt * GAME_DAYS_PER_SECOND) / GAME_DAYS_PER_YEAR;
+  // 讲道堂等建筑加快弟子修行（需求 6 的稀有建筑效果）
+  const years = ((dt * GAME_DAYS_PER_SECOND) / GAME_DAYS_PER_YEAR) * getCultivationSpeedMultiplier(state);
   if (years <= 0) return state;
 
   const lifespanBonus = 1 + state.sect.lifespanBonus;

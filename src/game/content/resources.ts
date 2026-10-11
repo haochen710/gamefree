@@ -3,9 +3,14 @@
  *
  * 分成两类，命名空间上刻意区分开：
  *   - 资源（ResourceId）：有设施持续产出、像货币一样的东西
- *   - 材料（MaterialId）：几乎只能从秘境获得，用来炼丹炼器
+ *   - 材料（MaterialId）：来自游历 / 秘境 / 种植 / 商行，用来炼丹炼器
  *
- * 炼丹 / 炼器的配方可以同时消耗两者，所以用 ItemId 作为统一键。
+ * 材料再细分两级（需求 2）：
+ *   - 基础材料（base）：一至三品丹药器物的主料，可以买到种子、可以自己种
+ *   - 稀有材料（rare）：越高品阶的丹方器方越依赖它，**种类数随品阶递增**；
+ *     种子只能靠探索获取，概率随稀有度递减
+ *
+ * 炼丹 / 炼器的配方可以同时消耗资源与材料，所以用 ItemId 作为统一键。
  */
 
 /* ------------------------------------------------------------------ */
@@ -46,7 +51,7 @@ export const RESOURCES: ResourceDef[] = [
     id: 'stone',
     name: '灵石',
     icon: '💎',
-    desc: '修仙界的通货。由灵石矿开采，或用灵气与灵矿合成。招收弟子必需。',
+    desc: '修仙界的通货。可开采、可合成，招收弟子与商行交易都必需。',
   },
   {
     id: 'herb',
@@ -57,34 +62,80 @@ export const RESOURCES: ResourceDef[] = [
 ];
 
 /* ------------------------------------------------------------------ */
-/* 材料（秘境产物）                                                     */
+/* 材料                                                                */
 /* ------------------------------------------------------------------ */
 
-export type MaterialId = 'demonCore' | 'blackIron' | 'starSand' | 'dragonBlood' | 'immortalJade';
+export type MaterialId =
+  /* 基础材料 */
+  | 'demonCore'
+  | 'blackIron'
+  | 'spiritSilk'
+  | 'fireMarrow'
+  | 'coldJade'
+  /* 稀有材料 */
+  | 'moonDew'
+  | 'starSand'
+  | 'lunarCrystal'
+  | 'dragonBlood'
+  | 'netherFlame'
+  | 'immortalJade'
+  | 'chaosQi'
+  | 'primordialFruit';
 
-export const MATERIAL_IDS: MaterialId[] = [
+/**
+ * 基础材料：低品阶丹药器物的常备主料。
+ * 商行会出售它们的种子，因此来源稳定。
+ */
+export const BASE_MATERIAL_IDS: MaterialId[] = [
   'demonCore',
   'blackIron',
-  'starSand',
-  'dragonBlood',
-  'immortalJade',
+  'spiritSilk',
+  'fireMarrow',
+  'coldJade',
 ];
+
+/**
+ * 稀有材料：高品阶丹方的关键。
+ *
+ * 顺序即「解锁顺序」，越靠后越稀有：种子只能靠探索得到，
+ * 掉落权重随稀有度递减（需求 5）。
+ */
+export const RARE_MATERIAL_IDS: MaterialId[] = [
+  'moonDew',
+  'starSand',
+  'lunarCrystal',
+  'dragonBlood',
+  'netherFlame',
+  'immortalJade',
+  'chaosQi',
+  'primordialFruit',
+];
+
+export const MATERIAL_IDS: MaterialId[] = [...BASE_MATERIAL_IDS, ...RARE_MATERIAL_IDS];
+
+export type MaterialCategory = 'base' | 'rare';
 
 export interface MaterialDef {
   id: MaterialId;
   name: string;
   icon: string;
-  /** 稀有度 1~5，用于秘境掉落权重和界面配色 */
+  /** 稀有度 1~6，用于掉落权重、种子成熟时间与界面配色 */
   rarity: number;
+  category: MaterialCategory;
+  /** 是否可以用种子种出（本作所有材料都有种子） */
+  plantable: boolean;
   desc: string;
 }
 
 export const MATERIALS: MaterialDef[] = [
+  /* ---------------- 基础材料 ---------------- */
   {
     id: 'demonCore',
     name: '妖丹',
     icon: '🔴',
     rarity: 1,
+    category: 'base',
+    plantable: true,
     desc: '妖兽内丹，低阶丹药与器物的常见主料。',
   },
   {
@@ -92,30 +143,121 @@ export const MATERIALS: MaterialDef[] = [
     name: '玄铁',
     icon: '⬛',
     rarity: 2,
-    desc: '深海玄铁，炼器之基。寻常秘境即可寻得。',
+    category: 'base',
+    plantable: true,
+    desc: '深海玄铁，炼器之基。凡有矿脉处皆可寻得。',
+  },
+  {
+    id: 'spiritSilk',
+    name: '灵蚕丝',
+    icon: '🧵',
+    rarity: 2,
+    category: 'base',
+    plantable: true,
+    desc: '灵蚕吐出的丝，柔韧而通灵，法衣与符箓之本。',
+  },
+  {
+    id: 'fireMarrow',
+    name: '地火髓',
+    icon: '🔥',
+    rarity: 3,
+    category: 'base',
+    plantable: true,
+    desc: '地脉深处凝出的火精，能催动丹炉与炉火。',
+  },
+  {
+    id: 'coldJade',
+    name: '寒玉',
+    icon: '🧊',
+    rarity: 3,
+    category: 'base',
+    plantable: true,
+    desc: '万年寒泉中结出的玉髓，可镇药性、可淬剑锋。',
+  },
+
+  /* ---------------- 稀有材料 ---------------- */
+  {
+    id: 'moonDew',
+    name: '月华露',
+    icon: '🌙',
+    rarity: 2,
+    category: 'rare',
+    plantable: true,
+    desc: '月圆之夜凝聚的清露，虽为稀有，却是最易得的一种。',
   },
   {
     id: 'starSand',
     name: '星辰砂',
     icon: '✨',
     rarity: 3,
+    category: 'rare',
+    plantable: true,
     desc: '天外陨星所化，中品丹药与法器的关键材料。',
+  },
+  {
+    id: 'lunarCrystal',
+    name: '太阴玄晶',
+    icon: '🔷',
+    rarity: 4,
+    category: 'rare',
+    plantable: true,
+    desc: '太阴星力凝成的晶石，可容纳庞大灵机。',
   },
   {
     id: 'dragonBlood',
     name: '龙血',
     icon: '🩸',
     rarity: 4,
+    category: 'rare',
+    plantable: true,
     desc: '真龙遗血，蕴含磅礴生机，高阶丹药不可或缺。',
+  },
+  {
+    id: 'netherFlame',
+    name: '九幽魂火',
+    icon: '🕯',
+    rarity: 5,
+    category: 'rare',
+    plantable: true,
+    desc: '九幽之地不灭的魂火，能焚炼神魂。',
   },
   {
     id: 'immortalJade',
     name: '仙玉',
     icon: '🟩',
     rarity: 5,
+    category: 'rare',
+    plantable: true,
     desc: '仙界遗珍，只存在于最凶险的秘境深处。',
   },
+  {
+    id: 'chaosQi',
+    name: '混沌紫气',
+    icon: '🟣',
+    rarity: 6,
+    category: 'rare',
+    plantable: true,
+    desc: '开天辟地前的一缕紫气，贵重胜过一国。',
+  },
+  {
+    id: 'primordialFruit',
+    name: '鸿蒙道果',
+    icon: '🍑',
+    rarity: 6,
+    category: 'rare',
+    plantable: true,
+    desc: '鸿蒙初开时结下的道果，一枚可抵千年苦修。',
+  },
 ];
+
+export const MATERIAL_MAP: Record<MaterialId, MaterialDef> = MATERIALS.reduce(
+  (acc, m) => {
+    acc[m.id] = m;
+    return acc;
+  },
+  {} as Record<MaterialId, MaterialDef>,
+);
+
 
 /* ------------------------------------------------------------------ */
 /* 统一键                                                              */
@@ -130,6 +272,7 @@ const RESOURCE_ID_SET = new Set<string>(RESOURCE_IDS);
 export function isResourceId(id: ItemId): id is ResourceId {
   return RESOURCE_ID_SET.has(id);
 }
+
 
 export interface ItemDef {
   id: ItemId;
@@ -164,6 +307,7 @@ export const RARITY_COLORS: Record<number, string> = {
   3: '#3a6ea8',
   4: '#8a4fa8',
   5: '#b8860b',
+  6: '#c0392b',
 };
 
 export const RARITY_NAMES: Record<number, string> = {
@@ -172,6 +316,7 @@ export const RARITY_NAMES: Record<number, string> = {
   3: '宝品',
   4: '仙品',
   5: '神品',
+  6: '道品',
 };
 
 /** 一到九品的罗马化中文序号，炼丹炼器到处都要用 */

@@ -1726,3 +1726,114 @@ a {
 .modal__list--pill strong {
   color: var(--gold);
 }
+
+/* ------------------------------------------------------------------ */
+/* 灵植地块（需求 5）                                                   */
+/* ------------------------------------------------------------------ */
+
+.plot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 9px;
+  margin-top: 9px;
+}
+
+.plot {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 11px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.plot--ready {
+  border-color: var(--jade);
+  background: rgba(61, 122, 99, 0.09);
+}
+
+.plot__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.plot__icon {
+  font-size: 16px;
+}
+
+.plot__name {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.plot__time {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.plot__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.plot__yield {
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+/* ------------------------------------------------------------------ */
+/* 建筑门槛标签（需求 6：技术 / 图纸）                                   */
+/* ------------------------------------------------------------------ */
+
+.gate-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.gate-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(147, 64, 74, 0.14);
+  color: #7d2b34;
+}
+
+.gate-tag--done {
+  background: rgba(61, 122, 99, 0.14);
+  color: #2c5c4a;
+}
+
+/* 商行 / 种子列表：需要换行放下按钮 */
+.inv-row--wrap {
+  flex-wrap: wrap;
+}
+
+.inv-row--sold {
+  opacity: 0.45;
+}
+
+/* ------------------------------------------------------------------ */
+/* 材料标签：基础 / 稀有（需求 2）                                       */
+/* ------------------------------------------------------------------ */
+
+.material-tag {
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(122, 96, 60, 0.16);
+  color: var(--ink-soft);
+}
+
+.material-tag--rare {
+  background: rgba(138, 79, 168, 0.18);
+  color: #6b3a86;
+}

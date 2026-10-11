@@ -13,8 +13,10 @@
  * 派太弱的队伍，收益腰斩且死伤惨重；派最强的队伍，又可能耽误别的探索。
  */
 import { D } from './decimal';
-import { gameRandom, randomId, type RandomSource } from './random';
+import { gameRandom, randomId, weightedDraw, type RandomSource } from './random';
 import {
+  BLUEPRINTS,
+  EXPLORATION_SEEDS,
   ITEM_MAP,
   LOOT_ROLLS,
   MAX_CASUALTY_RATE,
@@ -25,15 +27,19 @@ import {
   REALMS,
   SECRET_REALMS,
   SECRET_REALM_MAP,
+  SEED_MAP,
+  SEED_ROLLS,
   YIELD_VARIANCE_MAX,
   YIELD_VARIANCE_MIN,
   expeditionSlots,
   type ItemId,
   type LootEntry,
+  type MaterialId,
   type SecretRealmDef,
 } from './content';
-import { addItem, getArtifactBonuses, isRealmUnlocked } from './engine';
+import { addItem, getArtifactBonuses, getStructureBonus, isRealmUnlocked } from './engine';
 import { getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
+import { addSeeds } from './planting';
 import type { Disciple, Expedition, GameState } from './state';
 
 /* ------------------------------------------------------------------ */
@@ -142,32 +148,14 @@ export function startExpedition(
 /* 结算                                                                */
 /* ------------------------------------------------------------------ */
 
-/** 按权重不放回地抽 count 项 */
-function weightedDraw<T extends { weight: number }>(pool: T[], count: number, random: () => number): T[] {
-  const available = [...pool];
-  const picked: T[] = [];
-  while (picked.length < count && available.length > 0) {
-    const total = available.reduce((sum, item) => sum + item.weight, 0);
-    if (total <= 0) break;
-    let roll = random() * total;
-    let index = available.length - 1;
-    for (let i = 0; i < available.length; i += 1) {
-      roll -= available[i].weight;
-      if (roll <= 0) {
-        index = i;
-        break;
-      }
-    }
-    picked.push(available[index]);
-    available.splice(index, 1);
-  }
-  return picked;
-}
-
 export interface ExpeditionOutcome {
   realmName: string;
   gains: { id: ItemId; amount: number; name: string; icon: string }[];
   pills: { id: string; amount: number; name: string; icon: string }[];
+  /** 带回的材料种子（需求 5） */
+  seeds: { material: MaterialId; amount: number; name: string; icon: string }[];
+  /** 寻获的图纸（需求 6） */
+  blueprints: { id: string; name: string; icon: string }[];
   casualties: string[];
   powerRatio: number;
 }
@@ -230,6 +218,40 @@ export function resolveExpedition(
     }
   }
 
+  /* ---- 1b. 种子（需求 5：稀有材料的种子只能靠探索） ---- */
+  const seedGains: ExpeditionOutcome['seeds'] = [];
+  if (random() < def.seedChance) {
+    const seedPool = EXPLORATION_SEEDS.filter(
+      (seed) => seed.rarity >= (def.seedMinRarity ?? 1) && seed.rarity <= def.seedMaxRarity,
+    ).map((seed) => ({
+      ...seed,
+      weight: seed.dropWeight,
+    }));
+    for (const pickedSeed of weightedDraw(seedPool, SEED_ROLLS, random)) {
+      working = addSeeds(working, pickedSeed.material, 1);
+      seedGains.push({
+        material: pickedSeed.material,
+        amount: 1,
+        name: SEED_MAP[pickedSeed.material]?.name ?? pickedSeed.name,
+        icon: pickedSeed.icon,
+      });
+    }
+  }
+
+  /* ---- 1c. 图纸（需求 6：稀有建筑只能靠探索或商行） ---- */
+  const blueprintGains: ExpeditionOutcome['blueprints'] = [];
+  if (def.blueprintChance > 0 && random() < def.blueprintChance) {
+    // 只掉境界够得着的图纸（需求 6：图纸要跟玩家等级挂钩）
+    const missing = BLUEPRINTS.filter(
+      (bp) => working.blueprints[bp.id] !== true && working.realmIndex >= bp.requiresRealm,
+    );
+    if (missing.length > 0) {
+      const found = missing[Math.min(missing.length - 1, Math.floor(random() * missing.length))];
+      working = { ...working, blueprints: { ...working.blueprints, [found.id]: true } };
+      blueprintGains.push({ id: found.id, name: found.name, icon: found.icon });
+    }
+  }
+
   /* ---- 2. 判定伤亡 ---- */
   const safety = Math.min(1, Math.max(0, state.buffs.safetyReduction + artifacts.expeditionSafety));
   const baseRate = powerRatio > 0 ? def.baseCasualty / powerRatio : MAX_CASUALTY_RATE;
@@ -257,10 +279,16 @@ export function resolveExpedition(
 
   let journal = working.journal;
   const summary = gains.map((g) => `${g.icon}${g.name}×${g.amount}`).join(' ');
+  const extra = [
+    seedGains.map((s) => `${s.icon}${s.name}`).join(' '),
+    blueprintGains.map((b) => `${b.icon}${b.name}`).join(' '),
+  ]
+    .filter(Boolean)
+    .join(' ');
   journal = pushJournal(journal, {
     time: working.playTime,
     kind: 'good',
-    text: `${def.name}探索归来：${summary || '一无所获'}`,
+    text: `${def.name}探索归来：${summary || '一无所获'}${extra ? `，另得 ${extra}` : ''}`,
   });
   if (casualties.length > 0) {
     journal = pushJournal(journal, {
@@ -283,6 +311,8 @@ export function resolveExpedition(
       realmName: def.name,
       gains,
       pills: pillGains,
+      seeds: seedGains,
+      blueprints: blueprintGains,
       casualties: casualties.map((c) => c.name),
       powerRatio,
     },
@@ -293,9 +323,11 @@ export function resolveExpedition(
 /* 时间推进                                                            */
 /* ------------------------------------------------------------------ */
 
+/** 探索速度倍率：丹药增益 × 器物 × 建筑（灵舟坊） */
 export function getExpeditionSpeed(state: GameState): number {
   const artifacts = getArtifactBonuses(state);
-  return state.buffs.speedMultiplier * (1 + artifacts.expeditionSpeed);
+  const buildings = getStructureBonus(state, 'expeditionSpeedBonus');
+  return state.buffs.speedMultiplier * (1 + artifacts.expeditionSpeed + buildings);
 }
 
 export function tickExpeditions(state: GameState, dt: number, random: RandomSource = gameRandom): GameState {

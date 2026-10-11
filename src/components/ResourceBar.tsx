@@ -70,11 +70,14 @@ export function ResourceBar() {
               {def.icon}
             </span>
             <span className="resource__name">{def.name}</span>
+            <span className={def.category === 'rare' ? 'material-tag material-tag--rare' : 'material-tag'}>
+              {def.category === 'rare' ? '稀有' : '基础'}
+            </span>
           </div>
           <div className="resource__amount" style={{ color: RARITY_COLORS[def.rarity] }}>
             {fmt(game.materials[def.id])}
           </div>
-          <div className="resource__rate resource__rate--zero">秘境产物 · 无上限</div>
+          <div className="resource__rate resource__rate--zero">游历 / 探索 / 种植 · 无上限</div>
         </div>
       ))}
     </section>

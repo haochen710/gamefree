@@ -1,6 +1,6 @@
 /** 顶部：境界、小境界层数、全局倍率、道韵、心神 */
 import { fmt, fmtDuration, fmtMultiplier } from '../game/decimal';
-import { MIND_MAX } from '../game/content';
+import { MIND_MAX, TRAVEL_REGION_MAP } from '../game/content';
 import {
   getDiscipleCapacity,
   getGlobalMultiplier,
@@ -81,6 +81,26 @@ export function Header() {
             <span className="stat__value">
               {servants}
               <em className="stat__layer">人</em>
+            </span>
+          </div>
+        )}
+
+        {game.personalTravel && (
+          <div className="stat stat--injury">
+            <span className="stat__label">游历中</span>
+            <span className="stat__value stat__value--injury">
+              {TRAVEL_REGION_MAP[game.personalTravel.regionId]?.name ?? '在外'}
+              <em className="stat__layer">产量下降</em>
+            </span>
+          </div>
+        )}
+
+        {game.research && (
+          <div className="stat">
+            <span className="stat__label">钻研</span>
+            <span className="stat__value">
+              {fmtDuration(game.research.remaining)}
+              <em className="stat__layer">剩余</em>
             </span>
           </div>
         )}

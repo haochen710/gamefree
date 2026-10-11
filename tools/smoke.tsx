@@ -13,21 +13,65 @@
  *     pnpm smoke
  */
 import { renderToString } from 'react-dom/server';
+import type React from 'react';
 import App from '../src/App';
+import BuildingsPanel from '../src/components/BuildingsPanel';
+import ResearchPanel from '../src/components/ResearchPanel';
+import PlantationPanel from '../src/components/PlantationPanel';
+import ShopPanel from '../src/components/ShopPanel';
+import TravelPanel from '../src/components/TravelPanel';
+import ExpeditionPanel from '../src/components/ExpeditionPanel';
+import Header from '../src/components/Header';
+import ResourceBar from '../src/components/ResourceBar';
+import ActionPanel from '../src/components/ActionPanel';
+import ServantPanel from '../src/components/ServantPanel';
+import RealmPanel from '../src/components/RealmPanel';
+import StonePanel from '../src/components/StonePanel';
+import AscendPanel from '../src/components/AscendPanel';
+import SectPanel from '../src/components/SectPanel';
+import DisciplePanel from '../src/components/DisciplePanel';
+import AlchemyPanel from '../src/components/AlchemyPanel';
+import RefiningPanel from '../src/components/RefiningPanel';
+import InventoryPanel from '../src/components/InventoryPanel';
+import JournalPanel from '../src/components/JournalPanel';
+import SavePanel from '../src/components/SavePanel';
+import { useGame } from '../src/game/store';
 import { D, fmt } from '../src/game/decimal';
 import {
   APTITUDE_MAP,
+  AUTO_REFINE_LEVEL_MAX,
+  AUTO_REFINE_RATES,
+  BASE_KINDS_MIN,
+  BASE_MATERIAL_IDS,
+  BLUEPRINTS,
+  BLUEPRINT_MAP,
   BUILDABLE_MAP,
   INJURY_PRODUCTION_PENALTY,
   INJURY_SECONDS,
+  MATERIAL_IDS,
+  MATERIAL_MAP,
   MIND_MAX,
+  MIN_REALM_FOR_BLUEPRINT,
   PILLS,
-  SERVANT_BONUS_PER_HEAD,
+  ARTIFACTS,
+  RARE_KINDS_MIN,
+  RARE_MATERIAL_IDS,
   REALMS,
   SECRET_REALM_MAP,
+  SEEDS,
+  SERVANT_BONUS_PER_HEAD,
+  SHOP_GOODS,
+  STONE_REFINE_COST,
+  STONE_REFINE_OUTPUT,
   BASE_STORAGE,
   STRUCTURES,
+  TECHS,
+  TECH_MAP,
+  TRAVEL_PRODUCTION_PENALTY,
+  TRAVEL_REGIONS,
+  countMaterialKinds,
   createEmptyBuffs,
+  hastenQiCost,
   type MaterialId,
   type ResourceId,
 } from '../src/game/content';
@@ -36,6 +80,10 @@ import * as engine from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
 import * as expeditions from '../src/game/expeditions';
 import * as crafting from '../src/game/crafting';
+import * as research from '../src/game/research';
+import * as planting from '../src/game/planting';
+import * as shop from '../src/game/shop';
+import * as travel from '../src/game/travel';
 import { applyTick } from '../src/game/tick';
 import { gameRandom } from '../src/game/random';
 import { applyOffline, deserialize, exportCode, importCode, serialize } from '../src/game/save';
@@ -87,6 +135,32 @@ function forceBuild(state: GameState, id: string, count: number): GameState {
   return { ...state, buildings: { ...state.buildings, [id]: count } };
 }
 
+/**
+ * 给齐所有材料。
+ *
+ * 需求 2 之后配方由「基础材料 + 稀有材料」构成，种类还会随品阶增加；
+ * 测试场景如果逐个列材料，每加一种就得回来改测试，所以统一给足。
+ */
+function grantAll(state: GameState, extra: Partial<Record<string, string>> = {}): GameState {
+  const materials: Partial<Record<string, string>> = {};
+  for (const id of MATERIAL_IDS) materials[id] = '1e7';
+  return grant(state, { ...materials, ...extra });
+}
+
+/** 搭一个「已经钻研出某技术」的状态 */
+function withTech(state: GameState, ...ids: string[]): GameState {
+  const techs = { ...state.techs };
+  for (const id of ids) techs[id] = true;
+  return { ...state, techs };
+}
+
+/** 搭一个「已经持有某图纸」的状态 */
+function withBlueprint(state: GameState, ...ids: string[]): GameState {
+  const blueprints = { ...state.blueprints };
+  for (const id of ids) blueprints[id] = true;
+  return { ...state, blueprints };
+}
+
 console.log('仙途 · 冒烟测试');
 console.log('='.repeat(64));
 
@@ -103,9 +177,28 @@ section('[1] 界面渲染');
     check('组件树渲染成功', false, String(error));
   }
 
-  const expected = ['仙途', '打坐', '洞府建设', '资源设施', '境界', '灵石合成', '修行', '宗门', '秘境', '丹器', '洞府'];
+  const expected = ['仙途', '打坐', '境界', '灵石合成', '修行', '洞府', '宗门', '秘境', '丹器', '灵植'];
   for (const text of expected) {
     check(`包含「${text}」`, html.includes(text));
+  }
+
+  // 非默认标签页的面板单独渲染一次：新增模块最容易犯的错
+  // 就是渲染时读了不存在的字段，而默认标签页根本不会渲染到它
+  const panels: [string, React.ReactElement][] = [
+    ['洞府建设', <BuildingsPanel />],
+    ['钻研', <ResearchPanel />],
+    ['灵植园', <PlantationPanel />],
+    ['商行', <ShopPanel />],
+    ['掌门游历', <TravelPanel />],
+    ['秘境', <ExpeditionPanel />],
+  ];
+  for (const [label, element] of panels) {
+    try {
+      const out = renderToString(element);
+      check(`「${label}」面板渲染成功`, out.length > 0, `${out.length} 字符`);
+    } catch (error) {
+      check(`「${label}」面板渲染成功`, false, String(error));
+    }
   }
 }
 
@@ -375,8 +468,11 @@ section('[4] 储存上限与储物建筑');
   const preview: GameState = { ...base, realmIndex: cave.requiresRealm! - 1 };
   check('提前一级就能看到（便于规划）', engine.isUnlocked(cave, preview));
   check('但提前一级仍然不能建造', engine.getBuildGate(cave, preview) !== null);
-  const reached: GameState = { ...base, realmIndex: cave.requiresRealm! };
-  check('达到境界后可以建造', engine.getBuildGate(cave, reached) === null);
+  // 需求 6 之后，光有境界还不够 —— 高阶储物还要「须弥之法」
+  const realmOnly: GameState = { ...base, realmIndex: cave.requiresRealm! };
+  check('只有境界、没有技术时仍然不能建造', engine.getBuildGate(cave, realmOnly) !== null, engine.getBuildGate(cave, realmOnly) ?? '');
+  const reached: GameState = withTech(realmOnly, 'voidStorageArt');
+  check('境界与技术都具备后可以建造', engine.getBuildGate(cave, reached) === null);
 
   /* ---- 数量上限（防止价格涨过上限导致永久卡死） ---- */
   const bigCap = forceBuild(createInitialState(0), 'daoRepository', 10); // 先撑大上限，方便构造场景
@@ -653,6 +749,35 @@ section('[8] 离线收益');
   const shortAway = applyOffline(state, 10 * 1000, makeRandom(1));
   check('短暂离开不触发离线结算', shortAway.report === null);
 
+  /* ---- 离线期间的游历、种植、商行、钻研都要照常推进 ---- */
+  {
+    let away = grant(createInitialState(0), { stone: '1e5', wood: '1e5', qi: '1e5' });
+    away = { ...away, realmIndex: 2 };
+    away = forceBuild(away, 'spiritVault', 10);
+    away = forceBuild(away, 'plantation', 1);
+    away = forceBuild(away, 'tradeHouse', 1);
+    away = withTech(away, 'plantingArt', 'tradeArt', 'alchemyArt');
+    away = planting.addSeeds(away, 'demonCore', 5);
+    away = planting.plantSeed(away, 'demonCore', makeRandom(1));
+    away = travel.startTravel(away, 'mortalVillage');
+    away = research.startResearch(away, 'storageArt');
+    // savedAt 必须是"过去"，applyOffline 才会结算
+    const saved = { ...away, savedAt: Date.now() - 3600 * 1000 };
+    const back = applyOffline(saved, Date.now(), makeRandom(1));
+
+    check('离线时游历会走完', back.state.personalTravel === null);
+    check(
+      '离线带回的材料计入结算',
+      (back.report?.materialGains.length ?? 0) > 0 || (back.report?.gains.length ?? 0) > 0,
+      `${back.report?.materialGains.length ?? 0} 种材料`,
+    );
+    check('离线时作物会成熟', back.state.plantings.length === 1 && planting.isPlantingReady(back.state.plantings[0]));
+    check('离线时钻研会完成', research.isTechResearched(back.state, 'storageArt'));
+    check('离线时商行会刷新', back.state.shop.offers.length > 0, `${back.state.shop.offers.length} 件`);
+    check('离线结算带上了种子字段', Array.isArray(back.report?.seedGains));
+    check('离线结算带上了图纸字段', Array.isArray(back.report?.blueprintGains));
+  }
+
   // 离线时弟子也会成长（按 50% 速度）。
   // 注意：弟子境界上限受掌门境界限制，所以测试里要把掌门放到足够高的境界
   let sect = grant(createInitialState(0), { stone: '1e6' });
@@ -863,16 +988,12 @@ section('[11] 炼丹与器物（需求 2）');
     check(`第 ${tier} 品同时有战斗型与辅助型`, hasCombat && hasSupport, `${inTier.length} 个丹方`);
   }
 
-  // 品阶门禁。注意凝金丹还需要玄铁，所以测试场景要把材料给全
-  let state = grant(createInitialState(0), {
+  // 品阶门禁。配方现在同时吃基础材料与稀有材料，所以测试场景把
+  // **所有**材料都给足 —— 否则以后每加一种材料都要回来改这行。
+  let state = grantAll(createInitialState(0), {
     herb: '1e9',
     qi: '1e12',
-    demonCore: '1e6',
-    blackIron: '1e6',
     ore: '1e9',
-    starSand: '1e6',
-    dragonBlood: '1e6',
-    immortalJade: '1e6',
   });
   check('低品阶时不能炼三品丹', crafting.canCraftPill(state, 'goldenCorePill').ok === false);
 
@@ -984,6 +1105,883 @@ section('[14] 内容完整性');
   check('秘境都定义了掉落表', Object.values(SECRET_REALM_MAP).every((r) => r.loot.length > 0));
   check('境界表的寿元递增', REALMS.slice(0, -1).every((r, i) => r.lifespan < REALMS[i + 1].lifespan));
   check('初始 buffs 是中性的', createEmptyBuffs().productionMultiplier === 1);
+}
+
+/* ------------------------------------------------------------------ */
+/* 14. 材料分级与配方规律（需求 2）                                      */
+/* ------------------------------------------------------------------ */
+section('[15] 材料分级与配方规律（需求 2）');
+{
+  check('材料分成基础与稀有两大类', MATERIAL_IDS.length === BASE_MATERIAL_IDS.length + RARE_MATERIAL_IDS.length);
+  check(
+    '两类的 id 不重叠',
+    BASE_MATERIAL_IDS.every((id) => !RARE_MATERIAL_IDS.includes(id)),
+  );
+  check(
+    'category 字段与两个清单一致',
+    MATERIAL_IDS.every((id) =>
+      MATERIAL_MAP[id].category === 'base'
+        ? BASE_MATERIAL_IDS.includes(id)
+        : RARE_MATERIAL_IDS.includes(id),
+    ),
+  );
+  check('每种材料都有种子', MATERIAL_IDS.every((id) => SEEDS.some((s) => s.material === id)));
+
+  /* ---- 核心规律：品阶越高，稀有材料种类越多 ---- */
+  let patternOk = true;
+  let patternDetail = '';
+  for (const def of [...PILLS, ...ARTIFACTS]) {
+    const kinds = countMaterialKinds(def.cost);
+    const baseMin = BASE_KINDS_MIN[def.tier] ?? 0;
+    const rareMin = RARE_KINDS_MIN[def.tier] ?? 0;
+    if (kinds.base < baseMin || kinds.rare < rareMin) {
+      patternOk = false;
+      patternDetail = `${def.name}（${def.tier}品）基础 ${kinds.base}/${baseMin}、稀有 ${kinds.rare}/${rareMin}`;
+      break;
+    }
+  }
+  check('每条配方的材料种类数都达到品阶下限', patternOk, patternDetail);
+
+  check(
+    '稀有材料种类下限随品阶单调不减',
+    RARE_KINDS_MIN.slice(1).every((n, i) => n >= RARE_KINDS_MIN[i]),
+    RARE_KINDS_MIN.join(' → '),
+  );
+  check('一品不需要稀有材料', RARE_KINDS_MIN[1] === 0);
+  check('九品至少需要 5 种稀有材料', RARE_KINDS_MIN[9] >= 5, `${RARE_KINDS_MIN[9]} 种`);
+
+  /* ---- 高品阶确实用到了更多稀有材料（实际数据，不只是下限） ---- */
+  const tier9Rare = Math.max(
+    ...PILLS.filter((p) => p.tier === 9).map((p) => countMaterialKinds(p.cost).rare),
+  );
+  const tier2Rare = Math.max(
+    ...PILLS.filter((p) => p.tier === 2).map((p) => countMaterialKinds(p.cost).rare),
+  );
+  check('实际配方里九品的稀有材料也比二品多', tier9Rare > tier2Rare, `${tier2Rare} → ${tier9Rare}`);
+
+  /* ---- 没有孤儿材料：每种材料都要被至少一条配方用到 ---- */
+  const used = new Set<string>();
+  for (const def of [...PILLS, ...ARTIFACTS]) {
+    for (const id of Object.keys(def.cost)) used.add(id);
+  }
+  const orphans = MATERIAL_IDS.filter((id) => !used.has(id));
+  check('没有用不到的材料', orphans.length === 0, orphans.join('、'));
+
+  /* ---- 每种材料都得有来源 ---- */
+  const fromTravel = new Set(TRAVEL_REGIONS.flatMap((r) => r.loot.map((l) => l.item as string)));
+  const fromRealm = new Set(
+    Object.values(SECRET_REALM_MAP).flatMap((r) => r.loot.map((l) => l.item as string)),
+  );
+  const fromShop = new Set(SHOP_GOODS.filter((g) => g.kind === 'material').map((g) => g.item));
+  const sourceless = MATERIAL_IDS.filter(
+    (id) => !fromTravel.has(id) && !fromRealm.has(id) && !fromShop.has(id),
+  );
+  check('每种材料都能在游戏里拿到', sourceless.length === 0, sourceless.join('、'));
+}
+
+/* ------------------------------------------------------------------ */
+/* 15. 个人游历（需求 1）                                               */
+/* ------------------------------------------------------------------ */
+section('[16] 个人游历（需求 1）');
+{
+  const base = createInitialState(0);
+
+  /* ---- 境界门槛：材料的获取跟着等级走 ---- */
+  check(
+    '开局只能去炼气期那一片',
+    travel.getAvailableRegions(base).length === 1,
+    `${travel.getAvailableRegions(base).length} 处`,
+  );
+  const highRegion = TRAVEL_REGIONS[TRAVEL_REGIONS.length - 1];
+  check(
+    '高境界区域去不了',
+    travel.canStartTravel(base, highRegion.id).ok === false,
+    travel.canStartTravel(base, highRegion.id).reason ?? '',
+  );
+  const highRealm: GameState = { ...base, realmIndex: 8 };
+  check('境界到了就能去', travel.canStartTravel(highRealm, highRegion.id).ok === true);
+
+  /* ---- 已开宗也要能出门（需求只要求"开宗之前能去"，不是"开宗之后不能去"） ---- */
+  check('不必开宗立派', base.sect.founded === false && travel.canStartTravel(base, 'mortalVillage').ok);
+
+  /* ---- 出游期间产量下降 ---- */
+  const before = engine.getGlobalMultiplier(base).toNumber();
+  const traveling = travel.startTravel(base, 'mortalVillage');
+  check('启程后进入游历状态', traveling.personalTravel !== null);
+  const during = engine.getGlobalMultiplier(traveling).toNumber();
+  check(
+    '出游期间全局产量下降',
+    Math.abs(during / before - (1 - TRAVEL_PRODUCTION_PENALTY)) < 1e-9,
+    `${before.toFixed(2)} → ${during.toFixed(2)}`,
+  );
+  check('重复启程会被拒绝', travel.canStartTravel(traveling, 'mortalVillage').ok === false);
+
+  /* ---- 结算：一定带回灵石与材料，且不会死人 ---- */
+  const resolved = travel.tickTravel(traveling, TRAVEL_REGIONS[0].duration + 1, makeRandom(7));
+  check('游历结束后状态清空', resolved.personalTravel === null);
+  check('产量惩罚随之解除', engine.getGlobalMultiplier(resolved).toNumber() === before);
+  check('带回灵石', resolved.resources.stone.gt(traveling.resources.stone), fmt(resolved.resources.stone));
+  const gainedMaterials = MATERIAL_IDS.some((id) => resolved.materials[id].gt(traveling.materials[id]));
+  check('带回材料', gainedMaterials || resolved.resources.wood.gt(traveling.resources.wood));
+  check('写入了游历记事', resolved.journal.some((entry) => entry.text.includes('游历归来')));
+
+  /* ---- 中止游历 ---- */
+  const canceled = travel.cancelTravel(traveling);
+  check('可以中止游历', canceled.personalTravel === null);
+
+  /* ---- 种子（需求 5 的探索来源） ---- */
+  const alwaysSeed = travel.resolveTravel(
+    travel.startTravel(base, 'mortalVillage'),
+    fixedRandom(0.01),
+  ).state;
+  const seedCount = Object.values(alwaysSeed.seeds).reduce((sum, n) => sum + n, 0);
+  check('探索可以带回种子', seedCount > 0, JSON.stringify(alwaysSeed.seeds));
+
+  /* ---- 越高级的种子掉率越低 ---- */
+  const weights = RARE_MATERIAL_IDS.map((id) => SEEDS.find((s) => s.material === id)!.dropWeight);
+  check(
+    '种子掉率随稀有度递减',
+    weights.every((w, i) => i === 0 || w <= weights[i - 1]),
+    weights.join(' ≥ '),
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 16. 商行（需求 3 / 6）                                               */
+/* ------------------------------------------------------------------ */
+section('[17] 商行（需求 3 / 6）');
+{
+  const base = createInitialState(0);
+  const farm: GameState = { ...base, realmIndex: 3 };
+
+  check('没有商行时不刷新货架', shop.tickShop(farm, 10, makeRandom(1)).shop.offers.length === 0);
+
+  const withShop = forceBuild(withTech(farm, 'tradeArt'), 'tradeHouse', 1);
+  const stocked = shop.tickShop(withShop, 0, makeRandom(3));
+  check('建成商行后自动上架', stocked.shop.offers.length > 0, `${stocked.shop.offers.length} 件`);
+  check(
+    '货位数 = 基础 + 每座商行加成',
+    stocked.shop.offers.length === engine.getShopOfferCapacity(withShop),
+    `${stocked.shop.offers.length}`,
+  );
+  check('每件货品都有价格', stocked.shop.offers.every((o) => o.price > 0 && o.amount > 0));
+
+  /* ---- 需求 3：「每次售卖一部分资源」 ---- */
+  check(
+    '每轮只上架商品池的一部分',
+    stocked.shop.offers.length < SHOP_GOODS.length,
+    `${stocked.shop.offers.length} < ${SHOP_GOODS.length}`,
+  );
+
+  /* ---- 需求 5：商行只卖基础材料种子 ---- */
+  const seedOffers = stocked.shop.offers.filter((o) => o.kind === 'seed');
+  check(
+    '商行只卖基础材料的种子',
+    seedOffers.every((o) => MATERIAL_MAP[o.item as MaterialId].category === 'base'),
+    seedOffers.map((o) => o.item).join('、') || '本轮无种子',
+  );
+  check(
+    '商行不卖稀有材料的种子',
+    SHOP_GOODS.filter((g) => g.kind === 'seed').every(
+      (g) => MATERIAL_MAP[g.item as MaterialId].category === 'base',
+    ),
+  );
+  check(
+    '商行不卖稀有材料',
+    SHOP_GOODS.filter((g) => g.kind === 'material').every(
+      (g) => MATERIAL_MAP[g.item as MaterialId].category === 'base',
+    ),
+  );
+
+  /* ---- 购买 ---- */
+  const rich = grant(stocked, { stone: '1e9' });
+  const offer = rich.shop.offers[0];
+  const stoneBefore = rich.resources.stone;
+  const bought = shop.buyShopOffer(rich, offer.id).state;
+  check('购买后扣除灵石', bought.resources.stone.lt(stoneBefore), `-${fmt(stoneBefore.sub(bought.resources.stone))}`);
+  check('购买后该件标记售罄', bought.shop.offers.find((o) => o.id === offer.id)?.sold === true);
+  check('不能重复购买同一件', shop.canBuyOffer(bought, offer.id).ok === false);
+
+  const poor = grant(stocked, { stone: '0' });
+  check('灵石不足时买不了', shop.canBuyOffer(poor, offer.id).ok === false);
+
+  /* ---- 买图纸（需求 6） ---- */
+  const bpOffer = {
+    id: 'test-blueprint',
+    kind: 'blueprint' as const,
+    item: BLUEPRINTS[0].id,
+    amount: 1,
+    price: 10,
+    sold: false,
+  };
+  const withBpGoods: GameState = { ...rich, shop: { offers: [bpOffer], secondsLeft: 100 } };
+  const ownedBp = shop.buyShopOffer(withBpGoods, bpOffer.id).state;
+  check('可以买下图纸', ownedBp.blueprints[BLUEPRINTS[0].id] === true);
+  check('不能重复购买已有的图纸', shop.canBuyOffer(ownedBp, bpOffer.id).ok === false);
+  check(
+    '已有图纸不再上架',
+    shop.buildShopOffers(ownedBp, makeRandom(5)).every((o) => o.item !== BLUEPRINTS[0].id),
+  );
+
+  /* ---- 需求 6：图纸也跟玩家等级挂钩 ---- */
+  const lowRealm = {
+    ...rich,
+    realmIndex: 0,
+    blueprints: {},
+    shop: { offers: [], secondsLeft: 0 },
+  };
+  const lowRealmOffers = Array.from({ length: 40 }, (_, i) =>
+    shop.buildShopOffers({ ...lowRealm, shop: { offers: [], secondsLeft: 0 } }, makeRandom(i + 1)),
+  ).flat();
+  check(
+    '境界不够时商行不上架图纸',
+    lowRealmOffers.every(
+      (o) => o.kind !== 'blueprint' || lowRealm.realmIndex >= BLUEPRINT_MAP[o.item].requiresRealm,
+    ),
+    `${lowRealmOffers.filter((o) => o.kind === 'blueprint').length} 张`,
+  );
+  const highRealm = { ...lowRealm, realmIndex: 8 };
+  const highRealmOffers = Array.from({ length: 200 }, (_, i) =>
+    shop.buildShopOffers(highRealm, makeRandom(i + 1)),
+  ).flat();
+  check(
+    '境界够了才会看到图纸',
+    highRealmOffers.some((o) => o.kind === 'blueprint'),
+    `${highRealmOffers.filter((o) => o.kind === 'blueprint').length} 张`,
+  );
+  check(
+    '每张图纸都设了境界门槛',
+    BLUEPRINTS.every((bp) => bp.requiresRealm >= 0 && bp.requiresRealm < REALMS.length),
+  );
+  check(
+    '图纸门槛与它解锁的建筑一致',
+    BLUEPRINTS.every((bp) => {
+      const building = Object.values(BUILDABLE_MAP).find((b) => b.requiresBlueprint === bp.id);
+      return building?.requiresRealm === bp.requiresRealm;
+    }),
+  );
+
+  /* ---- 刷新倒计时 ---- */
+  const ticking = shop.tickShop(stocked, 5, makeRandom(3));
+  check(
+    '刷新倒计时在走',
+    ticking.shop.secondsLeft < stocked.shop.secondsLeft,
+    `${ticking.shop.secondsLeft} < ${stocked.shop.secondsLeft}`,
+  );
+  const rerolled = shop.tickShop(stocked, 1e6, makeRandom(11));
+  check('倒计时归零后重摇货架', rerolled.shop.offers.filter((o) => !o.sold).length > 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* 17. 灵石自动合成（需求 4）                                            */
+/* ------------------------------------------------------------------ */
+section('[18] 灵石自动合成（需求 4）');
+{
+  check('默认是关闭的', createInitialState(0).autoRefineLevel === 0);
+  check('档位表从 0（关闭）开始', AUTO_REFINE_RATES[0] === 0);
+  check('有多个可选档位', AUTO_REFINE_LEVEL_MAX >= 2, `${AUTO_REFINE_LEVEL_MAX + 1} 档`);
+
+  // 储物袋 ×10：灵气上限 20250 / 灵矿 8100 / 灵石 1250
+  const storage = forceBuild(createInitialState(0), 'storagePouch', 10);
+  const stocked = grant(storage, { qi: '20000', ore: '8000' });
+  const qiCap = engine.getStorageCap(stocked, 'qi');
+  const oreCap = engine.getStorageCap(stocked, 'ore');
+  check('测试场景的资源都在上限之内', stocked.resources.qi.lte(qiCap) && stocked.resources.ore.lte(oreCap));
+
+  const off = applyTick(stocked, 60, makeRandom(1));
+  check(
+    '关闭时不消耗灵气与灵矿',
+    off.resources.qi.eq(stocked.resources.qi) && off.resources.ore.eq(stocked.resources.ore),
+  );
+  check('关闭时也不产灵石', off.resources.stone.eq(stocked.resources.stone));
+
+  const fast: GameState = { ...stocked, autoRefineLevel: AUTO_REFINE_LEVEL_MAX };
+  const on = applyTick(fast, 60, makeRandom(1));
+  check('开启后产出灵石', on.resources.stone.gt(stocked.resources.stone), `+${fmt(on.resources.stone.sub(stocked.resources.stone))}`);
+  check('开启后消耗灵气', on.resources.qi.lt(stocked.resources.qi));
+  check('开启后消耗灵矿', on.resources.ore.lt(stocked.resources.ore));
+  check(
+    '产出量符合合成比例',
+    on.resources.stone.eq(
+      stocked.resources.stone.add(
+        on.resources.ore.lt(stocked.resources.ore)
+          ? stocked.resources.ore.sub(on.resources.ore).div(STONE_REFINE_COST.ore).floor().mul(STONE_REFINE_OUTPUT)
+          : D(0),
+      ),
+    ),
+    `灵气 ${fmt(stocked.resources.qi)} → ${fmt(on.resources.qi)}`,
+  );
+
+  /* ---- 灵气耗尽时不会凭空造灵石 ---- */
+  const noQi: GameState = {
+    ...grant(forceBuild(createInitialState(0), 'storagePouch', 10), { ore: '8000' }),
+    autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
+  };
+  const starved = applyTick(noQi, 60, makeRandom(1));
+  check('灵气为 0 时合成不出灵石', starved.resources.stone.eq(noQi.resources.stone));
+
+  /* ---- 仓库满了就不再烧灵气 ---- */
+  const stoneCap = engine.getStorageCap(stocked, 'stone');
+  const full: GameState = {
+    ...stocked,
+    autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
+    resources: { ...stocked.resources, stone: stoneCap },
+  };
+  const noRoom = applyTick(full, 60, makeRandom(1));
+  check('灵石已满时不再消耗灵气', noRoom.resources.qi.eq(full.resources.qi), `${fmt(noRoom.resources.qi)}`);
+  check('灵石被上限截断', noRoom.resources.stone.eq(stoneCap));
+
+  /* ---- 慢档比快档少烧灵气 ---- */
+  const slow = applyTick({ ...stocked, autoRefineLevel: 1 }, 60, makeRandom(1));
+  check(
+    '慢档消耗少于快档',
+    slow.resources.qi.gt(on.resources.qi),
+    `${fmt(slow.resources.qi)} > ${fmt(on.resources.qi)}`,
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 18. 种植（需求 5）                                                   */
+/* ------------------------------------------------------------------ */
+section('[19] 种植（需求 5）');
+{
+  const base = createInitialState(0);
+  const seedMaterial: MaterialId = 'demonCore';
+
+  check('没有灵植园就没有地块', engine.getPlotCapacity(base) === 0);
+  check('没有地块时不能种', planting.canPlant(base, seedMaterial).ok === false);
+
+  const withSeeds = planting.addSeeds(base, seedMaterial, 3);
+  check('可以获得种子', planting.getSeedCount(withSeeds, seedMaterial) === 3);
+
+  const farm = forceBuild(withTech(withSeeds, 'plantingArt'), 'plantation', 1);
+  check('灵植园提供地块', engine.getPlotCapacity(farm) === 4, `${engine.getPlotCapacity(farm)}`);
+  check('没有种子时不能种', planting.canPlant(forceBuild(withTech(base, 'plantingArt'), 'plantation', 1), seedMaterial).ok === false);
+
+  const planted = planting.plantSeed(farm, seedMaterial, makeRandom(1));
+  check('种下消耗一颗种子', planting.getSeedCount(planted, seedMaterial) === 2);
+  check('地里多了一株作物', planted.plantings.length === 1);
+
+  /* ---- 生长 ---- */
+  const seed = SEEDS.find((s) => s.material === seedMaterial)!;
+  const half = planting.tickPlantings(planted, seed.growSeconds / 2);
+  check('作物会随时间生长', !planting.isPlantingReady(half.plantings[0]), `${planting.getPlantingProgress(half.plantings[0]).toFixed(2)}`);
+  const ripe = planting.tickPlantings(planted, seed.growSeconds + 1);
+  check('长够时间就成熟', planting.isPlantingReady(ripe.plantings[0]));
+
+  /* ---- 收获 ---- */
+  const unripe = planting.harvestPlanting(planted, planted.plantings[0].id);
+  check('未成熟不能收获', unripe.gains.length === 0);
+
+  const harvested = planting.harvestPlanting(ripe, ripe.plantings[0].id);
+  check('收获得到材料', harvested.gains[0]?.amount === seed.yield, `${harvested.gains[0]?.amount} 份`);
+  check('收获后地块空出', harvested.state.plantings.length === 0);
+  check(
+    '收获的材料进了材料栏',
+    harvested.state.materials[seedMaterial].eq(ripe.materials[seedMaterial].add(seed.yield)),
+  );
+
+  /* ---- 一键种下 / 一键收获 ---- */
+  const many = planting.addSeeds(farm, seedMaterial, 100);
+  const allPlanted = planting.plantAll(many, makeRandom(2));
+  check('一键种下会填满地块', allPlanted.plantings.length === engine.getPlotCapacity(many), `${allPlanted.plantings.length}`);
+  const grownAll = planting.tickPlantings(allPlanted, seed.growSeconds + 1);
+  const bulk = planting.harvestAll(grownAll);
+  check('一键收获并合并产出', bulk.gains.length === 1 && bulk.gains[0].amount === seed.yield * engine.getPlotCapacity(many));
+
+  /* ---- 催熟（需求 5 明文） ---- */
+  // 用生长期最长的一种材料来测，免得第一次催熟就把作物催熟了
+  const slowMaterial: MaterialId = 'primordialFruit';
+  const slowSeed = SEEDS.find((s) => s.material === slowMaterial)!;
+  const slowFarm = planting.plantSeed(
+    planting.addSeeds(farm, slowMaterial, 2),
+    slowMaterial,
+    makeRandom(4),
+  );
+  const qiCost = hastenQiCost(slowSeed.rarity);
+  const richFarm = grant(slowFarm, { qi: '1e9', stone: '1e9' });
+  const hastened = planting.hastenPlanting(richFarm, richFarm.plantings[0].id, 'qi');
+  check('催熟会推进生长进度', hastened.state.plantings[0].progress > richFarm.plantings[0].progress);
+  check(
+    '催熟扣除灵气',
+    hastened.state.resources.qi.eq(richFarm.resources.qi.sub(qiCost)),
+    `-${fmt(qiCost)}`,
+  );
+  const hastenedStone = planting.hastenPlanting(richFarm, richFarm.plantings[0].id, 'stone');
+  check(
+    '灵石催熟推进得更多',
+    hastenedStone.state.plantings[0].progress > hastened.state.plantings[0].progress,
+    `${hastened.state.plantings[0].progress} → ${hastenedStone.state.plantings[0].progress}`,
+  );
+  check(
+    '催熟不会超过成熟所需',
+    planting.tickPlantings(
+      planting.hastenPlanting(
+        planting.hastenPlanting(richFarm, richFarm.plantings[0].id, 'stone').state,
+        richFarm.plantings[0].id,
+        'stone',
+      ).state,
+      slowSeed.growSeconds * 10,
+    ).plantings[0].progress <= slowSeed.growSeconds,
+  );
+  const broke: GameState = { ...slowFarm, resources: { ...slowFarm.resources, qi: D(0) } };
+  check('灵气不足时催熟失败', planting.canHasten(broke, broke.plantings[0].id, 'qi').ok === false);
+
+  /* ---- 稀有种子只能靠探索（不进商行） ---- */
+  check(
+    '稀有材料种子不在商行货品里',
+    SHOP_GOODS.filter((g) => g.kind === 'seed').every(
+      (g) => MATERIAL_MAP[g.item as MaterialId].category === 'base',
+    ),
+  );
+  check(
+    '秘境会掉稀有材料种子',
+    RARE_MATERIAL_IDS.every((id) => SEEDS.some((s) => s.material === id)),
+  );
+  // 「越高级的材料概率越小」不能变成「高级材料根本抽不到」：
+  // 高级区域的种子池会把低阶种子筛掉，所以每级稀有度都得有区域覆盖
+  check(
+    '每种稀有度都有区域能掉出来',
+    [1, 2, 3, 4, 5, 6].every((rarity) =>
+      [...TRAVEL_REGIONS, ...Object.values(SECRET_REALM_MAP)].some(
+        (region) => rarity >= (region.seedMinRarity ?? 1) && rarity <= region.seedMaxRarity,
+      ),
+    ),
+  );
+  check(
+    '高级区域的种子池不会掉最低级的种子',
+    TRAVEL_REGIONS.filter((r) => r.minRealm >= 4).every((r) => (r.seedMinRarity ?? 1) >= 3),
+    TRAVEL_REGIONS.filter((r) => r.minRealm >= 4)
+      .map((r) => `${r.name}:${r.seedMinRarity ?? 1}~${r.seedMaxRarity}`)
+      .join(' '),
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 19. 钻研与图纸（需求 6）                                              */
+/* ------------------------------------------------------------------ */
+section('[20] 钻研与图纸（需求 6）');
+{
+  const base = createInitialState(0);
+
+  /* ---- 除基础资源设施外，建筑都有技术或图纸门槛 ---- */
+  // 例外只有三样：茅屋（开局唯一的居所）与储物袋、藏宝阁
+  // —— 它们是"能攒下灵气去突破"的前提，卡住它们会直接把游戏锁死
+  const UNGATED_OK = new Set(['thatchHut', 'storagePouch']);
+  const needTech = STRUCTURES.filter(
+    (s) => s.group !== 'resource' && !s.requiresTech && !s.requiresBlueprint && !UNGATED_OK.has(s.id),
+  );
+  check(
+    '除基础资源设施与少数开局必需建筑外，都有技术或图纸门槛',
+    needTech.length === 0,
+    needTech.map((s) => s.name).join('、'),
+  );
+  check(
+    '需要技术的建筑确实存在',
+    STRUCTURES.filter((s) => s.requiresTech).length >= 5,
+    `${STRUCTURES.filter((s) => s.requiresTech).length} 座`,
+  );
+  check(
+    '所有基础资源设施都不需要技术',
+    BUILDABLE_MAP.spiritArray.requiresTech === undefined &&
+      BUILDABLE_MAP.woodGrove.requiresTech === undefined &&
+      BUILDABLE_MAP.stoneMine.requiresTech === undefined,
+  );
+  check(
+    '开局必需的居所与储物袋不加技术门槛（否则会锁死）',
+    BUILDABLE_MAP.thatchHut.requiresTech === undefined &&
+      BUILDABLE_MAP.storagePouch.requiresTech === undefined,
+  );
+
+  /* ---- 技术表自身要自洽 ---- */
+  const techIds = new Set(TECHS.map((t) => t.id));
+  check('技术的所有前置都存在', TECHS.every((t) => t.requires.every((id) => techIds.has(id))));
+  check('技术都设了钻研耗时', TECHS.every((t) => t.seconds > 0));
+  check('技术都设了境界门槛', TECHS.every((t) => t.requiresRealm >= 0 && t.requiresRealm < REALMS.length));
+
+  /* ---- 前置与境界门槛 ---- */
+  const noHall: GameState = { ...base, realmIndex: 5 };
+  check(
+    '商道需要先有营造之术',
+    research.canStartResearch(noHall, 'tradeArt').ok === false,
+    research.canStartResearch(noHall, 'tradeArt').reason ?? '',
+  );
+  const lowRealm = research.canStartResearch(base, 'caveHeavenArt');
+  check('境界不足时不能钻研', lowRealm.ok === false, lowRealm.reason ?? '');
+
+  /* ---- 钻研：付钱 → 计时 → 完成 ---- */
+  const rich = grant(base, { stone: '1e6', herb: '1e6' });
+  const started = research.startResearch(rich, 'alchemyArt');
+  check('开始钻研后进入钻研状态', started.research?.id === 'alchemyArt');
+  check('钻研扣除了材料', started.resources.stone.lt(rich.resources.stone));
+  check('钻研中进度从 0 开始', research.getResearchProgress(started) === 0);
+
+  const half = research.tickResearch(started, TECH_MAP.alchemyArt.seconds / 2);
+  check('钻研进度会推进', research.getResearchProgress(half) > 0 && research.getResearchProgress(half) < 1);
+
+  const finished = research.tickResearch(started, TECH_MAP.alchemyArt.seconds + 1);
+  check('钻研完成后掌握该技术', research.isTechResearched(finished, 'alchemyArt'));
+  check('钻研状态已清空', finished.research === null);
+  check('写入了钻研记事', finished.journal.some((entry) => entry.text.includes('钻研有成')));
+  check('已掌握的技术不能重复钻研', research.canStartResearch(finished, 'alchemyArt').ok === false);
+
+  /* ---- 放弃钻研不退材料 ---- */
+  const aborted = research.cancelResearch(started);
+  check('放弃后清空钻研状态', aborted.research === null);
+  check('放弃不退材料', aborted.resources.stone.eq(started.resources.stone));
+
+  /* ---- 技术门槛真的挡住了建筑（丹房） ---- */
+  const alchemyRoom = BUILDABLE_MAP.alchemyRoom;
+  // refreshUnlocks 用来触发「资源门槛」这一层解锁：
+  // 丹房要先拥有过 100 灵木才会出现在面板上，之后才谈得上钻研门槛。
+  // 注意 blackIron 是材料，得走 grant 才能落到 materials 里
+  const gated: GameState = engine.refreshUnlocks(
+    grant(rich, { wood: '5000', ore: '5000', blackIron: '5000', stone: '1e5' }),
+  );
+  check('资源门槛达成后丹房可见', engine.isUnlocked(alchemyRoom, gated));
+  check(
+    '没钻研炼丹入门时建不了丹房',
+    engine.getBuildGate(alchemyRoom, gated) === '需钻研「炼丹入门」',
+    engine.getBuildGate(alchemyRoom, gated) ?? '',
+  );
+  check('技术门槛不隐藏建筑（要看得到才知道钻研什么）', engine.isUnlocked(alchemyRoom, gated));
+  const ungated: GameState = { ...gated, techs: { ...gated.techs, alchemyArt: true } };
+  check('钻研之后就能建丹房', engine.getBuildGate(alchemyRoom, ungated) === null);
+
+  /* ---- 图纸门槛真的挡住了稀有建筑（灵舟坊） ---- */
+  const boat = BUILDABLE_MAP.spiritBoat;
+  const realmOk: GameState = { ...gated, realmIndex: 4 };
+  const noBlueprint = engine.getBuildGate(boat, realmOk);
+  check('没有图纸时建不了灵舟坊', noBlueprint !== null, noBlueprint ?? '');
+  check('提示里说明了需要图纸', (noBlueprint ?? '').includes('灵舟图纸'));
+  const withBp = withBlueprint(realmOk, 'spiritBoatBlueprint');
+  check('拿到图纸后就能建', engine.getBuildGate(boat, withBp) === null);
+  check('图纸能通过探索获得', Object.values(SECRET_REALM_MAP).some((r) => r.blueprintChance > 0));
+  check('图纸能通过商行购买', SHOP_GOODS.some((g) => g.kind === 'blueprint'));
+  check(
+    '低境界秘境不会掉图纸（图纸属于元婴期以上的传承）',
+    Object.values(SECRET_REALM_MAP)
+      .filter((r) => r.minRealm < MIN_REALM_FOR_BLUEPRINT)
+      .every((r) => r.blueprintChance === 0),
+  );
+
+  /* ---- 技术提供的加成真的生效 ---- */
+  const hall = forceBuild(withTech({ ...base, realmIndex: 5 }, 'preachingArt'), 'sectHall', 2);
+  check('讲道堂加快弟子修炼', engine.getCultivationSpeedMultiplier(hall) > 1, `×${engine.getCultivationSpeedMultiplier(hall).toFixed(2)}`);
+  const boatBuilt = forceBuild(withBp, 'spiritBoat', 2);
+  check('灵舟坊加快探索', expeditions.getExpeditionSpeed(boatBuilt) > expeditions.getExpeditionSpeed(withBp));
+  const pool = forceBuild(realmOk, 'thunderPool', 1);
+  check(
+    '雷池提高突破成功率',
+    engine.getSuccessRate(pool, false) > engine.getSuccessRate(realmOk, false),
+    `${engine.getSuccessRate(realmOk, false).toFixed(3)} → ${engine.getSuccessRate(pool, false).toFixed(3)}`,
+  );
+  const altar = forceBuild({ ...base, realmIndex: 6 }, 'starAltar', 1);
+  check('星坛提高全局产量', engine.getGlobalMultiplier(altar).gt(engine.getGlobalMultiplier({ ...base, realmIndex: 6 })));
+}
+
+/* ------------------------------------------------------------------ */
+/* 20. 新字段的存档往返                                                 */
+/* ------------------------------------------------------------------ */
+section('[21] 新字段的存档往返');
+{
+  const base = grantAll(createInitialState(0), { qi: '1e6', stone: '1e5' });
+  const loaded: GameState = {
+    ...base,
+    autoRefineLevel: 2,
+    personalTravel: { regionId: 'mortalVillage', progress: 30, duration: 90 },
+    techs: { alchemyArt: true, refiningArt: true },
+    blueprints: { spiritBoatBlueprint: true },
+    research: { id: 'storageArt', remaining: 12 },
+    plantings: [{ id: 'p1', material: 'demonCore', progress: 10, duration: 60 }],
+    shop: {
+      offers: [{ id: 'o1', kind: 'seed', item: 'demonCore', amount: 3, price: 120, sold: false }],
+      secondsLeft: 42,
+    },
+  };
+  const withSeeds = planting.addSeeds(loaded, 'starSand', 5);
+
+  const round = deserialize(JSON.parse(JSON.stringify(serialize(withSeeds))));
+  check('存档往返成功', round !== null);
+  if (round) {
+    check('自动合成档位保留', round.autoRefineLevel === 2);
+    check('游历状态保留', round.personalTravel?.regionId === 'mortalVillage');
+    check('已钻技术保留', round.techs.alchemyArt === true && round.techs.refiningArt === true);
+    check('图纸保留', round.blueprints.spiritBoatBlueprint === true);
+    check('钻研进度保留', round.research?.id === 'storageArt' && round.research.remaining === 12);
+    check('地块保留', round.plantings.length === 1 && round.plantings[0].material === 'demonCore');
+    check('种子保留', round.seeds.starSand === 5);
+    check('商行货架保留', round.shop.offers.length === 1 && round.shop.secondsLeft === 42);
+  }
+
+  /* ---- 坏数据不会让读档崩掉 ---- */
+  const junk = deserialize({
+    v: 3,
+    at: 0,
+    tc: { notATech: true },
+    bpr: { notABlueprint: true },
+    sd: { notAMaterial: 5, demonCore: -3 },
+    pg: [{ material: 'nope' }, { material: 'demonCore', progress: 1, duration: 60 }],
+    rs: { id: 'nope', remaining: 5 },
+    sh: { offers: [{ kind: 'seed', item: 'notAGood' }], secondsLeft: 'x' },
+    pv: { regionId: 'notARegion' },
+    au: 999,
+  });
+  check('含垃圾字段的存档仍可读入', junk !== null);
+  if (junk) {
+    check('未知技术被丢弃', Object.keys(junk.techs).length === 0);
+    check('未知图纸被丢弃', Object.keys(junk.blueprints).length === 0);
+    check('非法种子被丢弃', junk.seeds.notAMaterial === undefined && junk.seeds.demonCore === undefined);
+    check('非法地块被丢弃', junk.plantings.length === 1 && junk.plantings[0].material === 'demonCore');
+    check('非法钻研被丢弃', junk.research === null);
+    check('非法货品被丢弃', junk.shop.offers.length === 0);
+    check('非法游历被丢弃', junk.personalTravel === null);
+    check('档位被夹到合法范围', junk.autoRefineLevel <= AUTO_REFINE_LEVEL_MAX);
+  }
+
+  /* ---- v2 存档（没有这些新字段）要能平滑升级 ---- */
+  const rawV3 = JSON.parse(JSON.stringify(serialize(withSeeds)));
+  const v2: Record<string, unknown> = { ...rawV3, v: 2 };
+  for (const key of ['pv', 'au', 'ap', 'sd', 'pg', 'npi', 'tc', 'rs', 'bpr', 'sh']) delete v2[key];
+  const upgraded = deserialize(v2);
+  check('v2 存档可以升级到 v3', upgraded !== null);
+  if (upgraded) {
+    check('v2 存档的资源没有丢', upgraded.resources.qi.gt(0), fmt(upgraded.resources.qi));
+    check('v2 存档的旧字段仍在', upgraded.materials.demonCore.gt(0));
+    check('新字段取默认值', upgraded.techs.alchemyArt === undefined && upgraded.plantings.length === 0);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 21. 界面：非空状态渲染（容易被忽略的分支）                            */
+/* ------------------------------------------------------------------ */
+section('[22] 界面：非空状态渲染');
+{
+  // 默认渲染走的是"全新存档"，那些只在有内容时才出现的分支
+  // （地块卡片、货架、进度条、弟子列表……）一次都不会被走到。
+  // 这里塞一份"玩到中期"的状态，把每个面板都渲染一次。
+  //
+  // 注意：zustand v5 在 SSR 下用的是 getInitialState() 作 server snapshot，
+  // 所以 setState 在这里没用 —— 必须**原地改写初始状态对象**，
+  // 渲染完再改回来。
+  const initial = useGame.getInitialState();
+  const backup = { ...initial };
+
+  let rich = grantAll(createInitialState(0), {
+    qi: '1e9',
+    stone: '1e7',
+    wood: '1e7',
+    ore: '1e7',
+    herb: '1e7',
+  });
+  rich = forceBuild(rich, 'thatchHut', 4);
+  rich = forceBuild(rich, 'storagePouch', 5);
+  rich = forceBuild(rich, 'spiritArray', 30);
+  rich = forceBuild(rich, 'woodGrove', 20);
+  rich = forceBuild(rich, 'oreVein', 20);
+  rich = forceBuild(rich, 'herbField', 10);
+  rich = forceBuild(rich, 'stoneMine', 5);
+  rich = forceBuild(rich, 'alchemyRoom', 4);
+  rich = forceBuild(rich, 'refinery', 3);
+  rich = forceBuild(rich, 'plantation', 2);
+  rich = forceBuild(rich, 'tradeHouse', 1);
+  rich = forceBuild(rich, 'sectHall', 1);
+  rich = withTech(
+    rich,
+    'alchemyArt',
+    'refiningArt',
+    'storageArt',
+    'architecture',
+    'tradeArt',
+    'plantingArt',
+    'preachingArt',
+  );
+  rich = withBlueprint(rich, 'spiritBoatBlueprint');
+  rich = {
+    ...rich,
+    realmIndex: 5,
+    layer: 3,
+    servants: { wood: 3, ore: 2 },
+    injurySeconds: 90,
+    autoRefineLevel: 2,
+    sect: {
+      ...rich.sect,
+      founded: true,
+      level: 4,
+      totalRecruited: 12,
+      disciples: Array.from({ length: 4 }, (_, i) => disciples.rollDisciple(4, i + 1, makeRandom(i + 1))),
+    },
+  };
+  rich = planting.plantSeed(planting.addSeeds(rich, 'demonCore', 4), 'demonCore', makeRandom(2));
+  rich = planting.tickPlantings(rich, 10);
+  rich = travel.startTravel(rich, 'mortalVillage');
+  rich = research.startResearch(rich, 'caveHeavenArt');
+  rich = shop.tickShop(rich, 0, makeRandom(9));
+  rich = expeditions.startExpedition(
+    rich,
+    'sunsetValley',
+    [rich.sect.disciples[0].id],
+    makeRandom(3),
+  );
+  rich = engine.refreshUnlocks(rich);
+
+  check('搭出的非空状态确实有内容', rich.plantings.length > 0 && rich.shop.offers.length > 0);
+
+  useGame.setState({ game: rich });
+  Object.assign(initial, { game: rich });
+  try {
+    const all: [string, React.ReactElement][] = [
+      ['顶栏', <Header />],
+      ['资源栏', <ResourceBar />],
+      ['打坐', <ActionPanel />],
+      ['仆役', <ServantPanel />],
+      ['洞府建设', <BuildingsPanel />],
+      ['钻研', <ResearchPanel />],
+      ['境界', <RealmPanel />],
+      ['灵石合成', <StonePanel />],
+      ['飞升', <AscendPanel />],
+      ['宗门', <SectPanel />],
+      ['弟子', <DisciplePanel />],
+      ['灵植园', <PlantationPanel />],
+      ['商行', <ShopPanel />],
+      ['掌门游历', <TravelPanel />],
+      ['秘境', <ExpeditionPanel />],
+      ['炼丹', <AlchemyPanel />],
+      ['炼器', <RefiningPanel />],
+      ['库存', <InventoryPanel />],
+      ['记事', <JournalPanel />],
+      ['存档', <SavePanel />],
+    ];
+    for (const [label, element] of all) {
+      try {
+        const out = renderToString(element);
+        check(`非空状态下「${label}」渲染成功`, out.length > 0, `${out.length} 字符`);
+      } catch (error) {
+        check(`非空状态下「${label}」渲染成功`, false, String(error));
+      }
+    }
+
+    try {
+      const out = renderToString(<App />);
+      check('非空状态下整个 App 渲染成功', out.length > 0, `${out.length} 字符`);
+    } catch (error) {
+      check('非空状态下整个 App 渲染成功', false, String(error));
+    }
+  } finally {
+    Object.assign(initial, backup);
+    useGame.setState({ game: backup.game });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 22. store 动作闭环                                                   */
+/* ------------------------------------------------------------------ */
+section('[23] store 动作闭环');
+{
+  // 界面只调 store 的动作，而这些动作最容易犯的错是「名字对不上」
+  // 或「忘了走 nextGame 收口」—— 这里逐个调一遍。
+  const store = useGame;
+  const seedState = () => {
+    let next = grantAll(createInitialState(0), {
+      qi: '1e9',
+      stone: '1e8',
+      wood: '1e7',
+      ore: '1e7',
+      herb: '1e7',
+    });
+    // 商行价格随境界倍率放大，所以仓库也得跟上，否则灵石会被上限夹住
+    next = forceBuild(next, 'spiritVault', 10);
+    next = forceBuild(next, 'thatchHut', 5);
+    next = forceBuild(next, 'plantation', 1);
+    next = forceBuild(next, 'tradeHouse', 1);
+    next = withTech(next, 'alchemyArt', 'plantingArt', 'tradeArt', 'architecture');
+    next = { ...next, realmIndex: 4 };
+    next = engine.refreshUnlocks(planting.addSeeds(next, 'demonCore', 3));
+    store.setState({ game: next, notice: null });
+    return next;
+  };
+
+  /* ---- 钻研 ---- */
+  seedState();
+  store.getState().startResearch('storageArt');
+  check('store.startResearch 生效', store.getState().game.research?.id === 'storageArt');
+  store.getState().cancelResearch();
+  check('store.cancelResearch 生效', store.getState().game.research === null);
+
+  /* ---- 自动合成 ---- */
+  seedState();
+  store.getState().setAutoRefine(3);
+  check('store.setAutoRefine 生效', store.getState().game.autoRefineLevel === 3);
+  store.getState().setAutoRefine(0);
+  check('store 可以关掉自动合成', store.getState().game.autoRefineLevel === 0);
+  store.getState().setAutoRefine(99);
+  check('档位会被夹到上限', store.getState().game.autoRefineLevel === AUTO_REFINE_LEVEL_MAX);
+
+  /* ---- 游历 ---- */
+  seedState();
+  store.getState().startTravel('mortalVillage');
+  check('store.startTravel 生效', store.getState().game.personalTravel?.regionId === 'mortalVillage');
+  store.getState().tick(1);
+  check('tick 会推进游历', (store.getState().game.personalTravel?.progress ?? 0) > 0);
+  store.getState().cancelTravel();
+  check('store.cancelTravel 生效', store.getState().game.personalTravel === null);
+
+  /* ---- 种植 ---- */
+  seedState();
+  store.getState().plantSeed('demonCore');
+  check('store.plantSeed 生效', store.getState().game.plantings.length === 1);
+  const plantingId = store.getState().game.plantings[0].id;
+  store.getState().hastenPlanting(plantingId, 'qi');
+  check('store.hastenPlanting 推进了进度', store.getState().game.plantings[0].progress > 0);
+  for (let i = 0; i < 40; i += 1) store.getState().hastenPlanting(plantingId, 'stone');
+  check('催熟到成熟后状态正常', planting.isPlantingReady(store.getState().game.plantings[0]));
+  store.getState().harvest(plantingId);
+  check('store.harvest 生效', store.getState().game.plantings.length === 0);
+  store.getState().plantAllSeeds();
+  check('store.plantAllSeeds 生效', store.getState().game.plantings.length > 0);
+  for (const p of store.getState().game.plantings) {
+    for (let i = 0; i < 40; i += 1) store.getState().hastenPlanting(p.id, 'stone');
+  }
+  store.getState().harvestAll();
+  check('store.harvestAll 生效', store.getState().game.plantings.length === 0);
+
+  /* ---- 商行 ---- */
+  seedState();
+  store.getState().tick(0.1);
+  const offer = store.getState().game.shop.offers.find((o) => o.price <= 1e8);
+  check('商行有货可买', Boolean(offer));
+  if (offer) {
+    const before = store.getState().game.resources.stone;
+    store.getState().buyShopOffer(offer.id);
+    const after = store.getState().game.resources.stone;
+    check('store.buyShopOffer 扣了灵石', after.lt(before), `${fmt(before)} → ${fmt(after)}`);
+  }
+
+  /* ---- 建造（技术门槛已过的建筑） ---- */
+  seedState();
+  const beforeBuild = engine.getBuildingCount(store.getState().game, 'plantation');
+  store.getState().buy('plantation', 1);
+  check(
+    'store.buy 生效',
+    engine.getBuildingCount(store.getState().game, 'plantation') === beforeBuild + 1,
+  );
+
+  /* ---- tick 会收口：自动解锁 + 资源夹回上限 ---- */
+  seedState();
+  const overflowing = {
+    ...store.getState().game,
+    resources: { ...store.getState().game.resources, qi: D('1e30') },
+  };
+  store.setState({ game: overflowing });
+  store.getState().tick(1);
+  check(
+    'tick 把越界资源夹回上限',
+    store.getState().game.resources.qi.lte(engine.getStorageCap(store.getState().game, 'qi')),
+    fmt(store.getState().game.resources.qi),
+  );
+
+  // 收尾：把 store 恢复成一份干净存档，免得影响后面的检查
+  store.setState({ game: createInitialState(0), offline: null, notice: null });
 }
 
 /* ------------------------------------------------------------------ */

@@ -20,6 +20,8 @@ import {
   ALCHEMY_SLOT_REQUIREMENT,
   BUILDABLE_MAP,
   GENERATORS,
+  MATERIAL_IDS,
+  MATERIAL_MAP,
   PILL_MAP,
   REALMS,
   REFINING_SLOT_REQUIREMENT,
@@ -28,6 +30,9 @@ import {
   SECRET_REALMS,
   SERVANT_JOBS,
   STRUCTURES,
+  TECHS,
+  TECH_MAP,
+  TRAVEL_REGIONS,
   isResourceId,
 } from '../src/game/content';
 import type { ItemId } from '../src/game/content';
@@ -36,6 +41,10 @@ import * as engine from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
 import * as expeditions from '../src/game/expeditions';
 import * as crafting from '../src/game/crafting';
+import * as research from '../src/game/research';
+import * as planting from '../src/game/planting';
+import * as shop from '../src/game/shop';
+import * as travel from '../src/game/travel';
 import { applyTick } from '../src/game/tick';
 
 /* ------------------------------------------------------------------ */
@@ -135,6 +144,19 @@ function payback(state: GameState, id: string, prices: Record<string, number>): 
     const need = (REFINING_SLOT_REQUIREMENT[state.refiningTier + 1] ?? 0) > engine.getRefiningSlots(state);
     return need ? qiCost / (mult * 0.4) : Infinity;
   }
+  if (def.plots) {
+    // 手上有种子却没地种，才值得扩建药圃
+    const need = planting.getFreePlots(state) === 0 && planting.getOwnedSeeds(state).length > 0;
+    return need ? qiCost / (mult * 0.3) : Infinity;
+  }
+  if (def.shopSlots) {
+    // 第一座商行是功能性的；再往后只是为了多两个货位，价值不高
+    return engine.getBuildingCount(state, def.id) === 0 ? qiCost / (mult * 0.6) : Infinity;
+  }
+  // 纯加成类建筑（讲道堂 / 灵舟坊 / 雷池 / 星坛）：按加成强度折算出"回本时间"
+  const strength =
+    def.productionBonus ?? def.cultivationBonus ?? def.expeditionSpeedBonus ?? def.breakthroughBonus ?? 0;
+  if (strength > 0) return qiCost / (mult * strength);
   return Infinity;
 }
 
@@ -172,11 +194,36 @@ function runSimulation(seed: number): SimResult {
   const seenSectLevel = new Set<number>([1]);
   const seenAlchemy = new Set<number>([1]);
   const seenRefining = new Set<number>([1]);
+  const flags = {
+    firstTravel: false,
+    firstTravelBack: false,
+    firstPlant: false,
+    firstHarvest: false,
+    firstShopBuy: false,
+    firstBlueprint: false,
+    firstAutoRefine: false,
+  };
 
   record('开局');
 
   while (seconds < CONFIG.budget && iterations < 400000) {
     iterations += 1;
+
+    /* ---------------- 0. 自动合成档位（需求 4） ----------------
+       理性玩家不会一直开着：灵气是突破的硬通货，
+       所以只在「还在刷小境界层数」且灵气产量足够大时才开。 */
+    const realmNow = engine.getRealm(state);
+    const wantAuto =
+      state.layer < realmNow.layerCount && engine.getProduction(state).qi.gt(1e5)
+        ? 2
+        : 0;
+    if (state.autoRefineLevel !== wantAuto) {
+      state = { ...state, autoRefineLevel: wantAuto, autoRefineProgress: wantAuto > 0 ? state.autoRefineProgress : 0 };
+      if (wantAuto > 0 && !flags.firstAutoRefine) {
+        flags.firstAutoRefine = true;
+        record('开启灵石自动合成');
+      }
+    }
 
     /* ---------------- 1. 修行 ---------------- */
     if (engine.canAdvanceLayer(state)) {
@@ -348,6 +395,100 @@ function runSimulation(seed: number): SimResult {
       }
     }
 
+    /* ---------------- 2c. 钻研（需求 6） ----------------
+       建筑几乎都要技术解锁，所以 AI 只要有空就钻研下一门划算的技术。
+       选「钻研耗时最短」的那一门：先拿到便宜的早期技术，
+       免得开局就把几个小时砸在混元之法上。 */
+    if (!state.research) {
+      const startable = TECHS.filter((def) => research.canStartResearch(state, def.id).ok).sort(
+        (a, b) => a.seconds - b.seconds,
+      );
+      const pick = startable[0];
+      if (pick) {
+        const next = research.startResearch(state, pick.id);
+        if (next !== state) {
+          state = next;
+          record(`开始钻研${pick.name}`);
+          continue;
+        }
+      }
+    }
+
+    /* ---------------- 2d. 种植（需求 5） ---------------- */
+    if (planting.getReadyPlantings(state).length > 0) {
+      const result = planting.harvestAll(state);
+      if (result.state !== state) {
+        state = result.state;
+        if (!flags.firstHarvest) {
+          flags.firstHarvest = true;
+          record(`首次收获灵植（${result.gains.map((g) => g.name).join('、')}）`);
+        }
+        continue;
+      }
+    }
+    if (planting.getOwnedSeeds(state).length > 0 && planting.getFreePlots(state) > 0) {
+      const next = planting.plantAll(state, random);
+      if (next !== state) {
+        state = next;
+        if (!flags.firstPlant) {
+          flags.firstPlant = true;
+          record('首次种下灵植');
+        }
+        continue;
+      }
+    }
+
+    /* ---------------- 2e. 商行（需求 3 / 6） ----------------
+       只买「买不到第二次」的东西：图纸与种子。
+       资源与材料那一类属于应急，理性玩家不会拿灵石去买。 */
+    if (engine.hasShop(state)) {
+      const wanted = state.shop.offers.filter((offer) => {
+        if (offer.sold) return false;
+        if (!engine.canAfford(state, { stone: D(offer.price) })) return false;
+        // 留出 20 倍余量，免得把招收弟子的灵石花光
+        if (state.resources.stone.lt(offer.price * 20)) return false;
+        return offer.kind === 'blueprint' || offer.kind === 'seed';
+      });
+      const offer = wanted[0];
+      if (offer) {
+        const result = shop.buyShopOffer(state, offer.id);
+        if (result.state !== state) {
+          state = result.state;
+          if (!flags.firstShopBuy) {
+            flags.firstShopBuy = true;
+            record(`首次在商行购物（${shop.describeOffer(offer).name}）`);
+          }
+          if (offer.kind === 'blueprint' && !flags.firstBlueprint) {
+            flags.firstBlueprint = true;
+            record(`购得图纸（${shop.describeOffer(offer).name}）`);
+          }
+          continue;
+        }
+      }
+    }
+
+    /* ---------------- 2f. 个人游历（需求 1） ----------------
+       开宗之前没有弟子可用，掌门亲自出门是唯一的材料来源；
+       但出门要减产 45%，所以只在「手头没灵石且还没有灵石矿」时出门，
+       其余情况交给下面的 stall 分支兜底（彻底卡住才出门找材料）。 */
+    const stoneIncome = engine.getProduction(state).stone;
+    const brokeNoMine = stoneIncome.lte(0) && state.resources.stone.lt(200);
+    if (!state.personalTravel && !state.sect.founded && brokeNoMine) {
+      const regions = travel.getAvailableRegions(state);
+      const best = regions[regions.length - 1];
+      if (best) {
+        const next = travel.startTravel(state, best.id);
+        if (next !== state) {
+          state = next;
+          if (!flags.firstTravel) {
+            flags.firstTravel = true;
+            record(`掌门首次出游（${best.name}）`);
+          }
+          continue;
+        }
+      }
+    }
+
     /* ---------------- 3a. 仓储告急：先扩建仓库 ---------------- */
     const caps = engine.getStorageCaps(state);
     const tight = RESOURCE_IDS.find((id) => {
@@ -450,7 +591,20 @@ function runSimulation(seed: number): SimResult {
         state = engine.refreshUnlocks(state);
         continue;
       }
-      // 有产出但暂时买不起（多为缺秘境材料）：跳过一段，让探索继续推进
+      // 有产出但暂时买不起：多半是缺秘境材料。
+      // 开宗之后弟子会去打，所以这里先推进探索；但如果掌门闲着，
+      // 就让他亲自出门 —— 游历正是为此准备的兜底手段。
+      if (!state.personalTravel) {
+        const regions = travel.getAvailableRegions(state);
+        const best = regions[regions.length - 1];
+        if (best) {
+          const next = travel.startTravel(state, best.id);
+          if (next !== state) {
+            state = next;
+            continue;
+          }
+        }
+      }
       const dt = 120;
       seconds += dt;
       state = applyTick(state, dt, random);
@@ -459,7 +613,12 @@ function runSimulation(seed: number): SimResult {
 
     const dt = Math.max(wait, 0.05);
     seconds += dt;
+    const travelingBefore = state.personalTravel;
     state = applyTick(state, dt, random);
+    if (travelingBefore && !state.personalTravel && !flags.firstTravelBack) {
+      flags.firstTravelBack = true;
+      record(`掌门游历归来（${TRAVEL_REGIONS.find((r) => r.id === travelingBefore.regionId)?.name ?? ''}）`);
+    }
   }
 
   return { seed, seconds, iterations, deadlock, realmTimes, milestones, finalState: state };
@@ -511,6 +670,46 @@ function printDetail(result: SimResult): void {
 
   console.log(`  炼丹术 ${state.alchemyTier} 品 · 炼器术 ${state.refiningTier} 品`);
 
+  /* ---- 需求 6：钻研与图纸 ---- */
+  const learned = TECHS.filter((t) => state.techs[t.id] === true);
+  console.log(
+    `  钻研：${learned.length}/${TECHS.length} 门${learned.length > 0 ? `（${learned.map((t) => t.name).join('、')}）` : ''}`,
+  );
+  if (state.research) {
+    console.log(`  正在钻研：${TECH_MAP[state.research.id]?.name ?? state.research.id}（还需 ${fmtDuration(state.research.remaining)}）`);
+  }
+  const blueprints = Object.keys(state.blueprints);
+  console.log(`  图纸：${blueprints.length} 张${blueprints.length > 0 ? `（${blueprints.join('、')}）` : ''}`);
+
+  /* ---- 需求 4：自动合成 ---- */
+  console.log(
+    `  自动合成：${state.autoRefineLevel === 0 ? '关闭' : `${state.autoRefineLevel} 档（${engine.getAutoRefineRate(state)} 批/秒）`}`,
+  );
+
+  /* ---- 需求 5：种植 ---- */
+  const seedTotal = Object.values(state.seeds).reduce((sum, n) => sum + n, 0);
+  console.log(
+    `  灵植：地块 ${planting.getUsedPlots(state)}/${engine.getPlotCapacity(state)} · 余种 ${seedTotal} 颗 · 已成熟 ${planting.getReadyPlantings(state).length}`,
+  );
+
+  /* ---- 需求 3：商行 ---- */
+  if (engine.hasShop(state)) {
+    const goods = state.shop.offers
+      .map((o) => `${shop.describeOffer(o).name}×${o.amount}${o.sold ? '(已售)' : ''}`)
+      .join('，');
+    console.log(`  商行货架（${fmtDuration(state.shop.secondsLeft)}后刷新）：${goods || '空'}`);
+  } else {
+    console.log('  商行：未开设');
+  }
+
+  /* ---- 需求 1：游历 ---- */
+  if (state.personalTravel) {
+    const region = TRAVEL_REGIONS.find((r) => r.id === state.personalTravel?.regionId);
+    console.log(`  掌门在外：${region?.name ?? ''}（还剩 ${fmtDuration(travel.getTravelRemaining(state.personalTravel))}）`);
+  } else {
+    console.log('  掌门：在洞府中');
+  }
+
   console.log(
     `  储存占用：${RESOURCE_IDS.map((id) => `${id} ${fmt(state.resources[id])}/${fmt(caps[id])}`).join('，')}`,
   );
@@ -521,8 +720,13 @@ function printDetail(result: SimResult): void {
 
   const materials = Object.entries(state.materials)
     .filter(([, amount]) => amount.gt(0))
-    .map(([id, amount]) => `${id} ${fmt(amount)}`);
-  console.log(`  秘境材料：${materials.length === 0 ? '无' : materials.join('，')}`);
+    .map(([id, amount]) => `${MATERIAL_MAP[id as keyof typeof MATERIAL_MAP]?.name ?? id} ${fmt(amount)}`);
+  console.log(`  材料：${materials.length === 0 ? '无' : materials.join('，')}`);
+  const missing = MATERIAL_IDS.filter((id) => state.materials[id].lte(0));
+  console.log(
+    `  本轮未获取的材料：${missing.length === 0 ? '无（全部材料都拿到过）' : missing.map((id) => MATERIAL_MAP[id].name).join('、')}`,
+  );
+  console.log('    （AI 只在"卡住"时才出门游历，所以高境界材料未必会被取到；来源见冒烟测试）');
 
   if (state.sect.disciples.length > 0) {
     const byRealm = new Map<number, number>();

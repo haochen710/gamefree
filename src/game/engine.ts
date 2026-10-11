@@ -11,7 +11,10 @@ import Decimal, { D } from './decimal';
 import {
   ALCHEMY_SLOT_REQUIREMENT,
   ARTIFACTS,
+  AUTO_REFINE_LEVEL_MAX,
+  AUTO_REFINE_RATES,
   BASE_STORAGE,
+  BLUEPRINT_MAP,
   BREAKTHROUGH_FAIL_BONUS,
   BREAKTHROUGH_FAIL_BONUS_CAP,
   BREAKTHROUGH_MAX_SUCCESS,
@@ -39,9 +42,12 @@ import {
   SECRET_REALMS,
   SERVANT_BONUS_PER_HEAD,
   SERVANT_JOBS,
+  SHOP_OFFER_COUNT,
   STONE_REFINE_COST,
   STONE_REFINE_OUTPUT,
   STRUCTURES,
+  TECH_MAP,
+  TRAVEL_PRODUCTION_PENALTY,
   discipleCapBySect,
   isResourceId,
   servantCost,
@@ -187,14 +193,93 @@ export function getGlobalMultiplier(state: GameState): Decimal {
   const artifact = getArtifactBonuses(state).production;
   return getRealmMultiplier(state)
     .mul(getDaoYunMultiplier(state))
-    .mul(1 + artifact)
+    .mul(1 + artifact + getStructureBonus(state, 'productionBonus'))
     .mul(state.buffs.productionMultiplier)
-    .mul(getInjuryMultiplier(state));
+    .mul(getInjuryMultiplier(state))
+    .mul(getTravelMultiplier(state));
 }
 
 /** 道伤未愈时的产量惩罚（「萎靡不振」的具象化） */
 export function getInjuryMultiplier(state: GameState): number {
   return state.injurySeconds > 0 ? 1 - INJURY_PRODUCTION_PENALTY : 1;
+}
+
+/**
+ * 掌门出门游历时的产量惩罚（需求 1：「由于无人监管家里，各种产量降低」）。
+ *
+ * 这是游历的代价，也是它最核心的取舍：
+ * 想要材料就得减产，想攒灵气就别出门。
+ */
+export function getTravelMultiplier(state: GameState): number {
+  return state.personalTravel ? 1 - TRAVEL_PRODUCTION_PENALTY : 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* 钻研与图纸（需求 6）                                                 */
+/* ------------------------------------------------------------------ */
+
+
+/** 该技术的名称（用于界面与门槛提示），未知 id 原样返回 */
+export function techName(id: string): string {
+  return TECH_MAP[id]?.name ?? id;
+}
+
+export function blueprintName(id: string): string {
+  return BLUEPRINT_MAP[id]?.name ?? id;
+}
+
+/**
+ * 汇总所有建筑提供的某一项加成。
+ *
+ * 把「某种加成怎么算」收敛到一个函数里，新增建筑效果时
+ * 只需要在这里加一个 key，界面与逻辑不会各自跑偏。
+ */
+export type StructureBonusKey =
+  | 'cultivationBonus'
+  | 'expeditionSpeedBonus'
+  | 'breakthroughBonus'
+  | 'productionBonus';
+
+export function getStructureBonus(state: GameState, key: StructureBonusKey): number {
+  let total = 0;
+  for (const def of STRUCTURES) {
+    const per = def[key];
+    if (!per) continue;
+    const count = getBuildingCount(state, def.id);
+    if (count > 0) total += per * count;
+  }
+  return total;
+}
+
+/** 弟子修炼速度倍率（讲道堂等建筑提供） */
+export function getCultivationSpeedMultiplier(state: GameState): number {
+  return 1 + getStructureBonus(state, 'cultivationBonus');
+}
+
+/** 灵植地块总数（需求 5），由灵植园 / 药王圃提供 */
+export function getPlotCapacity(state: GameState): number {
+  let total = 0;
+  for (const def of STRUCTURES) {
+    if (!def.plots) continue;
+    total += getBuildingCount(state, def.id) * def.plots;
+  }
+  return total;
+}
+
+/** 商行货位：基础货位数 + 每多一座商行多摆几件 */
+export function getShopOfferCapacity(state: GameState): number {
+  let extra = 0;
+  for (const def of STRUCTURES) {
+    if (!def.shopSlots) continue;
+    extra += getBuildingCount(state, def.id) * def.shopSlots;
+  }
+  if (extra <= 0) return 0;
+  return SHOP_OFFER_COUNT + extra;
+}
+
+/** 是否已经建起商行（没建就完全不刷新货架） */
+export function hasShop(state: GameState): boolean {
+  return getShopOfferCapacity(state) > 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -377,6 +462,10 @@ export function meetsUnlockCondition(def: BuildableDef, state: GameState): boole
  *
  * 门槛刻意提前一级显示（灰掉并标注需求）——
  * 让玩家能看到「下一个境界就能建这个」的目标，而不是突然冒出来。
+ *
+ * 技术与图纸门槛**不**参与这个判断（需求 6）：它们不隐藏建筑，
+ * 反而是建筑卡片上的一个提示 —— 玩家得先知道"有丹房这东西，
+ * 但要钻研炼丹入门"，才有可能去钻研。
  */
 export function isUnlocked(def: BuildableDef, state: GameState): boolean {
   if (!state.unlockedBuildings[def.id]) return false;
@@ -385,9 +474,19 @@ export function isUnlocked(def: BuildableDef, state: GameState): boolean {
   return true;
 }
 
-/** 现在能不能建。返回不能建造的原因，null 表示可以 */
+/**
+ * 现在能不能建。返回不能建造的原因，null 表示可以。
+ *
+ * 顺序即「玩家下一步该干什么」：先钻研 / 先找图纸，再看等级。
+ */
 export function getBuildGate(def: BuildableDef, state: GameState): string | null {
   if (!state.unlockedBuildings[def.id]) return '尚未解锁';
+  if (def.requiresTech && !state.techs[def.requiresTech]) {
+    return `需钻研「${techName(def.requiresTech)}」`;
+  }
+  if (def.requiresBlueprint && !state.blueprints[def.requiresBlueprint]) {
+    return `需「${blueprintName(def.requiresBlueprint)}」`;
+  }
   if (def.requiresRealm !== undefined && state.realmIndex < def.requiresRealm) {
     return `需${REALMS[def.requiresRealm].name}`;
   }
@@ -687,8 +786,13 @@ export function getSuccessRate(state: GameState, usePill: boolean): number {
     usePill && realm.breakthroughPill && (state.pills[realm.breakthroughPill] ?? 0) > 0
       ? BREAKTHROUGH_PILL_BONUS
       : 0;
+  // 雷池等建筑也提供突破加成
+  const building = getStructureBonus(state, 'breakthroughBonus');
 
-  return Math.min(realm.baseSuccess + pity + state.globalBreakthroughBonus + pill, BREAKTHROUGH_MAX_SUCCESS);
+  return Math.min(
+    realm.baseSuccess + pity + state.globalBreakthroughBonus + pill + building,
+    BREAKTHROUGH_MAX_SUCCESS,
+  );
 }
 
 export interface BreakthroughResult {
@@ -918,6 +1022,71 @@ export function refineStone(state: GameState, times: number): GameState {
       ...paid.resources,
       stone: paid.resources.stone.add(STONE_REFINE_OUTPUT * actual),
     },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 自动合成灵石（需求 4）                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 自动合成的未处理欠账上限（以「批」为单位，3600 批 ≈ 9 万灵石）。
+ *
+ * 资源不够时把需求留着，等资源补上立刻合成；但如果离线很久，
+ * 欠账会无限增长，一上线就把未来几小时的灵气一次性吞掉。
+ * 所以按「最快档跑一小时」封顶 —— 在线时这个上限永远够（每秒只有 0.8 批），
+ * 只影响离线结算。
+ */
+export const AUTO_REFINE_BACKLOG_BATCHES = 3600;
+
+/** 当前自动合成档位对应的速率（批/秒），0 表示关闭 */
+export function getAutoRefineRate(state: GameState): number {
+  const level = Math.min(Math.max(Math.floor(state.autoRefineLevel), 0), AUTO_REFINE_LEVEL_MAX);
+  return AUTO_REFINE_RATES[level];
+}
+
+
+/** 现在最多还能合成几批（受灵气、灵矿与灵石储存上限三者共同限制） */
+export function maxAutoRefineBatches(state: GameState): number {
+  const room = getStorageCap(state, 'stone').sub(state.resources.stone);
+  if (room.lte(0)) return 0;
+
+  const byRoom = room.div(STONE_REFINE_OUTPUT).floor().toNumber();
+  const byQi = state.resources.qi.div(STONE_REFINE_COST.qi).floor().toNumber();
+  const byOre = state.resources.ore.div(STONE_REFINE_COST.ore).floor().toNumber();
+
+  return Math.max(0, Math.min(byRoom, byQi, byOre));
+}
+
+/**
+ * 自动合成。
+ *
+ * 用 autoRefineProgress 攒成整批再合成，而不是每帧产出小数灵石 ——
+ * 否则界面上会一直显示「灵石 12.37」这种数字。
+ */
+export function autoRefine(state: GameState, dt: number): GameState {
+  const rate = getAutoRefineRate(state);
+  if (rate <= 0 || dt <= 0) return state;
+
+  const demanded = state.autoRefineProgress + rate * dt;
+  const wanted = Math.floor(demanded);
+  if (wanted <= 0) return { ...state, autoRefineProgress: demanded };
+
+  const actual = Math.min(wanted, maxAutoRefineBatches(state));
+  // 剩下的欠账留着（等资源补上再合成），但设上限防止离线积压失控
+  const leftover = Math.min(demanded - actual, AUTO_REFINE_BACKLOG_BATCHES);
+
+  if (actual <= 0) return { ...state, autoRefineProgress: leftover };
+
+  return {
+    ...state,
+    resources: {
+      ...state.resources,
+      qi: state.resources.qi.sub(STONE_REFINE_COST.qi * actual),
+      ore: state.resources.ore.sub(STONE_REFINE_COST.ore * actual),
+      stone: state.resources.stone.add(STONE_REFINE_OUTPUT * actual),
+    },
+    autoRefineProgress: leftover,
   };
 }
 

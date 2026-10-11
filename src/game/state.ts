@@ -2,7 +2,7 @@
  * 游戏状态（一份存档的全部内容）。
  *
  * 状态本身是纯数据，不含任何方法 —— 存档序列化因此很简单，
- * 所有计算逻辑放在 engine / disciples / expeditions / crafting 里。
+ * 所有计算逻辑放在 engine / disciples / expeditions / crafting 等模块里。
  */
 import Decimal, { D } from './decimal';
 import {
@@ -15,6 +15,7 @@ import {
   type AptitudeId,
   type MaterialId,
   type ResourceId,
+  type ShopOffer,
 } from './content';
 
 export type ResourceMap = Record<ResourceId, Decimal>;
@@ -75,6 +76,40 @@ export interface JournalEntry {
 export const JOURNAL_LIMIT = 40;
 
 /* ------------------------------------------------------------------ */
+/* 个人游历 / 种植 / 钻研 / 商行                                        */
+/* ------------------------------------------------------------------ */
+
+/** 掌门亲自出门游历（需求 1）。同一时间只能进行一趟 */
+export interface PersonalTravel {
+  regionId: string;
+  /** 已积累的进度（秒） */
+  progress: number;
+  /** 完成所需的进度 */
+  duration: number;
+}
+
+/** 一块地里正在长的东西（需求 5） */
+export interface Planting {
+  id: string;
+  material: MaterialId;
+  progress: number;
+  duration: number;
+}
+
+/** 正在钻研的技术（需求 6）。同一时间只能钻研一项 */
+export interface ResearchState {
+  id: string;
+  remaining: number;
+}
+
+/** 商行当前货架与刷新倒计时（需求 3） */
+export interface ShopState {
+  offers: ShopOffer[];
+  /** 距离下次刷新还有多少秒 */
+  secondsLeft: number;
+}
+
+/* ------------------------------------------------------------------ */
 /* 主状态                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -93,6 +128,9 @@ export interface GameState {
    *
    * 解锁是「达成过就永久记住」，而不是每帧重新按当前资源判断 ——
    * 否则玩家一花掉灵气，已经建了好几座的灵木林就会从面板上凭空消失。
+   *
+   * 注意：这只记「资源门槛」这一种解锁。技术 / 图纸门槛是实时判断的
+   * （需求 6），因为它们本来就是"有没有"的二值事实。
    */
   unlockedBuildings: Record<string, boolean>;
   /**
@@ -129,6 +167,34 @@ export interface GameState {
   /** 道伤剩余秒数。大于 0 时无法突破，且全局产量下降 */
   injurySeconds: number;
 
+  /* ---- 个人游历（需求 1） ---- */
+  personalTravel: PersonalTravel | null;
+
+  /* ---- 自动合成（需求 4） ---- */
+  /** 自动合成档位，0 表示关闭；见 AUTO_REFINE_RATES */
+  autoRefineLevel: number;
+  /** 自动合成的凑整进度，攒够 1 次就合成一批 */
+  autoRefineProgress: number;
+
+  /* ---- 种植（需求 5） ---- */
+  /** 各材料的种子数量（材料 id -> 颗数） */
+  seeds: Record<string, number>;
+  /** 正在生长的作物 */
+  plantings: Planting[];
+  /** 用于生成作物 id 的自增计数器 */
+  nextPlantingId: number;
+
+  /* ---- 钻研与图纸（需求 6） ---- */
+  /** 已钻研出的技术 */
+  techs: Record<string, boolean>;
+  /** 正在钻研的技术 */
+  research: ResearchState | null;
+  /** 已获得的图纸 */
+  blueprints: Record<string, boolean>;
+
+  /* ---- 商行（需求 3） ---- */
+  shop: ShopState;
+
   /* ---- 转世 ---- */
   daoYun: Decimal;
   ascensions: number;
@@ -153,7 +219,7 @@ export interface GameState {
   nextDiscipleId: number;
 }
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 /* ------------------------------------------------------------------ */
 /* 工厂                                                                */
@@ -208,6 +274,10 @@ export function createEmptySect(): Sect {
   };
 }
 
+export function createEmptyShop(): ShopState {
+  return { offers: [], secondsLeft: 0 };
+}
+
 export function createInitialState(now = Date.now()): GameState {
   const resources = createEmptyResources();
   // 开局给 10 点灵气，聚灵阵要 15 —— 必须先打坐几下，
@@ -231,6 +301,16 @@ export function createInitialState(now = Date.now()): GameState {
     mindProgress: 0,
     servants: {},
     injurySeconds: 0,
+    personalTravel: null,
+    autoRefineLevel: 0,
+    autoRefineProgress: 0,
+    seeds: {},
+    plantings: [],
+    nextPlantingId: 1,
+    techs: {},
+    research: null,
+    blueprints: {},
+    shop: createEmptyShop(),
     daoYun: D(0),
     ascensions: 0,
     totalQi: D(0),
@@ -252,6 +332,7 @@ export function createInitialState(now = Date.now()): GameState {
  *
  * 道韵、飞升次数、历世累计灵气保留。
  * 宗门与弟子一并遣散 —— 否则"转世重修"就没有代价了。
+ * 技术、图纸与种子是「知识」，跟着神魂一起带走。
  */
 export function createAscendedState(state: GameState, daoYunGain: Decimal, now = Date.now()): GameState {
   const fresh = createInitialState(now);
@@ -261,5 +342,10 @@ export function createAscendedState(state: GameState, daoYunGain: Decimal, now =
     ascensions: state.ascensions + 1,
     lifetimeQi: state.lifetimeQi,
     playTime: state.playTime,
+    // 钻研出的技术与图纸属于"道"，转世不忘
+    techs: { ...state.techs },
+    blueprints: { ...state.blueprints },
+    // 种子也留一部分：否则每次飞升都要重新收集稀有种子，太惩罚
+    seeds: { ...state.seeds },
   };
 }
