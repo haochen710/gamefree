@@ -2293,15 +2293,32 @@ section('[23] store 动作闭环');
   check('store.harvestAll 生效', store.getState().game.plantings.length === 0);
 
   /* ---- 商行 ---- */
+  /*
+   * ⚠️ 这一段必须**逐个试着买**，不能只挑第一个"价格够低"的货就断言扣钱。
+   *
+   * 商行货架是用 `gameRandom`（= Math.random）摇出来的，而成交还要过
+   * "已售罄 / 是否持有对应技术 / 境界够不够"这些关卡 —— 所以"挑中的那一件"
+   * 未必买得成。原来的写法只在 CI 上偶发失败（run #14 就是这么红的），
+   * 本地跑六次也不一定复现。
+   * 现在的写法：给足灵石，**至少有一件**能买成才算通过，并顺带验证确实扣了钱。
+   */
   seedState();
   store.getState().tick(0.1);
-  const offer = store.getState().game.shop.offers.find((o) => o.price <= 1e8);
-  check('商行有货可买', Boolean(offer));
-  if (offer) {
-    const before = store.getState().game.resources.stone;
-    store.getState().buyShopOffer(offer.id);
-    const after = store.getState().game.resources.stone;
-    check('store.buyShopOffer 扣了灵石', after.lt(before), `${fmt(before)} → ${fmt(after)}`);
+  {
+    const offers = store.getState().game.shop.offers;
+    check('商行有货', offers.length > 0, `${offers.length} 件`);
+
+    let bought = false;
+    for (const candidate of offers) {
+      const before = store.getState().game.resources.stone;
+      store.getState().buyShopOffer(candidate.id);
+      const after = store.getState().game.resources.stone;
+      if (after.lt(before)) {
+        bought = true;
+        break;
+      }
+    }
+    check('store.buyShopOffer 能买成并扣灵石', bought, bought ? '已成交' : '货架上没有一件买得成');
   }
 
   /* ---- 宗门大比（需求 4） ---- */
