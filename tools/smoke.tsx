@@ -16,6 +16,9 @@ import { renderToString } from 'react-dom/server';
 import type React from 'react';
 import App from '../src/App';
 import BuildingsPanel from '../src/components/BuildingsPanel';
+import BuildQueuePanel from '../src/components/BuildQueuePanel';
+import SavePanel from '../src/components/SavePanel';
+import RefinePanel from '../src/components/RefinePanel';
 import ResearchPanel from '../src/components/ResearchPanel';
 import PlantationPanel from '../src/components/PlantationPanel';
 import ShopPanel from '../src/components/ShopPanel';
@@ -33,7 +36,6 @@ import AlchemyPanel from '../src/components/AlchemyPanel';
 import RefiningPanel from '../src/components/RefiningPanel';
 import InventoryPanel from '../src/components/InventoryPanel';
 import JournalPanel from '../src/components/JournalPanel';
-import SavePanel from '../src/components/SavePanel';
 import { useGame } from '../src/game/store';
 import { D, fmt } from '../src/game/decimal';
 import {
@@ -4979,6 +4981,28 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
     const out = renderToString(<App />);
     check('底部不再有「进度保存在你自己的浏览器里」', !out.includes('进度保存在你自己的浏览器里'));
     check('也不再提「数值设定见仓库中的 BALANCE.md」', !out.includes('数值设定见仓库中的 BALANCE'));
+  }
+
+  /* ---- 需求 1：洞府页里不该再有灵石合成栏 ---- */
+  {
+    /*
+     * ⚠️ 这条是补的：只 grep 整个界面有没有「灵石合成」是不够的 ——
+     * 修行页的「合成 · 精炼」里就有这四个字，洞府页哪天再长出一块也照样绿。
+     * 所以按**页面结构**断言：洞府那几块里不能出现"灵石合成"。
+     */
+    const cave = renderToString(
+      <div>
+        <BuildingsPanel />
+        <BuildQueuePanel />
+        <SavePanel />
+      </div>,
+    );
+    check('洞府页里没有灵石合成面板', !cave.includes('灵石合成'));
+
+    // 反向守卫：修行页的合成栏**必须**还在（否则上面那条会因为"整块被删"而假绿）
+    const refine = renderToString(<RefinePanel />);
+    check('修行页的合成栏仍在（反向守卫）', refine.includes('合成 · 精炼') && refine.includes('灵石合成'));
+    check('修行页的合成栏有自动合成（本轮需求 2）', refine.includes('自动合成'));
   }
 }
 

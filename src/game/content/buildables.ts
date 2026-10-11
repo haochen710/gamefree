@@ -1099,8 +1099,7 @@ export const BUILDABLE_MAP: Record<string, BuildableDef> = BUILDABLES.reduce(
 /* ------------------------------------------------------------------ */
 
 /*
- * STONE_REFINE_COST / STONE_REFINE_OUTPUT 已经搬到 
-efine.ts，
+ * `STONE_REFINE_COST` / `STONE_REFINE_OUTPUT` 已经搬到 `refine.ts`，
  * 并从那条配方**推导**出来 —— 这里不再各存一份数字。
  * （两份副本本轮漂过一次：UI 按新价显示、实际按旧价扣。）
  */
