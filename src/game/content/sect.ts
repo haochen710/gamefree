@@ -218,14 +218,23 @@ export function expeditionSlots(level: number): number {
 
 /** 招收基础花费系数 */
 export const RECRUIT_BASE_COST = 60;
-/** 每多一名弟子，招收价格乘以 */
-export const RECRUIT_COST_GROWTH = 1.1;
 
-/** 招收一名弟子所需的灵石 */
-export function recruitCost(sectLevel: number, currentDisciples: number): number {
-  return Math.ceil(
-    RECRUIT_BASE_COST * sectLevel * sectLevel * Math.pow(RECRUIT_COST_GROWTH, currentDisciples),
-  );
+/**
+ * 招收一名弟子所需的灵石（需求 3）。
+ *
+ * 需求原文：「弟子招募在每个宗门品阶都是固定消耗，只是宗门等级越高越贵」。
+ *
+ * 所以**同一个品阶之内，招第一个和招第五十个一个价** —— 原来是
+ * `× 1.1^已有人数` 的等比递增（第 40 个要 43 倍价），于是"多招人"这件事
+ * 到中后期变成一笔要精算的开销。现在唯一的变量是宗门品阶：
+ * 一品 60、九品 4860 灵石（`60 × 品阶²`）。
+ *
+ * `currentDisciples` 参数保留（调用点很多），但**已经不参与计算**。
+ */
+export const RECRUIT_COST_PER_LEVEL = 60;
+
+export function recruitCost(sectLevel: number, _currentDisciples: number): number {
+  return Math.ceil(RECRUIT_COST_PER_LEVEL * sectLevel * sectLevel);
 }
 
 /* ------------------------------------------------------------------ */

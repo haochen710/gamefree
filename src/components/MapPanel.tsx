@@ -42,7 +42,10 @@ import {
   getDiscoveryChance,
   getDiscoveryPityRemaining,
   getExplorationRange,
+  canOpenRealm,
+  getOpenCost,
   getRealmCooldown,
+  isRealmOpened,
   getRealmGate,
   isRegionVisible,
 } from '../game/engine';
@@ -72,12 +75,17 @@ import type { GameState } from '../game/state';
 function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
   const startExpedition = useGame((s) => s.startExpedition);
   const startSoloRealm = useGame((s) => s.startSoloRealm);
+  const openRealm = useGame((s) => s.openRealm);
   const [selected, setSelected] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
 
   const idle = getIdleDisciples(state).filter((d) => d.realmIndex >= def.minRealm);
   const cooldown = getRealmCooldown(state, def.id);
   const gate = getRealmGate(state, def);
+  // 需求 1：资源富集区的秘境要先花一笔资源"开启"
+  const opened = isRealmOpened(state, def);
+  const openCheck = canOpenRealm(state, def);
+  const openCost = getOpenCost(def);
   const check = canStartExpedition(state, def.id, selected);
   // 需求 5：掌门独自前往的资格（和派队伍走同一套冷却与发现校验）
   const soloCheck = canStartSoloRealm(state, def.id);
@@ -222,6 +230,32 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
           {!soloCheck.ok && soloCheck.reason && <span className="btn__sub">{soloCheck.reason}</span>}
         </button>
       </div>
+
+      {/* 需求 1：资源富集区的秘境要先立阵眼（花一笔资源）才能探 */}
+      {!opened && (
+        <div className="realm-card__open">
+          <div className="realm-card__open-head">
+            <strong>🔯 尚未开启</strong>
+            <span className="panel__hint">
+              资源富集区的秘境要先立起阵眼：
+              {Object.entries(openCost)
+                .map(([id, amount]) => `${ITEM_MAP[id as ItemId]?.icon ?? ''}${ITEM_MAP[id as ItemId]?.name ?? id} ${fmt(amount, 0)}`)
+                .join(' · ')}
+            </span>
+          </div>
+          <div className="btn-row">
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={!openCheck.ok}
+              onClick={() => openRealm(def.id)}
+            >
+              耗费资源开启
+              {!openCheck.ok && openCheck.reason && <span className="btn__sub">{openCheck.reason}</span>}
+            </button>
+          </div>
+        </div>
+      )}
     </article>
   );
 }

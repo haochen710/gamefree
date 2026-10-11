@@ -2667,6 +2667,50 @@ a {
   color: var(--muted);
 }
 
+/* 资源富集区秘境的「开启」区（需求 1） */
+.realm-card__open {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(120, 90, 170, 0.45);
+  border-radius: var(--radius);
+  background: rgba(120, 90, 170, 0.07);
+}
+
+.realm-card__open-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+/* 炼制成功率（需求 2） */
+.recipe__rate {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: #26663f;
+}
+
+.recipe__rate--risk {
+  color: #943d1c;
+  font-weight: 600;
+}
+
+/* 可携带器物的耐久（需求 2） */
+.gear-badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid rgba(38, 102, 63, 0.45);
+  color: #26663f;
+  background: rgba(38, 102, 63, 0.08);
+}
+
+.gear-badge--broken {
+  border-color: rgba(148, 61, 28, 0.5);
+  color: #943d1c;
+  background: rgba(148, 61, 28, 0.08);
+}
+
 /* ------------------------------------------------------------------ */
 /* 感悟（需求 3）                                                       */
 /* ------------------------------------------------------------------ */

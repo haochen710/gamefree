@@ -8,7 +8,14 @@
 import { fmt } from '../game/decimal';
 import { ARTIFACTS, TIER_NAMES, tierName } from '../game/content';
 import { toCostMap } from '../game/engine';
-import { canCraftArtifact, getRefiningUpgradeStatus, maxCraftable } from '../game/crafting';
+import {
+  canCraftArtifact,
+  describeCraftRate,
+  getCraftSuccessRate,
+  getRefiningUpgradeStatus,
+  maxCraftable,
+} from '../game/crafting';
+import { getGearCharges } from '../game/engine';
 import { useGame } from '../game/store';
 import CostList from './CostList';
 
@@ -76,6 +83,9 @@ export function RefiningPanel() {
           const max = maxCraftable(game, cost);
           const owned = game.artifacts[artifact.id] ?? 0;
           const effective = Math.min(owned, holders);
+          // 需求 2：炼制有概率失败；可携带器物还要显示剩余次数
+          const rate = getCraftSuccessRate(game, 'refining', artifact.tier);
+          const charges = artifact.carry ? getGearCharges(game, artifact) : null;
 
           return (
             <article key={artifact.id} className={locked ? 'recipe recipe--locked' : 'recipe'}>
@@ -91,6 +101,18 @@ export function RefiningPanel() {
                     持有 {fmt(owned, 0)} · 生效 {effective}
                   </span>
                 )}
+                {/* 需求 2：可携带器物会随探索磨损，用完即毁 */}
+                {charges !== null && (
+                  <span className={charges > 0 ? 'gear-badge' : 'gear-badge gear-badge--broken'}>
+                    🎒 可携带 · 剩 {charges}/{artifact.carry?.charges} 次
+                    {charges <= 0 && '（已损毁，需重炼）'}
+                  </span>
+                )}
+              </div>
+
+              <div className={rate < 1 ? 'recipe__rate recipe__rate--risk' : 'recipe__rate'}>
+                {describeCraftRate(game, 'refining', artifact.tier)}
+                {artifact.carry && ` · 每探索一次磨损 1 次`}
               </div>
 
               <div className="recipe__desc">{artifact.desc}</div>

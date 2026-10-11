@@ -15,6 +15,7 @@ import {
   ARTIFACTS,
   AUTO_REFINE_LEVEL_MAX,
   AUTO_REFINE_RATES,
+  type ArtifactDef,
   BASE_STORAGE,
   BLUEPRINT_MAP,
   BREAKTHROUGH_FAIL_BONUS,
@@ -174,6 +175,18 @@ export function getArtifactBonuses(state: GameState): ArtifactBonuses {
   for (const def of ARTIFACTS) {
     const owned = state.artifacts[def.id] ?? 0;
     if (owned <= 0) continue;
+
+    /*
+     * 需求 2：可携带器物（`carry`）会随探索消耗次数，用光了就不再提供加成。
+     *
+     * 注意这里的两层"打折"：
+     *   1. 存量为 0 直接跳过（已损毁）；
+     *   2. 生效件数还受弟子数限制（老规矩：100 把剑给 1 个弟子也只能算 1 把）。
+     * 用 `getGearCharges` 而不是直接读字段，是为了让"没记录 = 满次数"这条规则
+     * 只有一个落点，不会在有别的地方读的时候各自解释一遍。
+     */
+    if (def.carry && getGearCharges(state, def) <= 0) continue;
+
     const effective = Math.min(owned, holders);
     const effect = def.effect;
 
@@ -199,6 +212,56 @@ export function getArtifactBonuses(state: GameState): ArtifactBonuses {
     }
   }
   return acc;
+}
+
+/**
+ * 可携带器物的剩余次数（需求 2）。
+ *
+ * 三条规则，缺一不可：
+ *   1. **没库存就是 0** —— 用坏之后记录会被删掉，如果只写"没记录 = 满次数"，
+ *      损毁的器物会立刻"满耐久复活"（这个 bug 是冒烟测试逮到的）；
+ *   2. **没记录 = 满次数** —— 新增器物或旧存档第一次遇到它时，
+ *      不该出现"刚炼出来就是 0 次"的怪事；
+ *   3. 有记录就夹到 0~上限。
+ */
+export function getGearCharges(state: GameState, def: ArtifactDef): number {
+  if (!def.carry) return 0;
+  if ((state.artifacts[def.id] ?? 0) <= 0) return 0;
+  const raw = state.gearCharges[def.id];
+  if (raw === undefined) return def.carry.charges;
+  return Math.max(0, Math.min(def.carry.charges, raw));
+}
+
+/**
+ * 探索结算时消耗一次携带器物的耐久（需求 2），用完即毁。
+ *
+ * 需求原文：「影响弟子探索的器物有使用次数限制，达到限制后损毁，需要重新炼制」。
+ * 返回新的 state 与被用坏的器物名（给记事用）。
+ */
+export function consumeGear(state: GameState): { state: GameState; broken: string[] } {
+  const charges: Record<string, number> = { ...state.gearCharges };
+  const artifacts: Record<string, number> = { ...state.artifacts };
+  const broken: string[] = [];
+  let changed = false;
+
+  for (const def of ARTIFACTS) {
+    if (!def.carry) continue;
+    if ((artifacts[def.id] ?? 0) <= 0) continue;
+
+    const left = getGearCharges(state, def) - 1;
+    changed = true;
+    if (left > 0) {
+      charges[def.id] = left;
+    } else {
+      // 用完了：器物从库存里消失，次数记录一并清掉
+      delete charges[def.id];
+      artifacts[def.id] = 0;
+      broken.push(def.name);
+    }
+  }
+
+  if (!changed) return { state, broken };
+  return { state: { ...state, gearCharges: charges, artifacts }, broken };
 }
 
 export function getRealm(state: GameState): RealmDef {
@@ -276,6 +339,8 @@ export type StructureBonusKey =
   | 'breakthroughBonus'
   | 'queueSlots'
   | 'sectDefense'
+  | 'alchemySuccessBonus'
+  | 'refiningSuccessBonus'
   | 'productionBonus';
 
 export function getStructureBonus(state: GameState, key: StructureBonusKey): number {
@@ -926,6 +991,50 @@ export function buyBuilding(state: GameState, def: BuildableDef, count: number):
   return {
     ...paid,
     buildings: { ...paid.buildings, [def.id]: owned + actual },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 秘境开启（需求 1）                                                   */
+/* ------------------------------------------------------------------ */
+
+/** 这处秘境需不需要先"开启"（只有资源富集区的秘境需要） */
+export function needsOpening(def: SecretRealmDef): boolean {
+  return def.unlockCost !== undefined && Object.keys(def.unlockCost).length > 0;
+}
+
+/** 这处秘境开启了没有（不需要开启的直接算已开启） */
+export function isRealmOpened(state: GameState, def: SecretRealmDef): boolean {
+  if (!needsOpening(def)) return true;
+  return state.openedRealms[def.id] === true;
+}
+
+/** 开启所需的消耗 */
+export function getOpenCost(def: SecretRealmDef): CostMap {
+  return toCostMap(def.unlockCost ?? {});
+}
+
+/** 能不能开启：已发现、还没开、资源够，三道关 */
+export function canOpenRealm(state: GameState, def: SecretRealmDef): { ok: boolean; reason: string | null } {
+  if (!needsOpening(def)) return { ok: false, reason: '此地无需开启' };
+  if (!isRealmDiscovered(state, def)) return { ok: false, reason: '尚未发现此秘境' };
+  if (isRealmOpened(state, def)) return { ok: false, reason: '已经开启' };
+  if (!canAfford(state, getOpenCost(def))) return { ok: false, reason: '资源不足' };
+  return { ok: true, reason: null };
+}
+
+/** 花资源开启一处秘境（一次性，永久生效） */
+export function openRealm(state: GameState, def: SecretRealmDef): GameState {
+  if (!canOpenRealm(state, def).ok) return state;
+  const paid = payCost(state, getOpenCost(def));
+  return {
+    ...paid,
+    openedRealms: { ...paid.openedRealms, [def.id]: true },
+    journal: pushJournal(paid.journal, {
+      time: paid.playTime,
+      kind: 'good',
+      text: `耗费资源立起阵眼，${def.name} 已开启`,
+    }),
   };
 }
 

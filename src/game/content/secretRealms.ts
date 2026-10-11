@@ -99,6 +99,16 @@ export interface SecretRealmDef {
   specialty?: MaterialId;
   /** 在本小区域里排第几处（0 起） */
   rank: number;
+  /**
+   * 开启这处秘境需要一次性花费的资源（需求 1）。
+   *
+   * 需求原文：「资源富集区的秘境开启需要花费一定资源」。
+   * 所以只有**资源富集区**（每个大区域下标 15 的那个小区域）里的秘境带这个字段：
+   * 发现之后还不能直接探，得先花一笔把阵眼立起来。
+   * 这笔钱按档次递增，而且吃的是**进阶资源**（阵枢）——
+   * 于是"想动富集区，先去合成"这条链路也就成立了。
+   */
+  unlockCost?: Partial<Record<ItemId, number>>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -169,14 +179,14 @@ interface TierStat {
  */
 const TIER_STATS: Record<number, TierStat> = {
   1: { powerMult: 2, duration: 120, cooldown: 90, casualty: 0.02, seedChance: 0.3, seedMinRarity: 1, seedMaxRarity: 2, blueprintChance: 0, minParty: 1, maxParty: 4, sectLevel: 0 },
-  2: { powerMult: 3, duration: 240, cooldown: 180, casualty: 0.04, seedChance: 0.35, seedMinRarity: 1, seedMaxRarity: 3, blueprintChance: 0, minParty: 1, maxParty: 5, sectLevel: 0 },
-  3: { powerMult: 4, duration: 420, cooldown: 300, casualty: 0.06, seedChance: 0.4, seedMinRarity: 2, seedMaxRarity: 3, blueprintChance: 0, minParty: 2, maxParty: 6, sectLevel: 0 },
-  4: { powerMult: 5, duration: 700, cooldown: 500, casualty: 0.09, seedChance: 0.45, seedMinRarity: 2, seedMaxRarity: 4, blueprintChance: 0, minParty: 2, maxParty: 7, sectLevel: 0 },
-  5: { powerMult: 6, duration: 1000, cooldown: 700, casualty: 0.12, seedChance: 0.5, seedMinRarity: 3, seedMaxRarity: 5, blueprintChance: 0.05, minParty: 3, maxParty: 8, sectLevel: 0 },
-  6: { powerMult: 7, duration: 1400, cooldown: 950, casualty: 0.15, seedChance: 0.55, seedMinRarity: 3, seedMaxRarity: 5, blueprintChance: 0.07, minParty: 3, maxParty: 9, sectLevel: 2 },
-  7: { powerMult: 8, duration: 1900, cooldown: 1300, casualty: 0.18, seedChance: 0.6, seedMinRarity: 4, seedMaxRarity: 6, blueprintChance: 0.09, minParty: 4, maxParty: 10, sectLevel: 3 },
-  8: { powerMult: 9, duration: 2500, cooldown: 1700, casualty: 0.22, seedChance: 0.62, seedMinRarity: 4, seedMaxRarity: 6, blueprintChance: 0.12, minParty: 4, maxParty: 12, sectLevel: 5 },
-  9: { powerMult: 10, duration: 3200, cooldown: 2200, casualty: 0.26, seedChance: 0.65, seedMinRarity: 5, seedMaxRarity: 6, blueprintChance: 0.15, minParty: 5, maxParty: 14, sectLevel: 7 },
+  2: { powerMult: 3, duration: 200, cooldown: 150, casualty: 0.04, seedChance: 0.35, seedMinRarity: 1, seedMaxRarity: 3, blueprintChance: 0, minParty: 1, maxParty: 5, sectLevel: 0 },
+  3: { powerMult: 4, duration: 340, cooldown: 250, casualty: 0.07, seedChance: 0.4, seedMinRarity: 2, seedMaxRarity: 3, blueprintChance: 0, minParty: 2, maxParty: 6, sectLevel: 0 },
+  4: { powerMult: 5, duration: 560, cooldown: 400, casualty: 0.11, seedChance: 0.45, seedMinRarity: 2, seedMaxRarity: 4, blueprintChance: 0, minParty: 2, maxParty: 7, sectLevel: 0 },
+  5: { powerMult: 6, duration: 900, cooldown: 650, casualty: 0.16, seedChance: 0.5, seedMinRarity: 3, seedMaxRarity: 5, blueprintChance: 0.05, minParty: 3, maxParty: 8, sectLevel: 0 },
+  6: { powerMult: 7, duration: 1450, cooldown: 1000, casualty: 0.21, seedChance: 0.55, seedMinRarity: 3, seedMaxRarity: 5, blueprintChance: 0.07, minParty: 3, maxParty: 9, sectLevel: 2 },
+  7: { powerMult: 8, duration: 2300, cooldown: 1550, casualty: 0.27, seedChance: 0.6, seedMinRarity: 4, seedMaxRarity: 6, blueprintChance: 0.09, minParty: 4, maxParty: 10, sectLevel: 3 },
+  8: { powerMult: 9, duration: 3600, cooldown: 2400, casualty: 0.33, seedChance: 0.62, seedMinRarity: 4, seedMaxRarity: 6, blueprintChance: 0.12, minParty: 4, maxParty: 12, sectLevel: 5 },
+  9: { powerMult: 10, duration: 5600, cooldown: 3600, casualty: 0.4, seedChance: 0.65, seedMinRarity: 5, seedMaxRarity: 6, blueprintChance: 0.15, minParty: 5, maxParty: 14, sectLevel: 7 },
 };
 
 interface PoolEntry {
@@ -443,7 +453,14 @@ function buildRealm(
      */
     minRealm: Math.max(0, MAJOR_REGION_MAP[region.majorId]?.requiresRealm ?? 0),
     cooldown: Math.round(stat.cooldown * (1 + 0.2 * rank)),
-    baseCasualty: Math.min(0.35, stat.casualty + rank * 0.01),
+    /*
+     * 需求 2：「等级越高的秘境，死亡率越高」。
+     *
+     * 上限从 0.35 抬到 0.45：档次 9 的 0.40 得能真的落到数值上，
+     * 否则九档秘境和八档一样危险（都被 0.35 压平），高档次就丢了一半压力。
+     * 同一档里 rank 每高一位再多 1% —— 深处比浅处更险。
+     */
+    baseCasualty: Math.min(0.45, stat.casualty + rank * 0.01),
     loot: buildLoot(tier, profile, amountScale, specialty),
     pillLoot: TIER_PILLS[tier],
     seedChance: stat.seedChance,
@@ -453,7 +470,34 @@ function buildRealm(
     discoveryWeight,
     requiresSectLevel: stat.sectLevel > 0 ? stat.sectLevel : undefined,
     specialty: specialty ?? undefined,
+    // 需求 1：资源富集区的秘境要先花钱"开启"
+    unlockCost: region.index >= RICH_SUB_INDEX ? buildUnlockCost(tier, rank, isSpecialty) : undefined,
     rank,
+  };
+}
+
+/**
+ * 资源富集区秘境的开启花费（需求 1）。
+ *
+ * 设计意图有三条：
+ *   1. **和档次挂钩**：越深处的富集区越贵，前期不会被它挡住；
+ *   2. **吃进阶资源**（阵枢）：把"想开富集区 → 先去合成"这条链路接上，
+ *      和需求 4 的合成系统形成闭环；
+ *   3. **特产秘境更贵**：它是该大区域最值钱的一处，门槛自然该高一点。
+ */
+function buildUnlockCost(
+  tier: number,
+  rank: number,
+  isSpecialty: boolean,
+): Partial<Record<ItemId, number>> {
+  const base = Math.pow(3.2, tier - 3);
+  const rankMult = 1 + rank * 0.5;
+  const specMult = isSpecialty ? 2.5 : 1;
+  return {
+    qi: Math.round(5e5 * base * rankMult * specMult),
+    stone: Math.round(2e4 * base * rankMult * specMult),
+    ore: Math.round(1e4 * base * rankMult * specMult),
+    arrayCore: Math.max(1, Math.round(5 * Math.pow(2.1, tier - 3) * rankMult * specMult)),
   };
 }
 

@@ -47,6 +47,14 @@ export type Effect =
   | { kind: 'expeditionPower'; multiplier: number; duration: number }
   /** 探索伤亡率降低 reduction（0.25 = -25%），持续 duration 秒 */
   | { kind: 'expeditionSafety'; reduction: number; duration: number }
+  /**
+   * 探索伤亡率降低 reduction，**按次**生效（需求 2 的保命丹）。
+   *
+   * 与上面那条的区别是"不算时间，算次数"：下一次探索结算时用掉，
+   * 不管中间过了多久。高档次秘境的基础伤亡到 40%，
+   * 用限时覆盖它意味着玩家得掐着表打，按次则不用 —— 磕一颗就放心这一趟。
+   */
+  | { kind: 'expeditionSafety'; reduction: number; once: true }
   /** 探索速度倍率，持续 duration 秒 */
   | { kind: 'expeditionSpeed'; multiplier: number; duration: number }
   /** 秘境产出倍率，持续 duration 秒 */
@@ -426,6 +434,36 @@ export const PILLS: PillDef[] = [
     effect: { kind: 'expeditionSafety', reduction: 0.25, duration: 600 },
   },
   {
+    /**
+     * 需求 2：「增加可以增加弟子探索存活率的丹药」。
+     *
+     * 铁骨丹是**限时**的（10 分钟、−25%），这一颗是**按次**的：
+     * 一次探索直接免掉四成伤亡，且不设时限，下次探索才消耗。
+     * 两者分工很清楚 —— 挂机用铁骨丹（覆盖一段时间里的所有探索），
+     * 手动闯九档秘境前磕一颗保命丹（那一次几乎不会死人）。
+     *
+     * 之所以做成按次而不是又一颗限时丹：高档次秘境的基础伤亡到 40%，
+     * 用"限时"来覆盖它意味着玩家得算准时间，而按次不需要算。
+     */
+    id: 'lifeGuardPill',
+    name: '保命丹',
+    icon: '💊',
+    tier: 4,
+    category: 'combat',
+    desc: '一丹护一程：下一次探索的伤亡率降低 40%（不设时限，探索一次后消耗）。',
+    cost: {
+      herb: 900,
+      demonCore: 80,
+      coldJade: 200,
+      spiritSilk: 300,
+      spiritEssence: 3,
+      moonDew: 120,
+      lunarCrystal: 8,
+      qi: 2e6,
+    },
+    effect: { kind: 'expeditionSafety', reduction: 0.4, once: true },
+  },
+  {
     id: 'bloodPill',
     name: '狂血丹',
     icon: '🩸',
@@ -583,6 +621,17 @@ export type ArtifactEffect =
    */
   | { kind: 'discovery'; bonus: number };
 
+/**
+ * 可携带器物的耐久信息（需求 2）。
+ *
+ * 需求原文：「影响弟子探索的器物有使用次数限制，达到限制后损毁，需要重新炼制」。
+ * 所以这类器物每探索一次消耗 1 次，次数归零就从库存里消失。
+ */
+export interface CarrySpec {
+  /** 总共能用几次 */
+  charges: number;
+}
+
 export interface ArtifactDef {
   id: string;
   name: string;
@@ -592,6 +641,14 @@ export interface ArtifactDef {
   desc: string;
   cost: Partial<Record<ItemId, number>>;
   effect: ArtifactEffect;
+  /**
+   * 有这一项就是「**可携带器物**」（需求 2）：弟子出门探索时会自动带上，
+   * 每探索一次消耗一次，用完即毁，得重新炼。
+   *
+   * 效果仍然写在 `effect` 里（产出加成 / 伤亡减免），额外加这一项只是让
+   * "这东西会用坏"成为器物自身的属性，而不是散在别处的特判。
+   */
+  carry?: CarrySpec;
 }
 
 export const ARTIFACTS: ArtifactDef[] = [
@@ -771,6 +828,133 @@ export const ARTIFACTS: ArtifactDef[] = [
     },
     effect: { kind: 'discovery', bonus: 0.04 },
   },
+
+  /* ----------------------------------------------------------------
+   * 需求 2 新增：更多器物 + 可携带器物
+   *
+   * 需求原文：「器物种类有点少了，再增加一些，部分特殊器物可以让弟子
+   * 探索时携带，增加产出或者降低伤亡率……影响弟子探索的器物有使用次数
+   * 限制，达到限制后损毁，需要重新炼制」。
+   *
+   * 下面带 `carry` 的五件是**消耗品**：每次探索各消耗 1 次，用完即毁。
+   * 它们的效果和前九件**故意重叠**（产出 / 安全 / 速度 / 战力），
+   * 因为需求要的不是"更强的数值"，而是"给弟子配装"这件事本身：
+   * 前九件是永久资产（炼一次用一辈子），这几件是要反复补的消耗。
+   *
+   * 耐久越短的效果越强 —— 轻身符能用 12 次但只 +20% 速度，
+   * 虚空镜只够 5 次却 +35% 产出。这样"该炼哪一件"永远是个取舍。
+   * ---------------------------------------------------------------- */
+  {
+    id: 'lightTalisman',
+    name: '轻身符',
+    icon: '🪶',
+    tier: 2,
+    category: 'support',
+    desc: '贴上便身轻如燕，弟子探索速度 +20%。可携带，12 次后符纸自燃。',
+    cost: { spiritSilk: 80, blackIron: 30, moonDew: 6, qi: 3e4 },
+    effect: { kind: 'expeditionSpeed', bonus: 0.2 },
+    carry: { charges: 12 },
+  },
+  {
+    id: 'harvestPouch',
+    name: '采灵袋',
+    icon: '👝',
+    tier: 3,
+    category: 'support',
+    desc: '袋口刻着聚物之阵，弟子秘境产出 +20%。可携带，10 次后袋底磨穿。',
+    cost: { spiritSilk: 300, coldJade: 120, demonCore: 60, moonDew: 20, stone: 4000, qi: 3e5 },
+    effect: { kind: 'expeditionYield', bonus: 0.2 },
+    carry: { charges: 10 },
+  },
+  {
+    id: 'soulLantern',
+    name: '引魂灯',
+    icon: '🏮',
+    tier: 4,
+    category: 'support',
+    desc: '灯在则魂不散，弟子探索伤亡率 −18%。可携带，8 次后灯油耗尽。',
+    cost: { netherFlame: 20, moonDew: 60, coldJade: 400, spiritSilk: 800, refinedGold: 4, qi: 2e6 },
+    effect: { kind: 'expeditionSafety', reduction: 0.18 },
+    carry: { charges: 8 },
+  },
+  {
+    id: 'beastBanner',
+    name: '御兽幡',
+    icon: '🚩',
+    tier: 5,
+    category: 'combat',
+    desc: '幡动则群兽随行，弟子战力 +30%。可携带，6 次后兽魂散去。',
+    cost: { demonCore: 900, fireMarrow: 600, spiritSilk: 1500, starSand: 40, moonDew: 200, refinedGold: 12, qi: 5e7 },
+    effect: { kind: 'combat', bonus: 0.3 },
+    carry: { charges: 6 },
+  },
+  {
+    id: 'starChart',
+    name: '周天星图',
+    icon: '🌌',
+    tier: 6,
+    category: 'support',
+    desc: '把星象和地脉对上，发现新秘境的概率 +3.5%。它不会坏，但铸一张极贵。',
+    cost: {
+      starSand: 900,
+      lunarCrystal: 200,
+      dragonBlood: 40,
+      coldJade: 1200,
+      blackIron: 2000,
+      arrayCore: 40,
+      refinedGold: 60,
+      ore: 4e5,
+      qi: 2e9,
+    },
+    effect: { kind: 'discovery', bonus: 0.035 },
+  },
+  {
+    id: 'voidMirror',
+    name: '虚空镜',
+    icon: '🪞',
+    tier: 7,
+    category: 'support',
+    desc: '镜中自成一方小天地，弟子秘境产出 +35%。可携带，5 次后镜面碎裂。',
+    cost: {
+      lunarCrystal: 400,
+      starSand: 1500,
+      dragonBlood: 80,
+      coldJade: 900,
+      spiritSilk: 3000,
+      demonCore: 1500,
+      refinedGold: 120,
+      arrayCore: 80,
+      netherFlame: 120,
+      ore: 8e5,
+      qi: 6e9,
+    },
+    effect: { kind: 'expeditionYield', bonus: 0.35 },
+    carry: { charges: 5 },
+  },
+  {
+    id: 'lifeRobe',
+    name: '长生法衣',
+    icon: '🥋',
+    tier: 8,
+    category: 'support',
+    desc: '衣上绣满护命符箓，弟子探索伤亡率 −30%。可携带，4 次后符箓燃尽。',
+    cost: {
+      spiritSilk: 6000,
+      immortalJade: 120,
+      lunarCrystal: 500,
+      netherFlame: 60,
+      starSand: 2000,
+      fireMarrow: 3000,
+      demonCore: 4000,
+      coldJade: 2500,
+      refinedGold: 400,
+      arrayCore: 200,
+      dragonBlood: 400,
+      qi: 3e11,
+    },
+    effect: { kind: 'expeditionSafety', reduction: 0.3 },
+    carry: { charges: 4 },
+  },
 ];
 
 export const ARTIFACT_MAP: Record<string, ArtifactDef> = ARTIFACTS.reduce(
@@ -785,37 +969,72 @@ export const ARTIFACT_MAP: Record<string, ArtifactDef> = ARTIFACTS.reduce(
 /* 炼丹 / 炼器品阶                                                      */
 /* ------------------------------------------------------------------ */
 
-/** 掌握第 tier 品阶炼丹术所需的丹房数量（下标 = 品阶） */
-export const ALCHEMY_SLOT_REQUIREMENT = [0, 0, 1, 2, 4, 6, 9, 12, 16, 20];
+/**
+ * 炼丹 / 炼器品阶。
+ *
+ * ⚠️ 需求 2 把这一套改了两处：
+ *   1. **丹房与炼器房改为唯一建筑** —— 所以"要几座丹房才能升到几品"
+ *      （原来的 `ALCHEMY_SLOT_REQUIREMENT`）整条规矩作废了，升品只看资源。
+ *      下面那两个数组保留只为兼容旧存档的读法，不再参与判定。
+ *   2. **升品越到高级越要吃稀有材料**：原来的花费只到 `immortalJade`，
+ *      现在从第 4 品起一路吃**进阶资源**（灵液 / 精金，见需求 4 的合成系统），
+ *      高品还要 `chaosQi` / `primordialFruit`。
+ */
+export const ALCHEMY_SLOT_REQUIREMENT = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-/** 掌握第 tier 品阶炼器术所需的炼器房数量（下标 = 品阶） */
-export const REFINING_SLOT_REQUIREMENT = [0, 0, 1, 2, 4, 6, 9, 12, 16, 20];
+export const REFINING_SLOT_REQUIREMENT = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 /** 提升到第 tier 品阶的炼丹术所需的消耗 */
 export const ALCHEMY_TIER_COST: Record<number, Partial<Record<ItemId, number>>> = {
-  2: { herb: 200, qi: 2e4 },
-  3: { herb: 600, demonCore: 30, qi: 3e5 },
-  4: { herb: 2000, blackIron: 100, qi: 5e6 },
-  5: { herb: 6000, starSand: 80, qi: 8e7 },
-  6: { herb: 2e4, starSand: 250, qi: 1.5e9 },
-  7: { herb: 6e4, dragonBlood: 100, qi: 3e10 },
-  8: { herb: 2e5, dragonBlood: 300, qi: 6e11 },
-  9: { herb: 6e5, immortalJade: 150, qi: 1e13 },
+  2: { herb: 400, qi: 2e4 },
+  3: { herb: 1200, demonCore: 60, spiritEssence: 2, qi: 3e5 },
+  4: { herb: 4000, blackIron: 200, spiritEssence: 10, qi: 5e6 },
+  5: { herb: 1.2e4, starSand: 160, spiritEssence: 40, qi: 8e7 },
+  6: { herb: 4e4, starSand: 500, lunarCrystal: 120, spiritEssence: 150, qi: 1.5e9 },
+  7: { herb: 1.2e5, dragonBlood: 200, lunarCrystal: 400, spiritEssence: 400, qi: 3e10 },
+  8: { herb: 4e5, dragonBlood: 600, netherFlame: 200, spiritEssence: 1200, qi: 6e11 },
+  9: { herb: 1.2e6, immortalJade: 300, netherFlame: 600, spiritEssence: 3000, primordialFruit: 5, qi: 1e13 },
 };
 
 /** 提升到第 tier 品阶的炼器术所需的消耗 */
 export const REFINING_TIER_COST: Record<number, Partial<Record<ItemId, number>>> = {
-  2: { ore: 1000, qi: 3e4 },
-  3: { ore: 3000, demonCore: 40, qi: 5e5 },
-  4: { ore: 1e4, blackIron: 150, qi: 8e6 },
-  5: { ore: 3e4, starSand: 120, qi: 1.2e8 },
-  6: { ore: 1e5, starSand: 350, qi: 2e9 },
-  7: { ore: 3e5, dragonBlood: 150, qi: 4e10 },
-  8: { ore: 1e6, dragonBlood: 400, qi: 8e11 },
-  9: { ore: 3e6, immortalJade: 200, qi: 1.5e13 },
+  2: { ore: 2000, qi: 3e4 },
+  3: { ore: 6000, demonCore: 80, refinedGold: 2, qi: 5e5 },
+  4: { ore: 2e4, blackIron: 300, refinedGold: 8, qi: 8e6 },
+  5: { ore: 6e4, starSand: 240, refinedGold: 30, qi: 1.2e8 },
+  6: { ore: 2e5, starSand: 700, lunarCrystal: 160, refinedGold: 120, qi: 2e9 },
+  7: { ore: 6e5, dragonBlood: 300, lunarCrystal: 500, refinedGold: 320, qi: 4e10 },
+  8: { ore: 2e6, dragonBlood: 800, netherFlame: 260, refinedGold: 900, qi: 8e11 },
+  9: { ore: 6e6, immortalJade: 400, netherFlame: 800, refinedGold: 2200, chaosQi: 40, qi: 1.5e13 },
 };
 
 export const MAX_CRAFT_TIER = 9;
+
+/* ------------------------------------------------------------------ */
+/* 炼制成功率（需求 2）                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 各品阶的**基础成功率**（下标 = 品阶）。
+ *
+ * 需求原文：「炼制对应等级的丹药或者器物并不能百分百成功，有概率失败……
+ * 丹药和器物的等级越高，基础成功率越低。」
+ *
+ * 所以一品 100%（新手不该被卡）、九品只有 28%。
+ */
+export const CRAFT_BASE_SUCCESS: number[] = [0, 1, 0.95, 0.88, 0.8, 0.7, 0.6, 0.5, 0.39, 0.28];
+
+/**
+ * 炼制比自己品阶低的丹药时的加成，**每差一品 +12%**。
+ *
+ * 需求原文：「炼制更低品阶的则有加成，**相差三个品阶的时候成功率达到百分百**」。
+ * 这条不是"算出来刚好接近 1"，而是**硬规则**：差 ≥ 3 品直接返回 1，
+ * 见 `getCraftSuccessRate`。否则"百分之百"会随着基础成功率被改动而失效。
+ */
+export const CRAFT_MASTER_GAP_BONUS = 0.12;
+
+/** 「差三品必成」这个门槛（需求明文） */
+export const CRAFT_MASTER_GAP = 3;
 
 /* ------------------------------------------------------------------ */
 /* 丹药增益（BUFF）                                                     */
@@ -839,6 +1058,15 @@ export interface ActiveBuffs {
   /** 伤亡率削减 0~1 */
   safetyReduction: number;
   safetySeconds: number;
+  /**
+   * 这一次的伤亡削减是不是**按次**的（需求 2 的保命丹）。
+   *
+   * 为 true 时 `safetyReduction` 不受 `safetySeconds` 管：它会在
+   * **下一次探索结算时**被用掉并清零，中间隔多久都有效。
+   * 之所以要单独一个标志位，而不是把 duration 设成天文数字 ——
+   * 那样它会永远生效，一颗丹药护一辈子，显然不是需求的意思。
+   */
+  safetyOnce: boolean;
   /** 秘境产出倍率 */
   yieldMultiplier: number;
   yieldSeconds: number;
@@ -855,6 +1083,7 @@ export function createEmptyBuffs(): ActiveBuffs {
     powerSeconds: 0,
     safetyReduction: 0,
     safetySeconds: 0,
+    safetyOnce: false,
     yieldMultiplier: 1,
     yieldSeconds: 0,
     speedMultiplier: 1,
@@ -880,7 +1109,8 @@ export function tickBuffs(buffs: ActiveBuffs, dt: number): ActiveBuffs {
 
   if (next.productionSeconds <= 0) next.productionMultiplier = 1;
   if (next.powerSeconds <= 0) next.powerMultiplier = 1;
-  if (next.safetySeconds <= 0) next.safetyReduction = 0;
+  // 按次的那一颗（保命丹）不看时间，只等下一次探索来把它用掉
+  if (next.safetySeconds <= 0 && !next.safetyOnce) next.safetyReduction = 0;
   if (next.yieldSeconds <= 0) next.yieldMultiplier = 1;
   if (next.speedSeconds <= 0) next.speedMultiplier = 1;
 

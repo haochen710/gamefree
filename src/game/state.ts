@@ -174,6 +174,14 @@ export interface GameState {
   /** 各秘境的冷却剩余秒数（需求 1：每次探索后要隔一段时间才能再探） */
   realmCooldowns: Record<string, number>;
   /**
+   * 已经**开启**的秘境（需求 1）。
+   *
+   * 只有资源富集区的秘境需要先花一笔资源开启（见 `SecretRealmDef.unlockCost`），
+   * 其余秘境发现即可探索，所以这里的键通常很少。
+   * 记的是"已开启"而不是"未开启"：默认空对象，旧存档读进来就能直接用。
+   */
+  openedRealms: Record<string, boolean>;
+  /**
    * 连续「没发现新秘境」的次数（需求 1 的硬保底）。
    *
    * 达到 DISCOVERY_PITY_FAILURES 时下一次探索必然发现。
@@ -222,6 +230,13 @@ export interface GameState {
 
   /** 丹药库存 */
   pills: ItemCountMap;
+  /**
+   * 可携带器物的剩余使用次数（需求 2）。
+   *
+   * 只有带 ArtifactDef.carry 的器物会出现在这里；
+   * 没记录 = 按满次数算，归零就销毁。
+   */
+  gearCharges: Record<string, number>;
   /** 器物库存 */
   artifacts: ItemCountMap;
 
@@ -399,6 +414,7 @@ export function createInitialState(now = Date.now()): GameState {
     unlockedBuildings: createEmptyUnlocked(),
     discoveredRealms: createEmptyDiscoveredRealms(),
     realmCooldowns: {},
+    openedRealms: {},
     buildQueue: [],
     tiangongLevel: 0,
     karma: 0,
@@ -412,6 +428,7 @@ export function createInitialState(now = Date.now()): GameState {
     discoveryFailures: 0,
     pills: {},
     artifacts: {},
+    gearCharges: {},
     realmIndex: 0,
     layer: 0,
     breakthroughPity: [],

@@ -157,6 +157,15 @@ export interface StructureDef extends BuildableBase {
    * 「减少**乃至避免**弟子伤亡」。
    */
   sectDefense?: number;
+  /**
+   * 炼丹 / 炼器成功率加成（需求 2）。
+   *
+   * 丹炉阵与地火熔炉原来给的是"丹房 / 炼器房名额"，但需求 2 把丹房与炼器房
+   * 改成了唯一建筑 —— 名额这条路没了，它们就顺势改成**提升成功率**：
+   * 炉子越好，越不容易炸炉。这也正好接上"炼制有概率失败"那一条。
+   */
+  alchemySuccessBonus?: number;
+  refiningSuccessBonus?: number;
 }
 
 export type BuildableDef = GeneratorDef | StructureDef;
@@ -367,12 +376,14 @@ export const STRUCTURES: StructureDef[] = [
     group: 'workshop',
     name: '丹房',
     icon: '⚗',
-    desc: '炼丹之所。丹房越多，能掌握的炼丹品阶越高。需先钻研炼丹入门。',
+    desc: '炼丹之所，全宗唯一。丹药品阶的提升都在这一座里完成 —— 每升一品都要投入资源，越往上越要吃稀有材料。',
     alchemySlots: 1,
     baseCost: { qi: 1500, wood: 300 },
     costGrowth: 1.18,
     unlock: { wood: 100 },
     requiresTech: 'alchemyArt',
+    // 需求 2：丹房改为唯一建筑
+    max: 1,
   },
   {
     id: 'refinery',
@@ -380,12 +391,14 @@ export const STRUCTURES: StructureDef[] = [
     group: 'workshop',
     name: '炼器房',
     icon: '🔨',
-    desc: '锻造器物之所。炼器房越多，能掌握的炼器品阶越高。需先钻研炼器入门。',
+    desc: '锻造器物之所，全宗唯一。器物品阶的提升都在这一座里完成 —— 每升一品都要投入资源，越往上越要吃稀有材料。',
     refiningSlots: 1,
     baseCost: { qi: 4000, ore: 600 },
     costGrowth: 1.2,
     unlock: { ore: 150 },
     requiresTech: 'refiningArt',
+    // 需求 2：炼器房改为唯一建筑
+    max: 1,
   },
   {
     id: 'alchemyFurnace',
@@ -393,7 +406,7 @@ export const STRUCTURES: StructureDef[] = [
     group: 'workshop',
     name: '丹炉阵',
     icon: '🫕',
-    desc: '九座丹炉同燃的大阵，一座抵三座丹房。需钻研丹道精要。',
+    desc: '九座丹炉同燃的大阵，炉火纯青。炼丹成功率 +8%/座。需钻研丹道精要。',
     alchemySlots: 3,
     baseCost: { qi: 3e6, fireMarrow: 60, stone: 2e4 },
     costGrowth: 1.3,
@@ -407,7 +420,7 @@ export const STRUCTURES: StructureDef[] = [
     group: 'workshop',
     name: '地火熔炉',
     icon: '🌋',
-    desc: '引地火入炉，一座抵三座炼器房。需钻研器道精要。',
+    desc: '引地火入炉，锻打时火候更稳。炼器成功率 +8%/座。需钻研器道精要。',
     refiningSlots: 3,
     baseCost: { qi: 8e6, fireMarrow: 120, ore: 5e4 },
     costGrowth: 1.3,

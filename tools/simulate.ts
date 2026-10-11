@@ -25,14 +25,15 @@ import {
   QUEUE_UPGRADES,
   REFINE_RECIPES,
   ENLIGHTEN_PATHS,
+  ARTIFACTS,
+  SECRET_REALMS,
   MATERIAL_MAP,
+  SECRET_REALM_MAP,
   PILL_MAP,
   REALMS,
   REFINING_SLOT_REQUIREMENT,
   RESOURCE_IDS,
   SECT_LEVELS,
-  SECRET_REALMS,
-  SECRET_REALM_MAP,
   SERVANT_JOBS,
   STRUCTURES,
   TECHS,
@@ -234,6 +235,8 @@ function runSimulation(seed: number): SimResult {
   const seenRefine = new Set<string>();
   let seenEnlighten = false;
   let seenTimeJump = false;
+  let openedRealms = 0;
+  let gearCrafted = 0;
   let seenServant = false;
 
   const milestones: Milestone[] = [];
@@ -470,15 +473,17 @@ function runSimulation(seed: number): SimResult {
       if (neededPill) {
         const def = PILL_MAP[neededPill];
         if (def && state.alchemyTier >= def.tier && (state.pills[neededPill] ?? 0) < 2) {
-          const next = crafting.craftPill(state, neededPill, 1);
-          if (next !== state) {
-            state = next;
+          const craft = crafting.craftPill(state, neededPill, 1, random);
+          // ⚠️ 不管成没成都得接住新状态：失败也扣材料（需求 2）
+          state = craft.state;
+          if (craft.made > 0) {
             if (!sectFlags.firstPill) {
               sectFlags.firstPill = true;
               record(`首次炼成丹药（${def.name}）`);
             }
             continue;
           }
+          continue;
         }
       }
     }
@@ -850,6 +855,46 @@ function runSimulation(seed: number): SimResult {
             }
             continue;
           }
+        }
+      }
+    }
+
+    /* ---------------- 3f. 开启富集区秘境（需求 1） ----------------
+       资源富集区的秘境要先花一笔资源立阵眼。AI 的策略是"付得起就开"——
+       富集区是高档次材料的主要来源，一直不开等于把最肥的地荒着。
+       开启花费里有阵枢，所以这一步和上面的合成形成闭环。 */
+    {
+      const openable = SECRET_REALMS.filter(
+        (r) => engine.needsOpening(r) && !engine.isRealmOpened(state, r) && engine.canOpenRealm(state, r).ok,
+      );
+      if (openable.length > 0) {
+        const target = openable[0];
+        const next = engine.openRealm(state, target);
+        if (next !== state) {
+          state = next;
+          openedRealms += 1;
+          if (openedRealms === 1) record(`首次开启资源富集区秘境（${target.name}）`);
+          continue;
+        }
+      }
+    }
+
+    /* ---------------- 3g. 备齐可携带器物（需求 2） ----------------
+       可携带器物会随探索磨损，用坏就得重炼。AI 只在"缺货"时补一件，
+       而不是能炼就炼 —— 和合成同一条纪律：限额才不会把经济抽干。 */
+    if (state.refiningTier >= 2) {
+      const missing = ARTIFACTS.filter(
+        (a) => a.carry && (state.artifacts[a.id] ?? 0) <= 0 && crafting.canCraftArtifact(state, a.id).ok,
+      ).sort((a, b) => a.tier - b.tier);
+      const want = missing[0];
+      if (want) {
+        const craft = crafting.craftArtifact(state, want.id, 1, random);
+        // 失败也扣材料，所以无论如何都要接住新状态
+        state = craft.state;
+        if (craft.made > 0) {
+          gearCrafted += 1;
+          if (gearCrafted === 1) record(`首次炼成可携带器物（${want.name}）`);
+          continue;
         }
       }
     }

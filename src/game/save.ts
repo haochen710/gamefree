@@ -12,6 +12,7 @@ import { gameRandom, type RandomSource } from './random';
 import {
   APTITUDE_ORDER,
   AUTO_REFINE_LEVEL_MAX,
+  ARTIFACT_MAP,
   BLUEPRINT_MAP,
   BUILDABLES,
   BUILDABLE_MAP,
@@ -147,6 +148,10 @@ export interface SerializedGame {
   df?: number;
   /** 建造队列（需求 2） */
   bq?: unknown;
+  /** 已开启的秘境（需求 1） */
+  or?: Record<string, boolean>;
+  /** 可携带器物的剩余次数（需求 2） */
+  gc?: Record<string, number>;
   /** 天工院特殊升级等级（需求 2） */
   tl?: number;
   /** 善恶值 / 待选遭遇 id / 遭遇判定计时（需求 2） */
@@ -211,6 +216,7 @@ export function serialize(state: GameState): SerializedGame {
     ur: { ...state.discoveredRealms },
     pl: { ...state.pills },
     ar: { ...state.artifacts },
+    gc: { ...state.gearCharges },
     ri: state.realmIndex,
     li: state.layer,
     bp: [...state.breakthroughPity],
@@ -230,6 +236,7 @@ export function serialize(state: GameState): SerializedGame {
     bpr: { ...state.blueprints },
     sh: state.shop,
     rc: { ...state.realmCooldowns },
+    or: { ...state.openedRealms },
     df: state.discoveryFailures,
     bq: [...state.buildQueue],
     tl: state.tiangongLevel,
@@ -404,6 +411,7 @@ function sanitizeBuffs(raw: unknown): ActiveBuffs {
     powerMultiplier: toFloat(b.powerMultiplier, 1, 1, 1e6),
     powerSeconds: toFloat(b.powerSeconds, 0, 0, 1e9),
     safetyReduction: toFloat(b.safetyReduction, 0, 0, 1),
+    safetyOnce: b.safetyOnce === true,
     safetySeconds: toFloat(b.safetySeconds, 0, 0, 1e9),
     yieldMultiplier: toFloat(b.yieldMultiplier, 1, 1, 1e6),
     yieldSeconds: toFloat(b.yieldSeconds, 0, 0, 1e9),
@@ -467,6 +475,30 @@ function toSeedMap(raw: unknown): Record<string, number> {
 }
 
 /** 感悟阶数：只认还存在的道，并夹到 0~90 */
+/** 已开启的秘境：只认还存在的秘境 id */
+/** 可携带器物的剩余次数：只认还在库存里、而且确实可携带的器物 */
+function sanitizeGearCharges(raw: unknown, ownedRaw: unknown): Record<string, number> {
+  const owned = (ownedRaw ?? {}) as Record<string, unknown>;
+  const out: Record<string, number> = {};
+  if (raw === null || typeof raw !== 'object') return out;
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    const def = ARTIFACT_MAP[id];
+    if (!def?.carry) continue;
+    if (typeof owned[id] !== 'number' || (owned[id] as number) <= 0) continue;
+    out[id] = toInt(value, def.carry.charges, 0, def.carry.charges);
+  }
+  return out;
+}
+
+function sanitizeOpened(raw: unknown): Record<string, boolean> {
+  if (raw === null || typeof raw !== 'object') return {};
+  const out: Record<string, boolean> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === true && SECRET_REALM_MAP[id]) out[id] = true;
+  }
+  return out;
+}
+
 function sanitizeEnlightenment(raw: unknown): Record<string, number> {
   const out: Record<string, number> = {};
   for (const id of ENLIGHTEN_PATH_IDS) out[id] = 0;
@@ -682,6 +714,8 @@ export function deserialize(raw: unknown): GameState | null {
   /* ---- 丹药与器物 ---- */
   const pills = toCountMap(data.pl);
   const artifacts = toCountMap(data.ar);
+  // 需求 2：可携带器物的剩余次数（只认还在库存里、且确实可携带的那些）
+  const gearCharges = sanitizeGearCharges(data.gc, artifacts);
 
   /* ---- 境界 ---- */
   const realmIndex = toInt(data.ri, 0, 0, FINAL_REALM_INDEX);
@@ -742,6 +776,7 @@ export function deserialize(raw: unknown): GameState | null {
     discoveredRealms,
     pills,
     artifacts,
+    gearCharges,
     realmIndex,
     layer,
     breakthroughPity,
@@ -761,6 +796,7 @@ export function deserialize(raw: unknown): GameState | null {
     blueprints: toBoolMap(data.bpr, Object.keys(BLUEPRINT_MAP)),
     shop: sanitizeShop(data.sh),
     realmCooldowns: sanitizeCooldowns(data.rc),
+    openedRealms: sanitizeOpened(data.or),
     buildQueue: sanitizeBuildQueue(data.bq),
     tiangongLevel: toInt(data.tl, 0, 0, QUEUE_UPGRADES.length),
     karma: toInt(data.ka, 0, KARMA_MIN, KARMA_MAX),

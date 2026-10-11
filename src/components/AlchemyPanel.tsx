@@ -7,7 +7,7 @@
 import { fmt } from '../game/decimal';
 import { PILLS, TIER_NAMES, tierName, type PillDef } from '../game/content';
 import { canAfford, toCostMap } from '../game/engine';
-import { canCraftPill, getAlchemyUpgradeStatus, maxCraftable } from '../game/crafting';
+import { canCraftPill, describeCraftRate, getAlchemyUpgradeStatus, getCraftSuccessRate, maxCraftable } from '../game/crafting';
 import { useGame } from '../game/store';
 import CostList from './CostList';
 
@@ -75,6 +75,8 @@ export function AlchemyPanel() {
           const check = canCraftPill(game, pill.id);
           const max = maxCraftable(game, cost);
           const owned = game.pills[pill.id] ?? 0;
+          // 需求 2：炼制有概率失败
+          const rate = getCraftSuccessRate(game, 'alchemy', pill.tier);
 
           return (
             <article key={pill.id} className={locked ? 'recipe recipe--locked' : 'recipe'}>
@@ -87,6 +89,11 @@ export function AlchemyPanel() {
               </div>
 
               <div className="recipe__desc">{pill.desc}</div>
+
+              {/* 需求 2：炼制有概率失败，把成功率摆在按钮上面 */}
+              <div className={rate < 1 ? 'recipe__rate recipe__rate--risk' : 'recipe__rate'}>
+                {describeCraftRate(game, 'alchemy', pill.tier)}
+              </div>
 
               <div className="recipe__foot">
                 <div className="recipe__cost">

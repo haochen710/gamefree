@@ -46,6 +46,7 @@ import {
   getUndiscoveredCandidates,
   isDiscoveryGuaranteed,
   isRealmAvailable,
+  isRealmOpened,
   isRealmDiscovered,
   isRegionVisible,
   recordDiscoveryFailure,
@@ -151,6 +152,7 @@ export function canStartSoloRealm(state: GameState, realmId: string): TravelChec
   if (!def) return { ok: false, reason: '秘境不存在' };
   if (state.personalTravel) return { ok: false, reason: '掌门正在外' };
   if (!isRealmDiscovered(state, def)) return { ok: false, reason: '尚未发现此秘境' };
+  if (!isRealmOpened(state, def)) return { ok: false, reason: '尚未开启，需先立阵眼' };
   if (!isRealmAvailable(state, def)) {
     const cooldown = getRealmCooldown(state, def.id);
     if (cooldown > 0) return { ok: false, reason: `冷却中，还需 ${Math.ceil(cooldown)} 秒` };

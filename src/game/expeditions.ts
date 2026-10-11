@@ -69,8 +69,10 @@ import {
   getUndiscoveredCandidates,
   isDiscoveryGuaranteed,
   isRealmAvailable,
+  isRealmOpened,
   isRealmDiscovered,
   recordDiscoveryFailure,
+  consumeGear,
 } from './engine';
 import { addInsight, getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
 import { getEnvironmentMaterialBonus, getWeatherEffects } from './season';
@@ -107,6 +109,8 @@ export function canStartExpedition(state: GameState, realmId: string, ids: strin
   if (!def) return { ok: false, reason: '秘境不存在' };
   if (!state.sect.founded) return { ok: false, reason: '尚未开宗立派' };
   if (!isRealmDiscovered(state, def)) return { ok: false, reason: '尚未发现此秘境' };
+  // 需求 1：资源富集区的秘境要先花资源开启
+  if (!isRealmOpened(state, def)) return { ok: false, reason: '尚未开启，需先立阵眼' };
   if (!isRealmAvailable(state, def)) {
     const cooldown = getRealmCooldown(state, def.id);
     if (cooldown > 0) return { ok: false, reason: `冷却中，还需 ${Math.ceil(cooldown)} 秒` };
@@ -383,8 +387,7 @@ export function resolveExpedition(
         getStructureBonus(state, 'casualtyReduction'),
     ),
   );
-  const baseRate = powerRatio > 0 ? def.baseCasualty / powerRatio : MAX_CASUALTY_RATE;
-  /*
+  const baseRate = powerRatio > 0 ? def.baseCasualty / powerRatio : MAX_CASUALTY_RATE;  /*
    * 注意：天象**不影响**伤亡率。
    * 试过让血月 / 罡风临时抬高伤亡，结果是把伤亡的正反馈推过临界点 ——
    * 多死几个 → 队伍凑不满 → 战力比下降 → 伤亡更高 → 弟子全灭。
@@ -448,7 +451,17 @@ export function resolveExpedition(
     });
   }
 
-  const next: GameState = {
+  /*
+   * 需求 2：一次探索结算完，做两件"用过就没了"的收尾。
+   *
+   *   1. **保命丹**（按次的伤亡削减）在这一趟用掉了 —— 清掉次数标志，
+   *      否则它会永远护着后面每一趟；
+   *   2. **可携带器物**各消耗 1 次，用完即毁（`consumeGear`）。
+   *
+   * 两件事都放在"结算之后"而不是"派遣时"：派遣只是排上队，
+   * 真出事、真用上装备的是结算那一刻。中途取消的探索不该磨损器物。
+   */
+  let gearState: GameState = {
     ...working,
     sect: { ...working.sect, disciples },
     expeditions: working.expeditions.filter((e) => e.id !== expedition.id),
@@ -456,6 +469,28 @@ export function resolveExpedition(
     realmCooldowns: { ...working.realmCooldowns, [def.id]: def.cooldown },
     journal,
   };
+
+  if (working.buffs.safetyOnce) {
+    gearState = {
+      ...gearState,
+      buffs: { ...gearState.buffs, safetyOnce: false, safetyReduction: 0 },
+    };
+  }
+
+  const gear = consumeGear(gearState);
+  gearState = gear.state;
+  if (gear.broken.length > 0) {
+    gearState = {
+      ...gearState,
+      journal: pushJournal(gearState.journal, {
+        time: gearState.playTime,
+        kind: 'bad',
+        text: `携带的${gear.broken.join('、')}已损毁，需重新炼制`,
+      }),
+    };
+  }
+
+  const next: GameState = gearState;
 
   return {
     state: next,
@@ -704,11 +739,29 @@ export function resolveSurvey(
     });
   }
 
-  const next: GameState = {
+  // 需求 2：普通探索也算"出门一趟"，保命丹与携带器物同样消耗
+  let surveyState: GameState = {
     ...working,
     expeditions: working.expeditions.filter((e) => e.id !== expedition.id),
     journal,
   };
+  if (working.buffs.safetyOnce) {
+    surveyState = { ...surveyState, buffs: { ...surveyState.buffs, safetyOnce: false, safetyReduction: 0 } };
+  }
+  const surveyGear = consumeGear(surveyState);
+  surveyState = surveyGear.state;
+  if (surveyGear.broken.length > 0) {
+    surveyState = {
+      ...surveyState,
+      journal: pushJournal(surveyState.journal, {
+        time: surveyState.playTime,
+        kind: 'bad',
+        text: `携带的${surveyGear.broken.join('、')}已损毁，需重新炼制`,
+      }),
+    };
+  }
+
+  const next: GameState = surveyState;
 
   return {
     state: next,

@@ -116,6 +116,11 @@ import {
   SEASONS,
   SEEDS,
   SERVANT_BONUS_PER_HEAD,
+  MAX_CRAFT_TIER,
+  RICH_SUB_INDEX,
+  CRAFT_BASE_SUCCESS,
+  PILL_MAP,
+  recruitCost,
   SHOP_GOODS,
   STONE_REFINE_COST,
   STONE_REFINE_OUTPUT,
@@ -138,6 +143,7 @@ import { createInitialState, type GameState } from '../src/game/state';
 import * as engine from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
 import * as expeditions from '../src/game/expeditions';
+import { canStartExpedition } from '../src/game/expeditions';
 import * as crafting from '../src/game/crafting';
 import * as research from '../src/game/research';
 import * as planting from '../src/game/planting';
@@ -528,10 +534,16 @@ section('[3] 建筑与价格');
   const housed = forceBuild(state, 'thatchHut', 3);
   check('茅屋提供弟子容量', engine.getHousingCapacity(housed) === 9, `${engine.getHousingCapacity(housed)}`);
 
-  // 丹房提供炼丹位
+  // 丹房提供炼丹位（需求 2 起丹房唯一，所以"位"只剩展示意义，不再决定品阶上限）
   const withRooms = forceBuild(state, 'alchemyRoom', 2);
   check('丹房提供炼丹位', engine.getAlchemySlots(withRooms) === 2);
-  check('炼丹位决定品阶上限', engine.getMaxAlchemyTierBySlots(withRooms) === 3, `实际 ${engine.getMaxAlchemyTierBySlots(withRooms)}`);
+  check('需求 2：丹房改为唯一建筑', BUILDABLE_MAP.alchemyRoom.max === 1);
+  check('需求 2：炼器房改为唯一建筑', BUILDABLE_MAP.refinery.max === 1);
+  check(
+    '需求 2：炼丹位不再决定品阶上限（升品只看资源）',
+    engine.getMaxAlchemyTierBySlots(createInitialState(0)) === MAX_CRAFT_TIER,
+    `实际 ${engine.getMaxAlchemyTierBySlots(createInitialState(0))}`,
+  );
 
   /* ---- 建筑解锁的持久性（bug 回归测试） ----
      早期版本用「当前资源是否达标」判断可见性，导致玩家一花掉灵气，
@@ -1244,7 +1256,8 @@ section('[11] 炼丹与器物（需求 2）');
   check('提升品阶后可以炼三品丹', crafting.canCraftPill(state, 'goldenCorePill').ok === true);
 
   const before = state.materials.demonCore;
-  const crafted = crafting.craftPill(state, 'goldenCorePill', 2);
+  // 需求 2 起炼制有概率失败，测试里用 fixedRandom(0) 保证必成
+  const crafted = crafting.craftPill(state, 'goldenCorePill', 2, fixedRandom(0)).state;
   check('炼制产出丹药', (crafted.pills.goldenCorePill ?? 0) === 2);
   check('炼制消耗材料', crafted.materials.demonCore.lt(before));
 
@@ -1274,7 +1287,7 @@ section('[11] 炼丹与器物（需求 2）');
 
   // 器物：每种器方都要能对应到内容定义
   const artifactState: GameState = { ...state, refiningTier: 9 };
-  const craftedArtifact = crafting.craftArtifact(artifactState, 'ironSword', 1);
+  const craftedArtifact = crafting.craftArtifact(artifactState, 'ironSword', 1, fixedRandom(0)).state;
   check('可以炼制器物', (craftedArtifact.artifacts.ironSword ?? 0) === 1);
 
   // 器物生效件数受弟子数限制
@@ -1318,7 +1331,9 @@ section('[12] 炼丹 / 炼器品阶晋升');
   check('炼丹术提升到二品', upgraded.alchemyTier === 2);
 
   const needTwo = crafting.getAlchemyUpgradeStatus(upgraded);
-  check('三品需要两座丹房', needTwo.slotsNeeded === 2 && needTwo.possible === false, needTwo.reason ?? '');
+  // 需求 2：升品不再要求丹房数量，只看资源
+  check('升品不再需要多座丹房', needTwo.slotsNeeded === 0, `需 ${needTwo.slotsNeeded} 座`);
+  check('资源不够时照样升不了', needTwo.possible === false, needTwo.reason ?? '');
 }
 
 /* ------------------------------------------------------------------ */
@@ -2881,7 +2896,7 @@ section('[26] 宗门建筑与大比（需求 4）');
       resources: { ...sect.resources, ore: D('1e12'), qi: D('1e15') },
     };
     check('七品炼器 + 材料齐全才能铸', crafting.canCraftArtifact(rich, 'treasureCompass').ok);
-    const crafted = crafting.craftArtifact(rich, 'treasureCompass', 1);
+    const crafted = crafting.craftArtifact(rich, 'treasureCompass', 1, fixedRandom(0)).state;
     check('铸出的宝盘进入器物栏', (crafted.artifacts.treasureCompass ?? 0) === 1);
   }
 
@@ -4078,6 +4093,300 @@ section('[37] 进阶资源：合成、出口、商行（需求 4）');
       '商行也卖进阶资源',
       REFINED_MATERIAL_IDS.every((id) => SHOP_GOODS.some((g) => g.kind === 'material' && g.item === id)),
     );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 38. 秘境档次、开启与死亡（需求 1）                                    */
+/* ------------------------------------------------------------------ */
+section('[38] 秘境档次 / 富集区开启（需求 1）');
+{
+  const tiers = SECRET_REALMS.map((r) => r.tier);
+  check('秘境档次不重复（1~9）', new Set(tiers).size === 9, `${new Set(tiers).size} 档`);
+
+  /* ---- 越高级的秘境，时长与冷却越长 ---- */
+  const byTier = (t: number) => SECRET_REALMS.filter((r) => r.tier === t);
+  const maxDuration = (t: number) => Math.max(...byTier(t).map((r) => r.duration));
+  const maxCooldown = (t: number) => Math.max(...byTier(t).map((r) => r.cooldown));
+  check(
+    '档次越高，探索时长越长',
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].every((t, i, a) => i === 0 || maxDuration(t) >= maxDuration(a[i - 1])),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].map(maxDuration).join(' → '),
+  );
+  check(
+    '档次越高，冷却越长',
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].every((t, i, a) => i === 0 || maxCooldown(t) >= maxCooldown(a[i - 1])),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].map(maxCooldown).join(' → '),
+  );
+  check(
+    '九档的时长比一档长 20 倍以上',
+    maxDuration(9) / maxDuration(1) >= 20,
+    `${maxDuration(9)} / ${maxDuration(1)} = ${(maxDuration(9) / maxDuration(1)).toFixed(1)}×`,
+  );
+  check(
+    '九档的冷却比一档长 20 倍以上',
+    maxCooldown(9) / maxCooldown(1) >= 20,
+    `${(maxCooldown(9) / maxCooldown(1)).toFixed(1)}×`,
+  );
+
+  /* ---- 越高级的秘境，死亡率越高 ---- */
+  const maxCasualty = (t: number) => Math.max(...byTier(t).map((r) => r.baseCasualty));
+  check(
+    '档次越高，基础伤亡率越高',
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].every((t, i, a) => i === 0 || maxCasualty(t) >= maxCasualty(a[i - 1])),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].map((t) => `${(maxCasualty(t) * 100).toFixed(0)}%`).join(' → '),
+  );
+  check('九档的基础伤亡率不低于四成', maxCasualty(9) >= 0.4, `${(maxCasualty(9) * 100).toFixed(0)}%`);
+  check('基础伤亡率有上限，不会无限涨', maxCasualty(9) <= 0.45, `${(maxCasualty(9) * 100).toFixed(0)}%`);
+
+  /* ---- 资源富集区的秘境要花资源开启 ---- */
+  const richRealms = SECRET_REALMS.filter((r) => r.unlockCost !== undefined);
+  const normalRealms = SECRET_REALMS.filter((r) => r.unlockCost === undefined);
+  check('只有资源富集区的秘境需要开启', richRealms.length > 0 && richRealms.length < SECRET_REALMS.length, `${richRealms.length} 处`);
+  check(
+    '需要开启的都是富集区（下标 15）的秘境',
+    richRealms.every((r) => (MAP_REGION_MAP[r.regionId]?.index ?? -1) === RICH_SUB_INDEX),
+  );
+  check('普通秘境不用开启', normalRealms.every((r) => !engine.needsOpening(r)));
+  check(
+    '开启花费里有进阶资源（阵枢）',
+    richRealms.every((r) => (r.unlockCost?.arrayCore ?? 0) > 0),
+  );
+  check(
+    '越深的富集区开启越贵',
+    (() => {
+      const lo = richRealms.filter((r) => r.tier <= 3).map((r) => r.unlockCost?.qi ?? 0);
+      const hi = richRealms.filter((r) => r.tier >= 6).map((r) => r.unlockCost?.qi ?? 0);
+      return Math.min(...hi) > Math.max(...lo);
+    })(),
+  );
+
+  /* ---- 开启状态 ---- */
+  {
+    const target = richRealms[0];
+    check('富集区秘境默认未开启', !engine.isRealmOpened(createInitialState(0), target));
+    check(
+      '普通秘境默认算已开启',
+      engine.isRealmOpened(createInitialState(0), normalRealms[0]),
+    );
+
+    const discovered: GameState = {
+      ...createInitialState(0),
+      discoveredRealms: { ...createInitialState(0).discoveredRealms, [target.id]: true },
+    };
+    check('没资源时开不了', !engine.canOpenRealm(discovered, target).ok);
+
+    const rich: GameState = grant(discovered, { qi: '1e15', stone: '1e10', ore: '1e10', arrayCore: '1e5' });
+    check('资源够了就能开启', engine.canOpenRealm(rich, target).ok, engine.canOpenRealm(rich, target).reason ?? '');
+
+    const opened = engine.openRealm(rich, target);
+    check('开启后状态记为已开启', engine.isRealmOpened(opened, target));
+    check('开启会扣掉资源', opened.resources.qi.lt(rich.resources.qi));
+    check('开启写进记事', opened.journal.some((e) => e.text.includes('已开启')));
+    check('重复开启会被拒绝', !engine.canOpenRealm(opened, target).ok);
+
+    // 未开启时派不了队伍
+    const gate = canStartExpedition(discovered, target.id, []);
+    check('未开启的秘境派不了队伍', gate.ok === false, gate.reason ?? '');
+
+    // 存档往返
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(opened))));
+    check('开启状态能存档还原', !!round && engine.isRealmOpened(round, target));
+    const junk = deserialize({ v: 4, at: 0, or: { [target.id]: true, notARealm: true } });
+    check('不存在的秘境 id 会被丢弃', !!junk && junk.openedRealms.notARealm === undefined);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 39. 炼制成功率与可携带器物（需求 2）                                  */
+/* ------------------------------------------------------------------ */
+section('[39] 炼制成功率 / 可携带器物（需求 2）');
+{
+  /* ---- 丹房与炼器房唯一 ---- */
+  check('丹房唯一', BUILDABLE_MAP.alchemyRoom.max === 1);
+  check('炼器房唯一', BUILDABLE_MAP.refinery.max === 1);
+  check(
+    '升品不再要求建筑数量（需求 2）',
+    crafting.getAlchemyUpgradeStatus(grant(createInitialState(0), { qi: '1e15', herb: '1e9' })).slotsNeeded === 0,
+  );
+
+  /* ---- 成功率：越高品越低，差三品必成 ---- */
+  {
+    check('一品基础 100%', CRAFT_BASE_SUCCESS[1] === 1);
+    check(
+      '品阶越高基础成功率越低',
+      CRAFT_BASE_SUCCESS.slice(1).every((v, i, a) => i === 0 || v <= a[i - 1]),
+      CRAFT_BASE_SUCCESS.slice(1).join(' → '),
+    );
+    check('九品基础成功率最低', CRAFT_BASE_SUCCESS[9] === Math.min(...CRAFT_BASE_SUCCESS.slice(1)));
+
+    const at = (tier: number): GameState => ({ ...createInitialState(0), alchemyTier: tier, refiningTier: tier });
+    check('炼同级：二品时炼二品丹 < 100%', crafting.getCraftSuccessRate(at(2), 'alchemy', 2) < 1);
+    check(
+      '炼制更低品阶有加成',
+      crafting.getCraftSuccessRate(at(5), 'alchemy', 4) > crafting.getCraftSuccessRate(at(5), 'alchemy', 5),
+    );
+    // 需求明文：相差三个品阶时 100%
+    check(
+      '相差三品必定成功（需求明文）',
+      [1, 2, 3, 4, 5, 6].every((t) => crafting.getCraftSuccessRate(at(t + 3), 'alchemy', t) === 1),
+    );
+    check(
+      '相差两品不一定必成',
+      crafting.getCraftSuccessRate(at(3), 'alchemy', 1) === 1 ||
+        crafting.getCraftSuccessRate(at(2), 'alchemy', 1) < 1,
+    );
+    check(
+      '差三品以上也必成',
+      crafting.getCraftSuccessRate(at(9), 'alchemy', 1) === 1,
+    );
+    check('成功率描述会说清必成', crafting.describeCraftRate(at(5), 'alchemy', 2).includes('必成'));
+  }
+
+  /* ---- 失败会消耗材料但不产出 ---- */
+  {
+    const base: GameState = grant(
+      { ...createInitialState(0), alchemyTier: 9, refiningTier: 9 },
+      {
+        qi: '1e15',
+        herb: '1e12',
+        ore: '1e12',
+        demonCore: '1e9',
+        blackIron: '1e9',
+        spiritSilk: '1e9',
+        moonDew: '1e9',
+        starSand: '1e9',
+        lunarCrystal: '1e9',
+        dragonBlood: '1e9',
+        netherFlame: '1e9',
+        immortalJade: '1e9',
+        chaosQi: '1e9',
+        primordialFruit: '1e9',
+        spiritEssence: '1e9',
+        refinedGold: '1e9',
+        fireMarrow: '1e9',
+        coldJade: '1e9',
+      },
+    );
+    // 让 random 恒定返回 0.999 → 一定落在成功率之外 → 必失败
+    const failRandom = fixedRandom(0.999);
+    const before = base.resources.herb;
+    const failedRun = crafting.craftPill(base, 'tribulationPill', 1, failRandom);
+    check('失败时不产出丹药', failedRun.made === 0 && failedRun.failed === 1, `${failedRun.made}/${failedRun.failed}`);
+    check('失败照样扣材料', failedRun.state.resources.herb.lt(before));
+    check('失败写进记事', failedRun.state.journal.some((e) => e.text.includes('失败')));
+
+    // 恒定返回 0 → 必成功
+    const okRun = crafting.craftPill(base, 'tribulationPill', 1, fixedRandom(0));
+    check('必成时产出丹药', okRun.made === 1 && okRun.failed === 0);
+  }
+
+  /* ---- 可携带器物：耐久、损毁、加成失效 ---- */
+  {
+    const carryables = ARTIFACTS.filter((a) => a.carry);
+    check('可携带器物至少 5 件', carryables.length >= 5, `${carryables.length} 件`);
+    check('可携带器物都有正的耐久', carryables.every((a) => (a.carry?.charges ?? 0) > 0));
+    check(
+      '可携带器物的效果都跟探索有关',
+      carryables.every((a) =>
+        ['expeditionYield', 'expeditionSafety', 'expeditionSpeed', 'combat'].includes(a.effect.kind),
+      ),
+      carryables.map((a) => a.effect.kind).join('、'),
+    );
+    check('器物总数比原来多了（需求：种类有点少）', ARTIFACTS.length >= 15, `${ARTIFACTS.length} 件`);
+
+    const gear = carryables[0];
+    const state: GameState = {
+      ...createInitialState(0),
+      refiningTier: 9,
+      artifacts: { [gear.id]: 1 },
+      gearCharges: { [gear.id]: gear.carry!.charges },
+    };
+    check('满耐久时提供加成', engine.getGearCharges(state, gear) === gear.carry!.charges);
+
+    // 消耗一次
+    const once = engine.consumeGear(state);
+    check('探索一次消耗一次耐久', engine.getGearCharges(once.state, gear) === gear.carry!.charges - 1);
+
+    // 一直用到坏
+    let worn: GameState = state;
+    for (let i = 0; i < gear.carry!.charges; i += 1) worn = engine.consumeGear(worn).state;
+    check('用满次数后损毁（从库存消失）', (worn.artifacts[gear.id] ?? 0) === 0);
+    check('损毁后剩余次数归零', engine.getGearCharges(worn, gear) === 0);
+
+    // 加成随耐久消失
+    const bonusWith = engine.getArtifactBonuses(state);
+    const bonusWithout = engine.getArtifactBonuses(worn);
+    const kind = gear.effect.kind as keyof typeof bonusWith;
+    check('有了再用坏，加成归零', bonusWithout[kind] < bonusWith[kind] + 1e-9);
+
+    // 没记录 = 满次数（旧存档）
+    const legacy: GameState = { ...createInitialState(0), artifacts: { [gear.id]: 1 }, gearCharges: {} };
+    check('没记录耐久时按满次数算', engine.getGearCharges(legacy, gear) === gear.carry!.charges);
+
+    // 存档往返
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(once.state))));
+    check('耐久能存档还原', !!round && engine.getGearCharges(round, gear) === gear.carry!.charges - 1);
+    const junk = deserialize({ v: 4, at: 0, ar: { [gear.id]: 1 }, gc: { [gear.id]: 9999, notGear: 5 } });
+    check('越界耐久被夹回上限', !!junk && engine.getGearCharges(junk, gear) === gear.carry!.charges);
+    check('没库存的器物不留耐久记录', !!junk && junk.gearCharges.notGear === undefined);
+
+    // 新炼出来的按满次数
+    const rich: GameState = grant(
+      { ...createInitialState(0), refiningTier: 9 },
+      { qi: '1e15', ore: '1e12', demonCore: '1e9', fireMarrow: '1e9', spiritSilk: '1e9', starSand: '1e9', moonDew: '1e9', refinedGold: '1e9' },
+    );
+    const crafted = crafting.craftArtifact(rich, 'beastBanner', 1, fixedRandom(0));
+    check('炼出可携带器物时耐久写满', engine.getGearCharges(crafted.state, ARTIFACT_MAP.beastBanner) === 6);
+  }
+
+  /* ---- 存活率丹药（需求 2） ---- */
+  {
+    const pill = PILL_MAP.lifeGuardPill;
+    check('存在提升探索存活率的丹药', Boolean(pill));
+    check('保命丹是按次生效的', pill.effect.kind === 'expeditionSafety' && 'once' in pill.effect);
+
+    const state: GameState = { ...createInitialState(0), alchemyTier: 9, pills: { lifeGuardPill: 1 } };
+    const used = crafting.usePill(state, 'lifeGuardPill', fixedRandom(0));
+    check('服用后设置按次标记', used.state.buffs.safetyOnce === true);
+    check('服用后削减了伤亡率', used.state.buffs.safetyReduction > 0);
+    // 时间流逝不会让它失效（按次，不看时间）
+    const aged = applyTick(used.state, 5000, makeRandom(3));
+    check('按次的保命效果不会随时间失效', aged.buffs.safetyOnce === true && aged.buffs.safetyReduction > 0);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 40. 弟子招收固定消耗（需求 3）                                        */
+/* ------------------------------------------------------------------ */
+section('[40] 弟子招收固定消耗（需求 3）');
+{
+  check(
+    '同一品阶内，招收价格不随人数上涨',
+    [0, 1, 5, 30, 200].every((n) => recruitCost(3, n) === recruitCost(3, 0)),
+    `一品阶下 ${[0, 1, 5, 30, 200].map((n) => recruitCost(3, n)).join('、')}`,
+  );
+  check(
+    '宗门品阶越高越贵',
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].every((lv, i, a) => i === 0 || recruitCost(lv, 0) > recruitCost(a[i - 1], 0)),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9].map((lv) => recruitCost(lv, 0)).join(' → '),
+  );
+  check('一品招收 60 灵石', recruitCost(1, 0) === 60, `${recruitCost(1, 0)}`);
+  check('九品招收 4860 灵石', recruitCost(9, 0) === 4860, `${recruitCost(9, 0)}`);
+
+  // 真的招一次：连招两个价格一样
+  {
+    let s: GameState = grant(createInitialState(0), { qi: '1e9', stone: '1e7' });
+    s = forceBuild(s, 'thatchHut', 8);
+    s = { ...s, sect: { ...s.sect, founded: true, level: 3 } };
+    const first = disciples.recruitDisciple(s, makeRandom(11));
+    const second = disciples.recruitDisciple(first.state, makeRandom(12));
+    check('招到了弟子', !!first.disciple && !!second.disciple);
+    // 三次品阶：60 × 3² = 540 灵石，且第二个还是 540（不随人数涨）
+    const cost1 = s.resources.stone.sub(first.state.resources.stone);
+    const cost2 = first.state.resources.stone.sub(second.state.resources.stone);
+    check('三次品阶的招收价是 540', cost1.eq(D(recruitCost(3, 0))), `${cost1.toNumber()}`);
+    check('第二个弟子还是同一个价', cost2.eq(cost1), `${cost1.toNumber()} → ${cost2.toNumber()}`);
   }
 }
 

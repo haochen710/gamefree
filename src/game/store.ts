@@ -16,6 +16,7 @@ import {
   ITEM_MAP,
   REFINE_RECIPE_MAP,
   SERVANT_JOB_MAP,
+  SECRET_REALM_MAP,
   type ItemId,
   type MaterialId,
   type ServantJobId,
@@ -113,6 +114,8 @@ export interface GameStore {
   chooseEncounter(optionIndex: number): void;
   /** 合成 / 精炼（需求 4） */
   refine(recipeId: string, times: number): void;
+  /** 花资源开启资源富集区的秘境（需求 1） */
+  openRealm(realmId: string): void;
   /* ---- 感悟（需求 3） ---- */
   enlighten(pathId: string): void;
   cancelEnlighten(): void;
@@ -546,6 +549,20 @@ export const useGame = create<GameStore>()((set, get) => ({
     });
   },
 
+  /** 花资源开启资源富集区的秘境（需求 1） */
+  openRealm: (realmId) => {
+    set((s) => {
+      const def = SECRET_REALM_MAP[realmId];
+      if (!def) return {};
+      const check = engine.canOpenRealm(s.game, def);
+      if (!check.ok) return { notice: check.reason ?? '无法开启' };
+      return {
+        ...nextGame(s.game, engine.openRealm(s.game, def)),
+        notice: `${def.name} 已开启`,
+      };
+    });
+  },
+
   /* ---- 感悟（需求 3） ---- */
 
   enlighten: (pathId) => {
@@ -642,9 +659,17 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       const check = crafting.canCraftPill(s.game, id);
       if (!check.ok) return { notice: check.reason ?? '无法炼制' };
-      const next = crafting.craftPill(s.game, id, count);
-      if (next === s.game) return { notice: '材料不足' };
-      return { ...nextGame(s.game, next), notice: '丹药炼成' };
+      // 需求 2：炼制有概率失败，失败照样消耗材料
+      const result = crafting.craftPill(s.game, id, count, gameRandom);
+      if (result.made === 0 && result.failed === 0) return { notice: '材料不足' };
+      const rate = Math.round(result.rate * 100);
+      return {
+        ...nextGame(s.game, result.state),
+        notice:
+          result.failed === 0
+            ? `丹药炼成 ×${result.made}`
+            : `炼成 ×${result.made}，炸炉 ×${result.failed}（成功率 ${rate}%）`,
+      };
     });
   },
 
@@ -652,9 +677,16 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       const check = crafting.canCraftArtifact(s.game, id);
       if (!check.ok) return { notice: check.reason ?? '无法炼制' };
-      const next = crafting.craftArtifact(s.game, id, count);
-      if (next === s.game) return { notice: '材料不足' };
-      return { ...nextGame(s.game, next), notice: '器物出炉' };
+      const result = crafting.craftArtifact(s.game, id, count, gameRandom);
+      if (result.made === 0 && result.failed === 0) return { notice: '材料不足' };
+      const rate = Math.round(result.rate * 100);
+      return {
+        ...nextGame(s.game, result.state),
+        notice:
+          result.failed === 0
+            ? `器物出炉 ×${result.made}`
+            : `出炉 ×${result.made}，炼废 ×${result.failed}（成功率 ${rate}%）`,
+      };
     });
   },
 
