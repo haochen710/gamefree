@@ -205,6 +205,46 @@ a {
   word-break: break-all;
 }
 
+.resource__cap {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink-faint);
+  margin-left: 5px;
+}
+
+/* 灵气装满：产量全部溢出，是实打实的进度损失 */
+.resource--full {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, #fff8f6, var(--accent-soft));
+}
+
+.resource--full .resource__amount {
+  color: var(--accent);
+}
+
+/* 副资源装满：只是提醒，不构成问题 */
+.resource--capped {
+  border-color: rgba(184, 134, 11, 0.5);
+}
+
+.resource--capped .resource__amount {
+  color: var(--gold);
+}
+
+.resource--nearly .resource__amount {
+  color: var(--gold);
+}
+
+.resource__rate--full {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.resource__rate--capped {
+  color: var(--gold);
+}
+
 .resource__rate {
   font-size: 12px;
   color: var(--jade);
@@ -402,6 +442,14 @@ a {
   font-size: 12px;
   color: var(--accent);
   font-weight: 700;
+}
+
+.generator__gate {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: rgba(58, 110, 168, 0.16);
+  color: #2c5480;
 }
 
 .generator__output {

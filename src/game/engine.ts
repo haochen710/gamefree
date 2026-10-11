@@ -11,6 +11,7 @@ import Decimal, { D } from './decimal';
 import {
   ALCHEMY_SLOT_REQUIREMENT,
   ARTIFACTS,
+  BASE_STORAGE,
   BREAKTHROUGH_FAIL_BONUS,
   BREAKTHROUGH_FAIL_BONUS_CAP,
   BREAKTHROUGH_MAX_SUCCESS,
@@ -41,6 +42,7 @@ import {
   type GeneratorDef,
   type ItemId,
   type RealmDef,
+  type ResourceId,
   type SecretRealmDef,
 } from './content';
 import type { GameState, ResourceMap } from './state';
@@ -219,8 +221,16 @@ export function getCost(def: BuildableDef, owned: number, count: number): CostMa
   return out;
 }
 
-/** 当前资源最多能买几个（取所有材料里最紧俏的那个） */
+/** 建筑的建造数量上限（未设置则不限） */
+export function getMaxCount(def: BuildableDef): number {
+  return def.max ?? Infinity;
+}
+
+/** 当前资源最多能买几个（取所有材料里最紧俏的那个，并受数量上限约束） */
 export function maxAffordable(def: BuildableDef, owned: number, state: GameState): number {
+  const room = getMaxCount(def) - owned;
+  if (room <= 0) return 0;
+
   let max = Infinity;
   for (const [id, base] of Object.entries(def.baseCost) as [ItemId, number][]) {
     const available = getAmount(state, id);
@@ -228,7 +238,7 @@ export function maxAffordable(def: BuildableDef, owned: number, state: GameState
     max = Math.min(max, n);
   }
   if (!Number.isFinite(max)) return 0;
-  return Math.max(0, Math.min(Math.floor(max), 1e9));
+  return Math.max(0, Math.min(Math.floor(max), room, 1e9));
 }
 
 /**
@@ -244,15 +254,84 @@ export function meetsUnlockCondition(def: BuildableDef, state: GameState): boole
 }
 
 /**
- * 建筑当前是否可见 / 可建造。
+ * 是否可见。
  *
  * = 曾经达成过解锁条件（永久记录）
- *   且 宗门等级满足要求（这个是实时判断，因为它是"资格"而不是"见过"）
+ *   且 境界 / 宗门门槛即将或已经达到
+ *
+ * 门槛刻意提前一级显示（灰掉并标注需求）——
+ * 让玩家能看到「下一个境界就能建这个」的目标，而不是突然冒出来。
  */
 export function isUnlocked(def: BuildableDef, state: GameState): boolean {
   if (!state.unlockedBuildings[def.id]) return false;
-  if (def.requiresSectLevel && state.sect.level < def.requiresSectLevel) return false;
+  if (def.requiresRealm !== undefined && state.realmIndex + 1 < def.requiresRealm) return false;
+  if (def.requiresSectLevel && state.sect.level + 1 < def.requiresSectLevel) return false;
   return true;
+}
+
+/** 现在能不能建。返回不能建造的原因，null 表示可以 */
+export function getBuildGate(def: BuildableDef, state: GameState): string | null {
+  if (!state.unlockedBuildings[def.id]) return '尚未解锁';
+  if (def.requiresRealm !== undefined && state.realmIndex < def.requiresRealm) {
+    return `需${REALMS[def.requiresRealm].name}`;
+  }
+  if (def.requiresSectLevel && state.sect.level < def.requiresSectLevel) {
+    return `需${def.requiresSectLevel}品宗门`;
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
+/* 储存上限                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 各资源的储存上限 = 基础上限 + 所有储物建筑提供的容量。
+ *
+ * 上限是本作的重要压力来源：产量到达上限后多出来的部分直接损失，
+ * 所以玩家必须在「继续堆产量」和「扩建仓库」之间做选择。
+ */
+export function getStorageCaps(state: GameState): Record<ResourceId, Decimal> {
+  const caps = {} as Record<ResourceId, Decimal>;
+  for (const id of RESOURCE_IDS) caps[id] = D(BASE_STORAGE[id]);
+
+  for (const def of STRUCTURES) {
+    if (!def.storage) continue;
+    const count = state.buildings[def.id] ?? 0;
+    if (count <= 0) continue;
+    for (const [id, amount] of Object.entries(def.storage) as [ResourceId, number][]) {
+      caps[id] = caps[id].add(count * amount);
+    }
+  }
+  return caps;
+}
+
+export function getStorageCap(state: GameState, id: ResourceId): Decimal {
+  return getStorageCaps(state)[id];
+}
+
+/** 该资源是否已经装满（装满后继续产出就是浪费） */
+export function isResourceFull(state: GameState, id: ResourceId): boolean {
+  return state.resources[id].gte(getStorageCap(state, id));
+}
+
+/**
+ * 把超出上限的资源砍回上限。
+ *
+ * 作为最后一道保险挂在所有状态变更之后 ——
+ * 无论是产量、丹药、秘境掉落还是灵石合成，都不可能突破上限。
+ */
+export function clampResources(state: GameState): GameState {
+  const caps = getStorageCaps(state);
+  let resources: ResourceMap | null = null;
+
+  for (const id of RESOURCE_IDS) {
+    if (state.resources[id].lte(caps[id])) continue;
+    resources = resources ?? { ...state.resources };
+    resources[id] = caps[id];
+  }
+
+  return resources ? { ...state, resources } : state;
 }
 
 /** 该建筑的解锁进度（用于界面提示"还差多少"），已解锁返回 null */
@@ -328,8 +407,8 @@ export function getBuildingCount(state: GameState, id: string): number {
 }
 
 export function buyBuilding(state: GameState, def: BuildableDef, count: number): GameState {
-  // 尚未解锁的建筑一律不能买（界面上也看不到），当作最后一道保险
-  if (!isUnlocked(def, state)) return state;
+  // 尚未解锁或境界/宗门门槛未到，一律不能买（界面上也是灰的），当作最后一道保险
+  if (getBuildGate(def, state) !== null) return state;
 
   const owned = getBuildingCount(state, def.id);
   const actual = Math.min(count, maxAffordable(def, owned, state));
@@ -697,12 +776,17 @@ export function produceResources(state: GameState, dt: number): GameState {
   if (dt <= 0) return state;
 
   const production = getProduction(state);
+  const caps = getStorageCaps(state);
   const resources = { ...state.resources };
+
   for (const id of RESOURCE_IDS) {
-    resources[id] = resources[id].add(production[id].mul(dt));
+    const next = resources[id].add(production[id].mul(dt));
+    // 到上限后多出来的产量直接损失 —— 这是储物上限的核心压力来源
+    resources[id] = next.gt(caps[id]) ? caps[id] : next;
   }
 
-  const gainedQi = production.qi.mul(dt);
+  // 只统计真正落袋的灵气，溢出部分不计入飞升结算
+  const gainedQi = resources.qi.sub(state.resources.qi);
   return {
     ...state,
     resources,
@@ -712,13 +796,19 @@ export function produceResources(state: GameState, dt: number): GameState {
   };
 }
 
-/** 一次性把灵气加到当前值（培元丹 / 悟道丹用） */
+/** 一次性把灵气加到当前值（培元丹 / 悟道丹用），同样受储存上限约束 */
 export function grantQiSeconds(state: GameState, seconds: number): GameState {
   const gain = getProduction(state).qi.mul(seconds);
+  const cap = getStorageCap(state, 'qi');
+  const before = state.resources.qi;
+  const after = before.add(gain);
+  const clamped = after.gt(cap) ? cap : after;
+  const gained = clamped.sub(before);
+
   return {
     ...state,
-    resources: { ...state.resources, qi: state.resources.qi.add(gain) },
-    totalQi: state.totalQi.add(gain),
-    lifetimeQi: state.lifetimeQi.add(gain),
+    resources: { ...state.resources, qi: clamped },
+    totalQi: state.totalQi.add(gained),
+    lifetimeQi: state.lifetimeQi.add(gained),
   };
 }

@@ -13,13 +13,16 @@ import {
   RESOURCE_MAP,
   type BuildableDef,
   type BuildGroupId,
+  type ResourceId,
   type StructureDef,
 } from '../game/content';
 import {
   canAfford,
+  getBuildGate,
   getBuildingCount,
   getCost,
   getGeneratorOutput,
+  getMaxCount,
   getUnlockProgress,
   isUnlocked,
   maxAffordable,
@@ -34,6 +37,12 @@ function describeEffect(def: StructureDef): string {
   if (def.capacity) parts.push(`弟子位 +${def.capacity}`);
   if (def.alchemySlots) parts.push(`炼丹位 +${def.alchemySlots}`);
   if (def.refiningSlots) parts.push(`炼器位 +${def.refiningSlots}`);
+  if (def.storage) {
+    const storage = (Object.entries(def.storage) as [ResourceId, number][])
+      .map(([id, amount]) => `${RESOURCE_MAP[id].icon}+${fmt(amount)}`)
+      .join(' ');
+    parts.push(`储存上限 ${storage}`);
+  }
   return parts.join(' · ') || '—';
 }
 
@@ -41,11 +50,16 @@ function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
   const buy = useGame((s) => s.buy);
 
   const owned = getBuildingCount(state, def.id);
+  const maxCount = getMaxCount(def);
+  const atMax = owned >= maxCount;
   const cost1 = getCost(def, owned, 1);
   const cost10 = getCost(def, owned, 10);
-  const canBuy1 = canAfford(state, cost1);
-  const canBuy10 = canAfford(state, cost10);
-  const maxN = maxAffordable(def, owned, state);
+  // 境界 / 宗门门槛未到时按钮必须禁用（gate 会说明原因）
+  const gate = getBuildGate(def, state);
+  const blocked = gate !== null || atMax;
+  const canBuy1 = !blocked && canAfford(state, cost1);
+  const canBuy10 = !blocked && canAfford(state, cost10);
+  const maxN = blocked ? 0 : maxAffordable(def, owned, state);
 
   const output = def.kind === 'generator' ? getGeneratorOutput(state, def) : null;
   const target = def.kind === 'generator' ? RESOURCE_MAP[def.produces] : null;
@@ -57,7 +71,12 @@ function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
         <div className="generator__text">
           <div className="generator__title">
             <span className="generator__name">{def.name}</span>
-            <span className="generator__count">×{owned}</span>
+            <span className="generator__count">
+              ×{owned}
+              {Number.isFinite(maxCount) && <em className="generator__max">/ {maxCount}</em>}
+            </span>
+            {gate && <span className="generator__gate">{gate}</span>}
+            {atMax && <span className="generator__gate generator__gate--done">已建满</span>}
           </div>
           <div className="generator__output">
             {def.kind === 'generator' && target

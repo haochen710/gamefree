@@ -22,6 +22,7 @@ import {
   PILLS,
   REALMS,
   SECRET_REALM_MAP,
+  BASE_STORAGE,
   STRUCTURES,
   createEmptyBuffs,
   type MaterialId,
@@ -208,9 +209,102 @@ section('[3] 建筑与价格');
 }
 
 /* ------------------------------------------------------------------ */
-/* 4. 突破成功率与境界丹（需求 5）                                      */
+/* 4. 储存上限与储物建筑                                                */
 /* ------------------------------------------------------------------ */
-section('[4] 突破成功率与境界丹（需求 5）');
+section('[4] 储存上限与储物建筑');
+{
+  const pouch = BUILDABLE_MAP.storagePouch;
+  const cave = BUILDABLE_MAP.sumeruCave;
+
+  /* ---- 基础上限 ---- */
+  const base = createInitialState(0);
+  check('灵气有基础上限', engine.getStorageCap(base, 'qi').eq(BASE_STORAGE.qi), fmt(engine.getStorageCap(base, 'qi')));
+  check('灵草有基础上限', engine.getStorageCap(base, 'herb').eq(BASE_STORAGE.herb));
+  check('灵石有基础上限', engine.getStorageCap(base, 'stone').eq(BASE_STORAGE.stone));
+
+  /* ---- 产量被上限截断，且溢出不计入累计 ---- */
+  const producing = forceBuild(createInitialState(0), 'spiritArray', 100); // 60 灵气/秒
+  const capped = applyTick(producing, 10, makeRandom(1)); // 本该产出 600
+  const qiCap = engine.getStorageCap(producing, 'qi');
+  check('产量被储存上限截断', capped.resources.qi.eq(qiCap), `${fmt(capped.resources.qi)}/${fmt(qiCap)}`);
+  check('溢出部分不计入累计灵气', capped.totalQi.lt(600), `累计仅 ${fmt(capped.totalQi)}（应远小于 600）`);
+
+  /* ---- 储物建筑提高上限 ---- */
+  const twoPouches = forceBuild(createInitialState(0), 'storagePouch', 2);
+  check(
+    '储物袋提高灵气上限',
+    engine.getStorageCap(twoPouches, 'qi').eq(BASE_STORAGE.qi + 2 * 2000),
+    fmt(engine.getStorageCap(twoPouches, 'qi')),
+  );
+  check('储物袋同时提高灵木上限', engine.getStorageCap(twoPouches, 'wood').gt(BASE_STORAGE.wood));
+
+  const oneCave = forceBuild(createInitialState(0), 'sumeruCave', 1);
+  check(
+    '越往后的储物建筑单座容量越大',
+    engine.getStorageCap(oneCave, 'qi').gt(engine.getStorageCap(twoPouches, 'qi')),
+    `${fmt(engine.getStorageCap(oneCave, 'qi'))} > ${fmt(engine.getStorageCap(twoPouches, 'qi'))}`,
+  );
+
+  /* ---- 境界门槛：提前一级可见，但不能提前建造 ---- */
+  check('低境界无法建造须弥洞府', engine.getBuildGate(cave, base) !== null, engine.getBuildGate(cave, base) ?? '');
+  const preview: GameState = { ...base, realmIndex: cave.requiresRealm! - 1 };
+  check('提前一级就能看到（便于规划）', engine.isUnlocked(cave, preview));
+  check('但提前一级仍然不能建造', engine.getBuildGate(cave, preview) !== null);
+  const reached: GameState = { ...base, realmIndex: cave.requiresRealm! };
+  check('达到境界后可以建造', engine.getBuildGate(cave, reached) === null);
+
+  /* ---- 数量上限（防止价格涨过上限导致永久卡死） ---- */
+  const bigCap = forceBuild(createInitialState(0), 'daoRepository', 10); // 先撑大上限，方便构造场景
+  const rich = grant(bigCap, { qi: '1e12' });
+  check('储物建筑有数量上限', engine.getMaxCount(pouch) === 10);
+  check('数量上限约束了 maxAffordable', engine.maxAffordable(pouch, 0, rich) === 10, `${engine.maxAffordable(pouch, 0, rich)}`);
+  check('已建满时 maxAffordable 为 0', engine.maxAffordable(pouch, 10, rich) === 0);
+
+  let built = rich;
+  for (let i = 0; i < 20; i += 1) built = engine.buyBuilding(built, pouch, 1);
+  check('连续建造不会突破数量上限', engine.getBuildingCount(built, 'storagePouch') === 10, `${engine.getBuildingCount(built, 'storagePouch')}`);
+
+  /* ---- clampResources 兜底 ---- */
+  const overflowing = grant(createInitialState(0), { qi: '1e9', wood: '1e9' });
+  const clamped = engine.clampResources(overflowing);
+  check('clampResources 把超限资源砍回上限', clamped.resources.qi.eq(BASE_STORAGE.qi) && clamped.resources.wood.eq(BASE_STORAGE.wood));
+
+  /* ---- 丹药 / 合成等旁路也要受限 ---- */
+  const pillState: GameState = { ...forceBuild(createInitialState(0), 'spiritArray', 50), pills: { nurturePill: 1 } };
+  const usedPill = crafting.usePill(pillState, 'nurturePill', makeRandom(1)).state;
+  check(
+    '丹药获得的灵气同样受上限约束',
+    usedPill.resources.qi.lte(engine.getStorageCap(pillState, 'qi')),
+    `${fmt(usedPill.resources.qi)}/${fmt(engine.getStorageCap(pillState, 'qi'))}`,
+  );
+
+  const packed = grant(forceBuild(createInitialState(0), 'spiritVault', 10), { qi: '1e5', ore: '1e5' });
+  const refined = engine.refineStone(packed, 10);
+  check('灵石合成结果同样受上限约束', refined.resources.stone.lte(engine.getStorageCap(packed, 'stone')));
+
+  /* ---- 上限是从建筑派生的，因此存档往返后依然正确 ---- */
+  const saved = deserialize(JSON.parse(JSON.stringify(serialize(twoPouches))));
+  check(
+    '存档还原后储物上限一致',
+    saved !== null && engine.getStorageCap(saved, 'qi').eq(engine.getStorageCap(twoPouches, 'qi')),
+  );
+
+  /* ---- 内容完整性 ---- */
+  const tiers = STRUCTURES.filter((d) => d.storage);
+  check('储物建筑覆盖了九个境界', new Set(tiers.map((d) => d.requiresRealm)).size === 9, `${tiers.length} 种`);
+  check(
+    '储物建筑容量随境界递增',
+    tiers
+      .sort((a, b) => (a.requiresRealm ?? 0) - (b.requiresRealm ?? 0))
+      .every((d, i, arr) => i === 0 || (d.storage?.qi ?? 0) > (arr[i - 1].storage?.qi ?? 0)),
+  );
+  check('每个储物建筑都设了数量上限', tiers.every((d) => d.max === 10));
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. 突破成功率与境界丹（需求 5）                                      */
+/* ------------------------------------------------------------------ */
+section('[5] 突破成功率与境界丹（需求 5）');
 {
   // 构造一个「小境界已满、灵气充足」的炼气期
   let state = grant(createInitialState(0), { qi: '1e6' });
@@ -273,7 +367,7 @@ section('[4] 突破成功率与境界丹（需求 5）');
 /* ------------------------------------------------------------------ */
 /* 5. 灵石合成（需求 6）                                                */
 /* ------------------------------------------------------------------ */
-section('[5] 灵石合成（需求 6）');
+section('[6] 灵石合成（需求 6）');
 {
   const poor = createInitialState(0);
   check('资源不足时无法合成', engine.maxStoneRefine(poor) === 0);
@@ -290,7 +384,7 @@ section('[5] 灵石合成（需求 6）');
 /* ------------------------------------------------------------------ */
 /* 6. 存档（含旧版迁移）                                                */
 /* ------------------------------------------------------------------ */
-section('[6] 存档往返与旧版迁移');
+section('[7] 存档往返与旧版迁移');
 {
   let original = createInitialState(1_700_000_000_000);
   original = grant(original, { stone: '1e6' });
@@ -361,10 +455,12 @@ section('[6] 存档往返与旧版迁移');
 /* ------------------------------------------------------------------ */
 /* 7. 离线收益                                                         */
 /* ------------------------------------------------------------------ */
-section('[7] 离线收益');
+section('[8] 离线收益');
 {
+  // 注意：离线收益同样受储存上限约束，所以场景里要先给足仓库容量
   let state = createInitialState(0);
   state = forceBuild(state, 'spiritArray', 10); // 6 灵气/秒
+  state = forceBuild(state, 'spiritVault', 10); // 把灵气上限撑到 500 万
 
   const oneHour = applyOffline(state, 3600 * 1000, makeRandom(1));
   const qiGain = oneHour.report?.gains.find((g) => g.id === 'qi')?.amount.toNumber() ?? 0;
@@ -405,7 +501,7 @@ section('[7] 离线收益');
 /* ------------------------------------------------------------------ */
 /* 8. 弟子系统（需求 4 / 7）                                            */
 /* ------------------------------------------------------------------ */
-section('[8] 弟子系统（需求 4 / 7）');
+section('[9] 弟子系统（需求 4 / 7）');
 {
   // 资质决定速度与上限
   const heaven = APTITUDE_MAP.heaven;
@@ -485,7 +581,7 @@ section('[8] 弟子系统（需求 4 / 7）');
 /* ------------------------------------------------------------------ */
 /* 9. 秘境探索（需求 5）                                                */
 /* ------------------------------------------------------------------ */
-section('[9] 秘境探索（需求 5）');
+section('[10] 秘境探索（需求 5）');
 {
   const realm = SECRET_REALM_MAP.sunsetValley;
 
@@ -577,7 +673,7 @@ section('[9] 秘境探索（需求 5）');
 /* ------------------------------------------------------------------ */
 /* 10. 炼丹与器物（需求 2）                                             */
 /* ------------------------------------------------------------------ */
-section('[10] 炼丹与器物（需求 2）');
+section('[11] 炼丹与器物（需求 2）');
 {
   // 品阶覆盖：每个品阶都要有战斗型和辅助型
   for (let tier = 1; tier <= 9; tier += 1) {
@@ -664,7 +760,7 @@ section('[10] 炼丹与器物（需求 2）');
 /* ------------------------------------------------------------------ */
 /* 11. 炼丹 / 炼器品阶晋升                                              */
 /* ------------------------------------------------------------------ */
-section('[11] 炼丹 / 炼器品阶晋升');
+section('[12] 炼丹 / 炼器品阶晋升');
 {
   const basic = createInitialState(0);
   const noRooms = crafting.getAlchemyUpgradeStatus(basic);
@@ -684,7 +780,7 @@ section('[11] 炼丹 / 炼器品阶晋升');
 /* ------------------------------------------------------------------ */
 /* 12. 大数精度                                                        */
 /* ------------------------------------------------------------------ */
-section('[12] 大数精度（超过 JS number 上限）');
+section('[13] 大数精度（超过 JS number 上限）');
 {
   check('对照组：原生 number 在 1e400 溢出', !Number.isFinite(Number('1e400')));
 
@@ -699,7 +795,7 @@ section('[12] 大数精度（超过 JS number 上限）');
 /* ------------------------------------------------------------------ */
 /* 13. 结构与内容完整性                                                 */
 /* ------------------------------------------------------------------ */
-section('[13] 内容完整性');
+section('[14] 内容完整性');
 {
   check('所有建筑都定义了造价', Object.values(BUILDABLE_MAP).every((b) => Object.keys(b.baseCost).length > 0));
   check('所有建筑都有解锁条件字段', Object.values(BUILDABLE_MAP).every((b) => b.unlock !== undefined));

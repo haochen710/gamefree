@@ -83,11 +83,15 @@ const booted = boot();
 
 /**
  * 生成状态变更。状态没变就返回空对象（避免无谓重渲染），
- * 变了则顺带刷新建筑解锁。
+ * 变了则顺带做两件收口的事：刷新建筑解锁、把资源砍回储存上限。
+ *
+ * 收口在这里的意义是：无论资源是被动涨上来的、丹药瞬间给的、
+ * 还是秘境掉落带回来的，都不可能突破上限、也不会漏掉解锁时机。
  */
 function nextGame(previous: GameState, next: GameState): { game?: GameState } {
   if (next === previous) return {};
-  return { game: engine.refreshUnlocks(next) };
+  const refreshed = engine.refreshUnlocks(next);
+  return { game: engine.clampResources(refreshed) };
 }
 
 export const useGame = create<GameStore>()((set, get) => ({

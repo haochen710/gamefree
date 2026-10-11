@@ -2,14 +2,18 @@
  * 数值模拟器
  * ==========
  * 直接调用 src/game 里的真实游戏逻辑（不是另写一套公式），
- * 用一个「理性玩家」策略自动玩一遍，输出两条时间线：
+ * 用一个「理性玩家」策略自动玩一遍。
  *
- *   1. 玩家自己的修行曲线（各境界到达时间）
- *   2. 宗门经营曲线（开宗、收徒、秘境、炼丹的解锁节奏）
+ * 会跑多个随机种子的对照：
+ *   只跑一个种子分不清「数值问题」和「这一把运气好」，
+ *   而且某些死锁只在特定的随机路径上才出现。
  *
- * 改完 content/ 里的数值后跑一次 `pnpm simulate` 就能看到节奏变化。
+ * 输出：
+ *   1. 主种子的完整时间线
+ *   2. 多种子的境界耗时对照表
+ *   3. 死锁检测（灵气顶到上限且什么都买不起 = 永久卡死）
  *
- * 随机数用固定种子，因此每次运行结果完全一致 —— 否则没法比较两次改动。
+ *     pnpm simulate
  */
 import { D, fmt, fmtDuration } from '../src/game/decimal';
 import {
@@ -19,75 +23,70 @@ import {
   PILL_MAP,
   REALMS,
   REFINING_SLOT_REQUIREMENT,
+  RESOURCE_IDS,
   SECT_LEVELS,
   SECRET_REALMS,
   STRUCTURES,
+  isResourceId,
 } from '../src/game/content';
+import type { ItemId } from '../src/game/content';
 import { createInitialState, type GameState } from '../src/game/state';
 import * as engine from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
 import * as expeditions from '../src/game/expeditions';
 import * as crafting from '../src/game/crafting';
 import { applyTick } from '../src/game/tick';
-import type { ItemId } from '../src/game/content';
 
 /* ------------------------------------------------------------------ */
 /* 配置                                                                */
 /* ------------------------------------------------------------------ */
 
 interface SimConfig {
-  /** 最长模拟时长（秒） */
-  maxSeconds: number;
-  /** 没有任何自动产出时，每秒手动打坐次数（受心神限制，实际达不到） */
-  clicksPerSecond: number;
-  /** 最多模拟几次飞升 */
-  maxAscensions: number;
-  /** 模拟时间上限（游戏内秒） */
+  /** 模拟时长上限（秒） */
   budget: number;
+  /** 没有自动产出时每秒尝试打坐次数（受心神上限约束，实际达不到） */
+  clicksPerSecond: number;
+  /** 跑多少个随机种子 */
+  seeds: number;
 }
 
 const CONFIG: SimConfig = {
-  maxSeconds: 0,
+  budget: 60 * 60 * 24 * 21,
   clicksPerSecond: 4,
-  maxAscensions: 0,
-  budget: 60 * 60 * 24 * 21, // 21 天
+  seeds: 5,
 };
 
-/** 固定种子，保证结果可复现 */
-function makeRandom(seed = 20240101): () => number {
-  let state = seed;
+/** 固定种子线性同余伪随机数，保证结果可复现 */
+function makeRandom(seed: number): () => number {
+  let state = seed >>> 0;
   return () => {
     state = (state * 1664525 + 1013904223) % 4294967296;
     return state / 4294967296;
   };
 }
 
-const random = makeRandom();
-
 /* ------------------------------------------------------------------ */
-/* 记录                                                                */
+/* 一次模拟                                                            */
 /* ------------------------------------------------------------------ */
 
 interface Milestone {
   seconds: number;
   label: string;
-  detail: string;
 }
 
-const milestones: Milestone[] = [];
-
-function record(seconds: number, label: string, detail: string): void {
-  milestones.push({ seconds, label, detail });
+interface SimResult {
+  seed: number;
+  seconds: number;
+  iterations: number;
+  deadlock: boolean;
+  /** 境界名 -> 到达时间（秒） */
+  realmTimes: Map<string, number>;
+  milestones: Milestone[];
+  finalState: GameState;
 }
 
-/* ------------------------------------------------------------------ */
-/* 估值辅助                                                            */
-/* ------------------------------------------------------------------ */
+/* -------------------------- 估值辅助 ------------------------------ */
 
-/**
- * 资源的影子价格：一单位该资源折算成多少灵气。
- * 用当前产率估算 —— 产 1 单位灵木的时间里本来能产多少灵气。
- */
 function shadowPrices(state: GameState): Record<string, number> {
   const production = engine.getProduction(state);
   const qi = production.qi.toNumber();
@@ -103,7 +102,6 @@ function costToQi(cost: engine.CostMap, prices: Record<string, number>): number 
   let total = 0;
   for (const [id, amount] of Object.entries(cost) as [ItemId, ReturnType<typeof D>][]) {
     if (!amount) continue;
-    // 材料（秘境产物）用灵石近似估值，避免被当成免费
     total += amount.toNumber() * (prices[id] ?? 200);
   }
   return total;
@@ -123,19 +121,16 @@ function payback(state: GameState, id: string, prices: Record<string, number>): 
     return value > 0 ? qiCost / value : Infinity;
   }
 
-  // 建筑没有直接产出：给一个基于"当前是否急需"的等效价值
   if (def.capacity) {
     const need = state.sect.disciples.length >= engine.getHousingCapacity(state);
     return need ? qiCost / (mult * 0.5) : Infinity;
   }
   if (def.alchemySlots) {
-    const nextTier = state.alchemyTier + 1;
-    const need = (ALCHEMY_SLOT_REQUIREMENT[nextTier] ?? 0) > engine.getAlchemySlots(state);
+    const need = (ALCHEMY_SLOT_REQUIREMENT[state.alchemyTier + 1] ?? 0) > engine.getAlchemySlots(state);
     return need ? qiCost / (mult * 0.4) : Infinity;
   }
   if (def.refiningSlots) {
-    const nextTier = state.refiningTier + 1;
-    const need = (REFINING_SLOT_REQUIREMENT[nextTier] ?? 0) > engine.getRefiningSlots(state);
+    const need = (REFINING_SLOT_REQUIREMENT[state.refiningTier + 1] ?? 0) > engine.getRefiningSlots(state);
     return need ? qiCost / (mult * 0.4) : Infinity;
   }
   return Infinity;
@@ -146,7 +141,9 @@ function chooseBuilding(state: GameState): string | null {
   let best: { id: string; score: number } | null = null;
 
   for (const def of [...GENERATORS, ...STRUCTURES]) {
-    if (!engine.isUnlocked(def, state)) continue;
+    if (engine.getBuildGate(def, state) !== null) continue;
+    const owned = engine.getBuildingCount(state, def.id);
+    if (owned >= engine.getMaxCount(def)) continue;
     const score = payback(state, def.id, prices);
     if (!Number.isFinite(score)) continue;
     if (!best || score < best.score) best = { id: def.id, score };
@@ -154,33 +151,28 @@ function chooseBuilding(state: GameState): string | null {
   return best?.id ?? null;
 }
 
-/* ------------------------------------------------------------------ */
-/* 主循环                                                              */
-/* ------------------------------------------------------------------ */
+/* -------------------------- 主循环 -------------------------------- */
 
-function simulate(): void {
+function runSimulation(seed: number): SimResult {
+  const random = makeRandom(seed);
   let state = createInitialState(0);
   let seconds = 0;
   let iterations = 0;
+  let deadlock = false;
+  let seenStorage = false;
+
+  const milestones: Milestone[] = [];
+  const realmTimes = new Map<string, number>();
+  const record = (label: string) => milestones.push({ seconds, label });
 
   const sectFlags = { founded: false, firstDisciple: false, firstExpedition: false, firstPill: false };
   const seenSectLevel = new Set<number>([1]);
   const seenAlchemy = new Set<number>([1]);
   const seenRefining = new Set<number>([1]);
 
-  record(0, '开局', '打坐引气入体');
+  record('开局');
 
-  const detail = (): string => {
-    const production = engine.getProduction(state);
-    const parts = [...GENERATORS, ...STRUCTURES]
-      .filter((def) => engine.getBuildingCount(state, def.id) > 0)
-      .map((def) => `${def.name}×${engine.getBuildingCount(state, def.id)}`);
-    parts.push(`灵气 ${fmt(production.qi)}/s`);
-    if (state.sect.founded) parts.push(`弟子 ${state.sect.disciples.length}`);
-    return parts.join('，');
-  };
-
-  while (seconds < CONFIG.budget && iterations < 300000) {
+  while (seconds < CONFIG.budget && iterations < 400000) {
     iterations += 1;
 
     /* ---------------- 1. 修行 ---------------- */
@@ -193,15 +185,18 @@ function simulate(): void {
     if (breakthrough.possible) {
       const from = engine.getRealm(state).name;
       const pillId = breakthrough.pillId;
-      const usePill = Boolean(pillId) && (state.pills[pillId] ?? 0) > 0 && engine.getSuccessRate(state, true) > engine.getSuccessRate(state, false);
+      const usePill =
+        Boolean(pillId) &&
+        (state.pills[pillId] ?? 0) > 0 &&
+        engine.getSuccessRate(state, true) > engine.getSuccessRate(state, false);
       const result = engine.breakthrough(state, usePill, random);
       if (result) {
         state = result.state;
-        record(
-          seconds,
-          result.success ? `${from} → ${engine.getRealm(state).name}` : `${from} 突破失败（保底 +5%）`,
-          detail(),
-        );
+        if (result.success) {
+          const to = engine.getRealm(state).name;
+          realmTimes.set(to, seconds);
+          record(`${from} → ${to}`);
+        }
       }
       continue;
     }
@@ -213,7 +208,7 @@ function simulate(): void {
         if (next !== state) {
           state = next;
           sectFlags.founded = true;
-          record(seconds, '开宗立派', detail());
+          record('开宗立派');
           continue;
         }
       }
@@ -225,7 +220,7 @@ function simulate(): void {
           state = next;
           if (!seenSectLevel.has(next.sect.level)) {
             seenSectLevel.add(next.sect.level);
-            record(seconds, `宗门晋升${SECT_LEVELS[next.sect.level - 1].name}`, detail());
+            record(`宗门晋升${SECT_LEVELS[next.sect.level - 1].name}`);
           }
           continue;
         }
@@ -237,13 +232,12 @@ function simulate(): void {
           state = result.state;
           if (!sectFlags.firstDisciple) {
             sectFlags.firstDisciple = true;
-            record(seconds, `首位弟子入门（${result.disciple.name}）`, detail());
+            record(`首位弟子入门（${result.disciple.name}）`);
           }
           continue;
         }
       }
 
-      // 派探索：把空闲弟子尽量排满所有队伍
       if (state.expeditions.length < expeditions.getMaxExpeditions(state)) {
         let started = false;
         for (const realm of [...SECRET_REALMS].reverse()) {
@@ -256,7 +250,7 @@ function simulate(): void {
             started = true;
             if (!sectFlags.firstExpedition) {
               sectFlags.firstExpedition = true;
-              record(seconds, `首次秘境探索（${realm.name}）`, detail());
+              record(`首次秘境探索（${realm.name}）`);
             }
             break;
           }
@@ -264,7 +258,6 @@ function simulate(): void {
         if (started) continue;
       }
 
-      // 炼丹品阶
       const alchemy = crafting.getAlchemyUpgradeStatus(state);
       if (alchemy.possible) {
         const next = crafting.upgradeAlchemy(state);
@@ -272,13 +265,12 @@ function simulate(): void {
           state = next;
           if (!seenAlchemy.has(next.alchemyTier)) {
             seenAlchemy.add(next.alchemyTier);
-            record(seconds, `炼丹术 ${next.alchemyTier} 品`, detail());
+            record(`炼丹术 ${next.alchemyTier} 品`);
           }
           continue;
         }
       }
 
-      // 炼器品阶
       const refining = crafting.getRefiningUpgradeStatus(state);
       if (refining.possible) {
         const next = crafting.upgradeRefining(state);
@@ -286,13 +278,12 @@ function simulate(): void {
           state = next;
           if (!seenRefining.has(next.refiningTier)) {
             seenRefining.add(next.refiningTier);
-            record(seconds, `炼器术 ${next.refiningTier} 品`, detail());
+            record(`炼器术 ${next.refiningTier} 品`);
           }
           continue;
         }
       }
 
-      // 炼当前的境界丹
       const neededPill = engine.getRealm(state).breakthroughPill;
       if (neededPill) {
         const def = PILL_MAP[neededPill];
@@ -302,7 +293,7 @@ function simulate(): void {
             state = next;
             if (!sectFlags.firstPill) {
               sectFlags.firstPill = true;
-              record(seconds, `首次炼成丹药（${def.name}）`, detail());
+              record(`首次炼成丹药（${def.name}）`);
             }
             continue;
           }
@@ -310,13 +301,45 @@ function simulate(): void {
       }
     }
 
-    /* ---------------- 3. 建造 ---------------- */
+    /* ---------------- 3a. 仓储告急：先扩建仓库 ---------------- */
+    const caps = engine.getStorageCaps(state);
+    const tight = RESOURCE_IDS.find((id) => {
+      const cap = caps[id];
+      return cap.gt(0) && engine.getAmount(state, id).div(cap).gte(0.9);
+    });
+
+    if (tight) {
+      const storages = STRUCTURES.filter(
+        (def) =>
+          def.storage &&
+          engine.getBuildGate(def, state) === null &&
+          engine.getBuildingCount(state, def.id) < engine.getMaxCount(def),
+      ).reverse();
+
+      let built = false;
+      for (const def of storages) {
+        const owned = engine.getBuildingCount(state, def.id);
+        if (!engine.canAfford(state, engine.getCost(def, owned, 1))) continue;
+        const next = engine.buyBuilding(state, def, 1);
+        if (next !== state) {
+          state = next;
+          built = true;
+          if (!seenStorage) {
+            seenStorage = true;
+            record(`首次扩建仓库（${def.name}）`);
+          }
+          break;
+        }
+      }
+      if (built) continue;
+    }
+
+    /* ---------------- 3b. 常规建造 ---------------- */
     const target = chooseBuilding(state);
     if (target) {
       const def = BUILDABLE_MAP[target];
       const owned = engine.getBuildingCount(state, target);
-      const cost = engine.getCost(def, owned, 1);
-      if (engine.canAfford(state, cost)) {
+      if (engine.canAfford(state, engine.getCost(def, owned, 1))) {
         const next = engine.buyBuilding(state, def, 1);
         if (next !== state) {
           state = next;
@@ -325,13 +348,32 @@ function simulate(): void {
       }
     }
 
+    /* ---------------- 死锁检测 ----------------
+       真正的死锁只有一个判据：灵气满了，且什么都买不起。
+       所有建筑都含灵气造价，灵气一满收入就永远是 0。
+       反过来，只要灵气没满就还有希望 —— 别的资源顶上限只是浪费产量。 */
+    if (engine.isResourceFull(state, 'qi')) {
+      const canAffordAnything = [...GENERATORS, ...STRUCTURES].some((def) => {
+        if (engine.getBuildGate(def, state) !== null) return false;
+        const owned = engine.getBuildingCount(state, def.id);
+        if (owned >= engine.getMaxCount(def)) return false;
+        return engine.canAfford(state, engine.getCost(def, owned, 1));
+      });
+      if (!canAffordAnything) {
+        deadlock = true;
+        milestones.push({ seconds, label: `⛔ 死锁：灵气顶到上限 ${fmt(engine.getStorageCap(state, 'qi'))}` });
+        break;
+      }
+    }
+
     /* ---------------- 4. 推进到下一件事 ---------------- */
     const production = engine.getProduction(state);
     let wait = Infinity;
 
     for (const def of [...GENERATORS, ...STRUCTURES]) {
-      if (!engine.isUnlocked(def, state)) continue;
+      if (engine.getBuildGate(def, state) !== null) continue;
       const owned = engine.getBuildingCount(state, def.id);
+      if (owned >= engine.getMaxCount(def)) continue;
       const cost = engine.getCost(def, owned, 1);
 
       let longest = 0;
@@ -339,9 +381,11 @@ function simulate(): void {
       for (const [id, amount] of Object.entries(cost) as [ItemId, ReturnType<typeof D>][]) {
         const missing = amount.sub(engine.getAmount(state, id));
         if (missing.lte(0)) continue;
-        // 材料（秘境产物）没有自动产率，只能靠探索，不能"等出来"
+        // 材料没有自动产率（只能靠探索），不能"等出来"
         const rate = (production as Record<string, ReturnType<typeof D>>)[id] ?? D(0);
-        if (rate.lte(0)) {
+        // 资源已顶到上限时，等下去也不会变多
+        const cap = isResourceId(id) ? caps[id] : undefined;
+        if (rate.lte(0) || (cap && engine.getAmount(state, id).gte(cap))) {
           feasible = false;
           break;
         }
@@ -352,7 +396,6 @@ function simulate(): void {
 
     if (!Number.isFinite(wait)) {
       if (production.qi.lte(0)) {
-        // 完全没有自动产出：只能打坐（受心神上限约束）
         const dt = 1 / CONFIG.clicksPerSecond;
         seconds += dt;
         state = engine.tickMind(state, dt);
@@ -360,8 +403,7 @@ function simulate(): void {
         state = engine.refreshUnlocks(state);
         continue;
       }
-      // 有自动产出但暂时买不起任何东西（往往是缺秘境材料）：
-      // 跳过一段时间，让弟子修炼和探索继续推进，而不是直接结束模拟
+      // 有产出但暂时买不起（多为缺秘境材料）：跳过一段，让探索继续推进
       const dt = 120;
       seconds += dt;
       state = applyTick(state, dt, random);
@@ -373,35 +415,25 @@ function simulate(): void {
     state = applyTick(state, dt, random);
   }
 
-  report(state, seconds, iterations);
+  return { seed, seconds, iterations, deadlock, realmTimes, milestones, finalState: state };
 }
 
 /* ------------------------------------------------------------------ */
 /* 报告                                                                */
 /* ------------------------------------------------------------------ */
 
-function report(state: GameState, seconds: number, iterations: number): void {
-  console.log('仙途 · 数值模拟报告');
-  console.log('='.repeat(78));
-  console.log('策略：回本最快优先建造，缺丹药时优先炼丹，宗门可升就升，探索队伍尽量排满');
-  console.log(
-    `随机种子固定，结果可复现 · 模拟上限 ${fmtDuration(CONFIG.budget)} · 实际模拟 ${fmtDuration(
-      seconds,
-    )} · 迭代 ${iterations} 次`,
-  );
-  console.log('');
-
-  console.log('【修行与宗门时间线】');
-  for (const m of milestones) {
+/** 主种子的详细报告 */
+function printDetail(result: SimResult): void {
+  console.log('【主种子时间线】');
+  for (const m of result.milestones) {
     console.log(`  ${fmtDuration(m.seconds).padStart(12)}  ${m.label}`);
   }
 
-  /* ---- 境界耗时 ---- */
-  const realmSteps = milestones.filter((m) => m.label.includes('→'));
-  if (realmSteps.length > 0) {
+  const steps = result.milestones.filter((m) => m.label.includes('→'));
+  if (steps.length > 0) {
     console.log('\n【各境界耗时】');
     let previous = 0;
-    for (const m of realmSteps) {
+    for (const m of steps) {
       console.log(
         `  ${m.label.padEnd(18)} 用时 ${fmtDuration(m.seconds - previous)}（累计 ${fmtDuration(m.seconds)}）`,
       );
@@ -409,52 +441,110 @@ function report(state: GameState, seconds: number, iterations: number): void {
     }
   }
 
-  /* ---- 最终状态 ---- */
   console.log('\n【模拟结束时的状态】');
+  const state = result.finalState;
   const production = engine.getProduction(state);
+  const caps = engine.getStorageCaps(state);
+
   console.log(`  境界：${engine.getRealm(state).name} ${state.layer} 层`);
-  console.log(`  灵气产量：${fmt(production.qi)}/秒`);
-  console.log(`  全局倍率：×${fmt(engine.getGlobalMultiplier(state))}`);
+  console.log(`  灵气产量：${fmt(production.qi)}/秒 · 全局倍率 ×${fmt(engine.getGlobalMultiplier(state))}`);
   console.log(`  宗门：${state.sect.founded ? SECT_LEVELS[state.sect.level - 1].name : '未开宗'}`);
   console.log(`  弟子：${state.sect.disciples.length} 人，累计招收 ${state.sect.totalRecruited} 人`);
   console.log(`  炼丹术 ${state.alchemyTier} 品 · 炼器术 ${state.refiningTier} 品`);
 
-  const held = Object.entries(state.pills).filter(([, n]) => n > 0);
-  console.log(`  存丹：${held.length === 0 ? '无' : held.map(([id, n]) => `${PILL_MAP[id]?.name ?? id}×${n}`).join('，')}`);
+  console.log(
+    `  储存占用：${RESOURCE_IDS.map((id) => `${id} ${fmt(state.resources[id])}/${fmt(caps[id])}`).join('，')}`,
+  );
+  const storeBuildings = STRUCTURES.filter(
+    (def) => def.storage && engine.getBuildingCount(state, def.id) > 0,
+  ).map((def) => `${def.name}×${engine.getBuildingCount(state, def.id)}`);
+  console.log(`  储物建筑：${storeBuildings.length === 0 ? '无' : storeBuildings.join('，')}`);
 
   const materials = Object.entries(state.materials)
     .filter(([, amount]) => amount.gt(0))
     .map(([id, amount]) => `${id} ${fmt(amount)}`);
   console.log(`  秘境材料：${materials.length === 0 ? '无' : materials.join('，')}`);
 
-  /* ---- 弟子分布 ---- */
   if (state.sect.disciples.length > 0) {
     const byRealm = new Map<number, number>();
-    const byAptitude = new Map<string, number>();
     for (const d of state.sect.disciples) {
       byRealm.set(d.realmIndex, (byRealm.get(d.realmIndex) ?? 0) + 1);
-      byAptitude.set(d.aptitude, (byAptitude.get(d.aptitude) ?? 0) + 1);
     }
-    console.log('\n【弟子境界分布】');
-    for (const [realm, count] of [...byRealm.entries()].sort((a, b) => b[0] - a[0])) {
-      console.log(`  ${REALMS[realm].name.padEnd(8)} ${count} 人`);
-    }
-    console.log('\n【弟子资质分布】');
-    for (const [aptitude, count] of [...byAptitude.entries()].sort((a, b) => b[1] - a[1])) {
-      console.log(`  ${aptitude.padEnd(12)} ${count} 人`);
-    }
+    console.log(
+      `  弟子分布：${[...byRealm.entries()]
+        .sort((a, b) => b[0] - a[0])
+        .map(([realm, count]) => `${REALMS[realm].name} ${count}`)
+        .join('，')}`,
+    );
+  }
+}
+
+/** 多种子对照表 */
+function printSweep(results: SimResult[]): void {
+  const stageNames = REALMS.map((r) => r.name);
+
+  console.log('\n【多种子对照】到达各境界所需时间');
+  console.log(`  ${'种子'.padEnd(8)}${stageNames.slice(1, 7).map((n) => n.padStart(12)).join('')}   死锁`);
+
+  for (const result of results) {
+    const cells = stageNames.slice(1, 7).map((name) => {
+      const t = result.realmTimes.get(name);
+      return (t === undefined ? '—' : fmtDuration(t)).padStart(12);
+    });
+    console.log(
+      `  ${String(result.seed).padEnd(8)}${cells.join('')}   ${result.deadlock ? '⛔ 是' : '✅ 否'}`,
+    );
   }
 
-  /* ---- 最近的记事 ---- */
-  if (state.journal.length > 0) {
-    console.log('\n【最近记事】');
-    for (const entry of state.journal.slice(0, 8)) {
-      console.log(`  ${fmtDuration(entry.time).padStart(12)}  ${entry.text}`);
-    }
+  const deadlocks = results.filter((r) => r.deadlock);
+  if (deadlocks.length > 0) {
+    console.log(`\n⛔ ${deadlocks.length}/${results.length} 个种子发生死锁，储物建筑的容量/价格曲线需要调整。`);
+  } else {
+    console.log(`\n✅ ${results.length} 个种子全程均未死锁。`);
   }
+
+  // 各阶段耗时的波动范围，用来判断曲线是数值问题还是运气问题
+  console.log('\n【各阶段耗时波动】');
+  for (let i = 1; i < 7 && i < stageNames.length; i += 1) {
+    const name = stageNames[i];
+    const times: number[] = [];
+    for (const result of results) {
+      const t = result.realmTimes.get(name);
+      if (t !== undefined) times.push(t);
+    }
+    if (times.length === 0) continue;
+    const min = Math.min(...times);
+    const max = Math.max(...times);
+    const median = [...times].sort((a, b) => a - b)[Math.floor(times.length / 2)];
+    const spread = median > 0 ? Math.round(((max - min) / median) * 100) : 0;
+    console.log(
+      `  ${name.padEnd(8)} 中位 ${fmtDuration(median).padStart(10)} · 最快 ${fmtDuration(min)} · 最慢 ${fmtDuration(max)} · 波动 ±${spread}%`,
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+
+function main(): void {
+  const started = Date.now();
+  const results: SimResult[] = [];
+  for (let i = 0; i < CONFIG.seeds; i += 1) {
+    results.push(runSimulation(20240101 + i * 7919));
+  }
+
+  console.log('仙途 · 数值模拟报告');
+  console.log('='.repeat(78));
+  console.log('策略：回本最快优先建造，仓储告急先扩建仓库，宗门可升就升，探索队伍尽量排满');
+  console.log(
+    `模拟时长上限 ${fmtDuration(CONFIG.budget)} · ${CONFIG.seeds} 个随机种子 · 总耗时 ${Date.now() - started}ms`,
+  );
+  console.log('');
+
+  printDetail(results[0]);
+  printSweep(results);
 
   console.log('');
   console.log('='.repeat(78));
 }
 
-simulate();
+main();
