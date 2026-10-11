@@ -10,12 +10,28 @@
 
 ## 快速开始
 
+**第一步永远是先进入项目目录**（下面是本项目的位置，换成你自己的）：
+
 ```bash
-pnpm install     # 安装依赖
-pnpm dev         # 启动开发服务器
+cd D:\dsh_test\gamefree
 ```
 
-然后打开 **http://localhost:5173/gamefree/**（注意结尾的 `gamefree/` 路径，见下方说明）。
+然后：
+
+```bash
+pnpm install
+```
+
+```bash
+pnpm dev
+```
+
+> ⚠️ **不要把命令后面的中文说明一起复制进终端。**
+> `#` 在 cmd 和 PowerShell 里都不是注释符，`pnpm install # 安装依赖` 会被
+> pnpm 理解成"安装一个名叫 `#` 的包"，报
+> `ERR_PNPM_SPEC_NOT_SUPPORTED_BY_ANY_RESOLVER`。
+
+启动后打开 **http://localhost:5173/gamefree/**（注意结尾的 `gamefree/` 路径，见下方说明）。
 
 其他命令：
 
@@ -154,6 +170,13 @@ git push
 ---
 
 ## 常见问题
+
+**报 `ERR_PNPM_SPEC_NOT_SUPPORTED_BY_ANY_RESOLVER`，说 `#` 不被支持**
+把命令后面的中文注释一起复制进终端了。`#` 在 cmd / PowerShell 里不是注释符，
+请只复制命令本身。
+
+**报 `ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`**
+当前目录不是项目目录。先 `cd` 到有 `package.json` 的那个文件夹。
 
 **页面打开是空白，控制台一堆 404**
 `vite.config.ts` 的 `base` 没改成 `/<仓库名>/`。
