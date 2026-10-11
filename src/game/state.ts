@@ -10,6 +10,7 @@ import {
   MATERIAL_IDS,
   RESOURCE_IDS,
   STARTER_REALM_ID,
+  ENLIGHTEN_PATH_IDS,
   WEATHER_ROLL_INTERVAL,
   createEmptyBuffs,
   type ActiveBuffs,
@@ -201,6 +202,23 @@ export interface GameState {
   pendingEncounter: string | null;
   /** 距离下一次遭遇判定的累计秒数（需求 2） */
   encounterTimer: number;
+  /**
+   * 当前这条遭遇还剩多少秒（需求 1：玩家事件 30 秒不选就消失）。
+   *
+   * 与 `encounterTimer` 是两件事：那个是「下次什么时候遇到」，
+   * 这个是「眼前这条还剩多久」。分开存是因为口径完全不同 ——
+   * 前者跟着判定周期走，后者是给玩家反应时间的真实秒数。
+   */
+  encounterDeadline: number;
+
+  /** 感悟：每条道的阶数（0~90），见 content/enlightenment.ts（需求 3） */
+  enlightenment: Record<string, number>;
+  /** 当前正在感悟的那一阶；没有则 null */
+  enlightening: { pathId: string; remaining: number; total: number } | null;
+  /** 已制成的空间戒指数（需求 3） */
+  spaceRings: number;
+  /** 上一次时空穿梭的 playTime（需求 3） */
+  lastTimeJump: number;
 
   /** 丹药库存 */
   pills: ItemCountMap;
@@ -361,6 +379,12 @@ export function createEmptyShop(): ShopState {
   return { offers: [], secondsLeft: 0 };
 }
 
+function createEmptyEnlightenment(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const id of ENLIGHTEN_PATH_IDS) out[id] = 0;
+  return out;
+}
+
 export function createInitialState(now = Date.now()): GameState {
   const resources = createEmptyResources();
   // 开局给 10 点灵气，聚灵阵要 15 —— 必须先打坐几下，
@@ -380,6 +404,11 @@ export function createInitialState(now = Date.now()): GameState {
     karma: 0,
     pendingEncounter: null,
     encounterTimer: 0,
+    encounterDeadline: 0,
+    enlightenment: createEmptyEnlightenment(),
+    enlightening: null,
+    spaceRings: 0,
+    lastTimeJump: 0,
     discoveryFailures: 0,
     pills: {},
     artifacts: {},

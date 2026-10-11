@@ -27,6 +27,7 @@ import {
   BUILD_QUEUE_BUILDING,
   BUILD_QUEUE_MAX_SLOTS,
   QUEUE_UPGRADES,
+  REFINE_RECIPE_MAP,
   DAO_YUN_BONUS,
   DAO_YUN_DIVISOR,
   DAO_YUN_EXPONENT,
@@ -72,6 +73,7 @@ import {
   type ItemId,
   type MapRegionDef,
   type QueueUpgradeDef,
+  type RefineRecipe,
   type RealmDef,
   type ResourceId,
   type SecretRealmDef,
@@ -273,6 +275,7 @@ export type StructureBonusKey =
   | 'insightBonus'
   | 'breakthroughBonus'
   | 'queueSlots'
+  | 'sectDefense'
   | 'productionBonus';
 
 export function getStructureBonus(state: GameState, key: StructureBonusKey): number {
@@ -1418,6 +1421,67 @@ export function tickMind(state: GameState, dt: number): GameState {
 /* ------------------------------------------------------------------ */
 /* 灵石合成（需求 6）                                                   */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* 通用合成 / 精炼（需求 4）                                            */
+/* ------------------------------------------------------------------ */
+
+/** 一条配方现在的门槛提示；null = 可以做 */
+export function getRefineGate(recipe: RefineRecipe, state: GameState): string | null {
+  if (!state.unlockedBuildings) {
+    // 防御性：理论上不会发生（unlockedBuildings 恒有值）
+  }
+  if (state.realmIndex < recipe.requiresRealm) return `需${REALMS[recipe.requiresRealm].name}`;
+  if (recipe.requiresTech && !state.techs[recipe.requiresTech]) {
+    return `需钻研「${techName(recipe.requiresTech)}」`;
+  }
+  return null;
+}
+
+/** 把配方里的数字消耗转成 CostMap */
+export function refineCostMap(recipe: RefineRecipe): CostMap {
+  const cost: CostMap = {};
+  for (const [id, amount] of Object.entries(recipe.cost) as [ItemId, number][]) {
+    cost[id] = D(amount);
+  }
+  return cost;
+}
+
+/** 这条配方最多能合成几次（受最低的那种料限制） */
+export function maxRefine(state: GameState, recipeId: string): number {
+  const recipe = REFINE_RECIPE_MAP[recipeId];
+  if (!recipe) return 0;
+  if (getRefineGate(recipe, state) !== null) return 0;
+
+  let max = Infinity;
+  for (const [id, amount] of Object.entries(refineCostMap(recipe)) as [ItemId, Decimal][]) {
+    if (amount.lte(0)) continue;
+    max = Math.min(max, getAmount(state, id).div(amount).floor().toNumber());
+  }
+  return Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 0;
+}
+
+/**
+ * 合成若干次。
+ *
+ * 产出走 `addItem`，所以进阶资源会落进**材料**背包（它们本来就是材料的一种），
+ * 灵石之类的资源落进资源背包 —— 由 `addItem` 自己按类型分派，这里不用管。
+ */
+export function refine(state: GameState, recipeId: string, times: number): GameState {
+  const recipe = REFINE_RECIPE_MAP[recipeId];
+  if (!recipe) return state;
+
+  const actual = Math.min(Math.max(0, Math.floor(times)), maxRefine(state, recipeId));
+  if (actual <= 0) return state;
+
+  const scaled: CostMap = {};
+  for (const [id, amount] of Object.entries(refineCostMap(recipe)) as [ItemId, Decimal][]) {
+    scaled[id] = amount.mul(actual);
+  }
+
+  const paid = payCost(state, scaled);
+  return addItem(paid, recipe.output.item, D(recipe.output.amount * actual));
+}
 
 export function getStoneRefineCost(): CostMap {
   const cost: CostMap = {};

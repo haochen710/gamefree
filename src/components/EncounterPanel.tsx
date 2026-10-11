@@ -13,7 +13,7 @@
  * 另外把两条后果（天雷之罚 / 探索加成）实时算出来显示，
  * 否则玩家看不出善恶值到底在做什么。
  */
-import { ENCOUNTER_MAP, optionRequiredItems, type ItemId } from '../game/content';
+import { ENCOUNTER_MAP, isAttackEncounter, optionRequiredItems, type ItemId } from '../game/content';
 import { ITEM_MAP } from '../game/content';
 import {
   canChooseOption,
@@ -24,6 +24,8 @@ import {
   getKarmaLabel,
   getKarmaThunderPenalty,
   getPendingEncounter,
+  getSectDefense,
+  previewAttack,
   KARMA_EXPLORE_BONUS_MAX,
   KARMA_ROB_THRESHOLD,
   KARMA_THUNDER_MAX,
@@ -80,16 +82,42 @@ export function EncounterPanel() {
       {!pending ? (
         <p className="panel__note">
           {game.sect.founded
-            ? '已开宗立派，安居山中，不再有路上的遭遇。掌门在外游历时仍会遇到人。'
+            ? '宗门已立，山中的事与路上的事都会找上门来。'
             : '尚未开宗，行走在外，时不时会遇到商队与各色人物。'}
         </p>
       ) : (
-        <div className={`encounter encounter--${pending.id}`}>
+        <div className={`encounter encounter--${pending.id}${isAttackEncounter(pending) ? ' encounter--attack' : ''}`}>
           <div className="encounter__head">
             <span className="encounter__icon">{pending.icon}</span>
             <span className="encounter__name">{pending.name}</span>
+            <span className="encounter__timer">
+              剩 {Math.max(0, Math.ceil(game.encounterDeadline))} 秒
+            </span>
           </div>
           <p className="encounter__desc">{pending.desc}</p>
+
+          {/*
+            进攻类事件必须把后果写在明面上（需求 1）：
+            不选也会照常结算，所以玩家得知道"放着不管会损失多少"。
+          */}
+          {isAttackEncounter(pending) && (
+            <div className="encounter__warning">
+              {(() => {
+                const preview = previewAttack(game, pending);
+                if (!preview) return null;
+                const def = getSectDefense(game);
+                return (
+                  <>
+                    <strong>进攻宗门 —— 不处理就会照常结算。</strong>
+                    <span>
+                      宗门防御 {Math.round(def * 100)}% · 预期受伤弟子 {preview.casualties.length} 人
+                      {preview.severity <= 0 ? '（大阵足以完全挡下）' : ' · 另有资源损失'}
+                    </span>
+                  </>
+                );
+              })()}
+            </div>
+          )}
 
           <div className="encounter__options">
             {pending.options.map((option, index) => {

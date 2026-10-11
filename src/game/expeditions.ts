@@ -75,6 +75,7 @@ import {
 import { getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
 import { getEnvironmentMaterialBonus, getWeatherEffects } from './season';
 import { getKarmaExploreBonus } from './encounter';
+import { getElementMaterialBonus, getSpaceExploreBonus } from './enlightenment';
 import { addSeeds } from './planting';
 import type { Disciple, Expedition, GameState } from './state';
 
@@ -262,7 +263,7 @@ export function resolveExpedition(
   const weather = getWeatherEffects(state);
   const yieldMultiplier =
     // 善行值加成（需求 2）：善行越高，探索产出越好
-    (1 + getKarmaExploreBonus(state)) *
+    (1 + getKarmaExploreBonus(state) + getSpaceExploreBonus(state)) *
     state.buffs.yieldMultiplier *
     (1 + artifacts.expeditionYield + getStructureBonus(state, 'expeditionYieldBonus') + (weather.expeditionYield ?? 0));
 
@@ -282,7 +283,10 @@ export function resolveExpedition(
      * 稀有材料不吃这个加成：它们是秘境深处的产物，不该被地表气候左右 ——
      * 否则一年里总有一段时间刷不到星辰砂，节奏会变得莫名其妙。
      */
-    const seasonal = isBasicMaterial(entry.item) ? 1 + getEnvironmentMaterialBonus(state, entry.item) : 1;
+    // 季节/天象（需求 1）与五行感悟（需求 3）是两个独立乘区
+    const seasonal = isBasicMaterial(entry.item)
+      ? (1 + getEnvironmentMaterialBonus(state, entry.item)) * (1 + getElementMaterialBonus(state, entry.item))
+      : 1;
     const amount = Math.max(
       1,
       Math.floor(entry.amount * yieldFactor * sizeFactor * yieldMultiplier * variance * Math.max(0, seasonal)),
@@ -604,7 +608,7 @@ export function resolveSurvey(
   const weather = getWeatherEffects(state);
   const yieldMultiplier =
     // 善行值加成（需求 2）：普通探索同样吃善行加成
-    (1 + getKarmaExploreBonus(state)) *
+    (1 + getKarmaExploreBonus(state) + getSpaceExploreBonus(state)) *
     state.buffs.yieldMultiplier *
     (1 + getStructureBonus(state, 'expeditionYieldBonus') + (weather.expeditionYield ?? 0)) *
     SURVEY_YIELD_MULT;
@@ -617,7 +621,9 @@ export function resolveSurvey(
 
   const push = (item: ItemId, rawAmount: number): void => {
     const variance = YIELD_VARIANCE_MIN + random() * (YIELD_VARIANCE_MAX - YIELD_VARIANCE_MIN);
-    const seasonal = isBasicMaterial(item) ? 1 + getEnvironmentMaterialBonus(working, item) : 1;
+    const seasonal = isBasicMaterial(item)
+      ? (1 + getEnvironmentMaterialBonus(working, item)) * (1 + getElementMaterialBonus(working, item))
+      : 1;
     const amount = Math.max(
       1,
       Math.floor(rawAmount * yieldMultiplier * sizeFactor * variance * Math.max(0, seasonal)),

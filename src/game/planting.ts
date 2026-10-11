@@ -25,6 +25,7 @@ import {
 } from './content';
 import { addItem, getPlotCapacity } from './engine';
 import { getEnvironmentMaterialBonus } from './season';
+import { getElementMaterialBonus } from './enlightenment';
 import { pushJournal } from './disciples';
 import { gameRandom, randomId, type RandomSource } from './random';
 import type { GameState, Planting } from './state';
@@ -171,9 +172,11 @@ export function harvestPlanting(state: GameState, id: string): HarvestResult {
   if (!planting || !isPlantingReady(planting)) return { state, gains: [] };
 
   const seed = SEED_MAP[planting.material];
-  // 季节与天象会改变基础材料的收成（需求 1）：春天种灵草比冬天多收四成多
+  // 季节与天象会改变基础材料的收成（需求 1）：春天种灵草比冬天多收四成多。
+  // 需求 3 的五行感悟是另一个独立乘区 —— 修了木之道，灵草收成再上一截。
   const seasonal = isBasicMaterial(planting.material)
-    ? Math.max(0, 1 + getEnvironmentMaterialBonus(state, planting.material))
+    ? Math.max(0, 1 + getEnvironmentMaterialBonus(state, planting.material)) *
+      (1 + getElementMaterialBonus(state, planting.material))
     : 1;
   const amount = Math.max(1, Math.floor((seed?.yield ?? 1) * seasonal));
   const def = MATERIAL_MAP[planting.material];

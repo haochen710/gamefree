@@ -150,6 +150,13 @@ export interface StructureDef extends BuildableBase {
   arena?: boolean;
   /** 提供多少建造队列名额（需求 2，只有天工院） */
   queueSlots?: number;
+  /**
+   * 宗门防御强度（需求 1）：进攻类宗门事件的损失按 (1 − 防御) 削减。
+   *
+   * 可以累加到 1 以上 —— 那时进攻完全挡下，也就是需求说的
+   * 「减少**乃至避免**弟子伤亡」。
+   */
+  sectDefense?: number;
 }
 
 export type BuildableDef = GeneratorDef | StructureDef;
@@ -893,6 +900,73 @@ STRUCTURES.push({
   max: 1,
   queueSlots: 1,
 });
+
+/* ------------------------------------------------------------------ */
+/* 宗门大阵（需求 1）                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 需求原文：「宗门新增宗门大阵等防御设施，能减少乃至避免弟子伤亡」。
+ *
+ * 三座一组、逐级替换的关系（`max: 1` + 前置），防御值**累加**：
+ *   护山大阵 0.45 → 周天星斗大阵 0.85 → 混元无极阵 1.30
+ * 到第三座时总防御 1.30 > 1，进攻烈度归零 —— 也就是"完全避免伤亡"。
+ *
+ * 数值刻意做成"三座就能免疫"：这是个**有终点**的防线，
+ * 让玩家看得见"再建一座就彻底不怕了"，而不是永远差一点。
+ */
+export const SECT_FORMATIONS: StructureDef[] = [
+  {
+    id: 'gateArray',
+    kind: 'structure',
+    group: 'sect',
+    name: '护山大阵',
+    icon: '🛡',
+    desc: '以山门为枢、灵脉为源的护山法阵。宗门防御 +45%，匪患兽潮的损失大幅降低。',
+    baseCost: { qi: 3e5, wood: 2e4, stone: 1.5e4, ore: 1e4, arrayCore: 50 },
+    costGrowth: 1,
+    unlock: {},
+    requiresBuilding: 'mountainGate',
+    requiresTech: 'caveHeavenArt',
+    requiresRealm: 3,
+    max: 1,
+    sectDefense: 0.45,
+  },
+  {
+    id: 'starArray',
+    kind: 'structure',
+    group: 'sect',
+    name: '周天星斗大阵',
+    icon: '✨',
+    desc: '引周天星力入阵，昼夜不息。宗门防御 +85%（与护山大阵叠加）。',
+    baseCost: { qi: 5e7, wood: 2e6, stone: 1.5e6, ore: 1e6, starSand: 400, arrayCore: 2000 },
+    costGrowth: 1,
+    unlock: {},
+    requiresBuilding: 'gateArray',
+    requiresTech: 'cosmosStorageArt',
+    requiresRealm: 5,
+    max: 1,
+    sectDefense: 0.85,
+  },
+  {
+    id: 'chaosArray',
+    kind: 'structure',
+    group: 'sect',
+    name: '混元无极阵',
+    icon: '🌀',
+    desc: '以混元之气为骨，阵成之后来犯者连山门都看不见。宗门防御 +130%（三阵叠加后完全免疫伤亡）。',
+    baseCost: { qi: 5e10, wood: 1e9, stone: 8e8, ore: 8e8, arrayCore: 5e4, chaosQi: 100, primordialFruit: 20 },
+    costGrowth: 1,
+    unlock: {},
+    requiresBuilding: 'starArray',
+    requiresTech: 'towerArt',
+    requiresRealm: 7,
+    max: 1,
+    sectDefense: 1.3,
+  },
+];
+
+STRUCTURES.push(...SECT_FORMATIONS);
 
 export const BUILDABLES: BuildableDef[] = [...GENERATORS, ...STRUCTURES];
 

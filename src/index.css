@@ -2575,6 +2575,209 @@ a {
 .encounter-option__need { font-size: 11px; color: var(--muted); }
 .encounter-option__why { font-size: 11px; color: #a8471f; }
 
+/* 进攻类事件：红边框 + 后果预告（需求 1） */
+.encounter--attack {
+  border-color: rgba(180, 70, 40, 0.6);
+  background: rgba(180, 70, 40, 0.09);
+}
+
+.encounter__timer {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.encounter--attack .encounter__timer {
+  border-color: rgba(180, 70, 40, 0.5);
+  color: #943d1c;
+}
+
+.encounter__warning {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 8px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 70, 40, 0.45);
+  background: rgba(180, 70, 40, 0.08);
+  font-size: 12px;
+  color: #943d1c;
+}
+
+/* ------------------------------------------------------------------ */
+/* 合成 · 精炼（需求 4）                                                */
+/* ------------------------------------------------------------------ */
+
+.refine-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.refine {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.refine--gated {
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+.refine__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.refine__icon { font-size: 18px; }
+.refine__name { font-weight: 600; }
+.refine__desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.refine__flow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 7px 0 3px;
+  font-size: 13px;
+}
+
+.refine__in { color: var(--muted); }
+.refine__arrow { color: var(--accent, #7a603c); }
+.refine__out { font-weight: 600; color: #26663f; }
+
+.refine__down {
+  font-size: 12px;
+  color: #7a603c;
+  margin-bottom: 6px;
+}
+
+.refine__max {
+  align-self: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* 感悟（需求 3）                                                       */
+/* ------------------------------------------------------------------ */
+
+.enlighten-jump {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid rgba(120, 90, 170, 0.4);
+  border-radius: var(--radius);
+  background: rgba(120, 90, 170, 0.07);
+}
+
+.enlighten-jump__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.enlighten-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.enlighten {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.enlighten--locked {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.enlighten__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.enlighten__icon { font-size: 18px; }
+.enlighten__title { flex: 1; }
+
+.enlighten__name {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.enlighten__group {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 400;
+  border: 1px solid rgba(120, 90, 170, 0.45);
+  color: #6b4f9e;
+}
+
+.enlighten__desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.enlighten__level {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 九个大阶段的进度点 */
+.enlighten-stages {
+  display: flex;
+  gap: 3px;
+  margin: 7px 0 4px;
+}
+
+.enlighten-stage {
+  flex: 1;
+  text-align: center;
+  padding: 1px 0;
+  border-radius: 5px;
+  font-size: 10px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.enlighten-stage--done {
+  border-color: rgba(120, 90, 170, 0.6);
+  background: rgba(120, 90, 170, 0.28);
+  color: #4d3676;
+}
+
+.enlighten-stage--now {
+  border-color: rgba(196, 150, 60, 0.7);
+  background: rgba(196, 150, 60, 0.18);
+  color: #8a6a1f;
+  font-weight: 600;
+}
+
+.enlighten__gain {
+  font-size: 12px;
+  color: #6b4f9e;
+  margin-bottom: 6px;
+}
+
 
 
 

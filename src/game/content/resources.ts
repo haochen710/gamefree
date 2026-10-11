@@ -80,7 +80,11 @@ export type MaterialId =
   | 'netherFlame'
   | 'immortalJade'
   | 'chaosQi'
-  | 'primordialFruit';
+  | 'primordialFruit'
+  /* 进阶资源（需求 4：由基础资源合成而来，不能种、也不从秘境掉） */
+  | 'spiritEssence'
+  | 'refinedGold'
+  | 'arrayCore';
 
 /**
  * 基础材料：低品阶丹药器物的常备主料。
@@ -111,9 +115,31 @@ export const RARE_MATERIAL_IDS: MaterialId[] = [
   'primordialFruit',
 ];
 
-export const MATERIAL_IDS: MaterialId[] = [...BASE_MATERIAL_IDS, ...RARE_MATERIAL_IDS];
+/**
+ * 进阶资源（需求 4）。
+ *
+ * 需求原文：
+ *   「增加进阶资源，可有基础资源合成获取，当前只有灵石合成，过于单调，
+ *     进阶资源可用于商行交易或者炼丹炼器，这块需要你重新设计一下」
+ *
+ * 设计成**三种、各自对应一条下游**，而不是堆一堆中间产物：
+ *   - 灵液 spiritEssence —— 灵气 + 灵草 → 炼丹（高品丹方的必需辅料）
+ *   - 精金 refinedGold   —— 灵矿 + 灵石 → 炼器（高阶器物的主料）
+ *   - 阵枢 arrayCore     —— 灵木 + 灵石 → 阵法/宗门建筑（宗门大阵的必需件）
+ *
+ * 三条线各有明确出口，玩家一看就知道"缺哪个该去合成哪个"。
+ * 它们**不能种、也不会从秘境掉落** —— 只能合成，
+ * 这样"合成"才是一门真手艺，而不是又一条能靠挂机绕过去的路。
+ */
+export const REFINED_MATERIAL_IDS: MaterialId[] = ['spiritEssence', 'refinedGold', 'arrayCore'];
 
-export type MaterialCategory = 'base' | 'rare';
+export const MATERIAL_IDS: MaterialId[] = [
+  ...BASE_MATERIAL_IDS,
+  ...RARE_MATERIAL_IDS,
+  ...REFINED_MATERIAL_IDS,
+];
+
+export type MaterialCategory = 'base' | 'rare' | 'refined';
 
 export interface MaterialDef {
   id: MaterialId;
@@ -247,6 +273,35 @@ export const MATERIALS: MaterialDef[] = [
     category: 'rare',
     plantable: true,
     desc: '鸿蒙初开时结下的道果，一枚可抵千年苦修。',
+  },
+
+  /* ---------------- 进阶资源（需求 4：只能合成） ---------------- */
+  {
+    id: 'spiritEssence',
+    name: '灵液',
+    icon: '💧',
+    rarity: 3,
+    category: 'refined',
+    plantable: false,
+    desc: '灵气与灵草反复煎熬后凝出的液滴。四品以上的丹方几乎都要用它作引。',
+  },
+  {
+    id: 'refinedGold',
+    name: '精金',
+    icon: '🥇',
+    rarity: 4,
+    category: 'refined',
+    plantable: false,
+    desc: '灵矿与灵石同炉百炼，去尽杂质剩下的那一分。五品以上的器物非它不成。',
+  },
+  {
+    id: 'arrayCore',
+    name: '阵枢',
+    icon: '🔯',
+    rarity: 4,
+    category: 'refined',
+    plantable: false,
+    desc: '灵木为骨、灵石为血，刻满符文的枢纽。所有大型阵法的核心部件。',
   },
 ];
 

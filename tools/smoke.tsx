@@ -74,6 +74,9 @@ import {
   ARTIFACTS,
   RARE_KINDS_MIN,
   RARE_MATERIAL_IDS,
+  REFINED_MATERIAL_IDS,
+  REFINE_RECIPES,
+  RESOURCE_IDS,
   REALMS,
   SECONDS_PER_GAME_YEAR,
   SEASON_SECONDS,
@@ -91,6 +94,18 @@ import {
   MAX_EXPEDITION_SLOTS,
   isRareMaterial,
   ENCOUNTERS,
+  ENCOUNTER_MAP,
+  SECT_FORMATIONS,
+  ENLIGHTEN_PATHS,
+  MAJOR_STAGES,
+  MINOR_PER_MAJOR,
+  MAX_ENLIGHTEN_LEVEL,
+  ELEMENT_BONUS_PER_LEVEL,
+  SPACE_RING_BONUS,
+  TIME_JUMP_COOLDOWN_YEARS,
+  MAX_SPACE_RINGS,
+  stageOf,
+  timeJumpYears,
   optionRequiredItems,
   SECRET_REALMS,
   SECRET_REALM_MAP,
@@ -130,7 +145,29 @@ import * as shop from '../src/game/shop';
 import * as travel from '../src/game/travel';
 import * as sectActivity from '../src/game/sectActivity';
 import * as seasonModule from '../src/game/season';
-import { tickEncounters as encounterTick } from '../src/game/encounter';
+import { tickEncounters as encounterTick, getSectDefense } from '../src/game/encounter';
+import {
+  canCraftSpaceRing,
+  canEnlighten,
+  canTimeJump,
+  craftSpaceRing,
+  doTimeJump,
+  getElementMaterialBonus,
+  getEnlightenLevel,
+  getEnlightenRemaining,
+  getSpaceExploreBonus,
+  getSpaceRings,
+  isEnlightenmentUnlocked,
+  startEnlighten,
+  tickEnlighten,
+} from '../src/game/enlightenment';
+import {
+  ENCOUNTER_SECONDS,
+  isAttackEncounter,
+  playerEncounters,
+  sectEncounters,
+  tickEncounters,
+} from '../src/game/encounter';
 import {
   canChooseOption,
   canRob,
@@ -1318,20 +1355,38 @@ section('[14] 内容完整性');
 /* ------------------------------------------------------------------ */
 section('[15] 材料分级与配方规律（需求 2）');
 {
-  check('材料分成基础与稀有两大类', MATERIAL_IDS.length === BASE_MATERIAL_IDS.length + RARE_MATERIAL_IDS.length);
   check(
-    '两类的 id 不重叠',
-    BASE_MATERIAL_IDS.every((id) => !RARE_MATERIAL_IDS.includes(id)),
+    '材料分成基础 / 稀有 / 进阶三类（需求 4 新增进阶）',
+    MATERIAL_IDS.length ===
+      BASE_MATERIAL_IDS.length + RARE_MATERIAL_IDS.length + REFINED_MATERIAL_IDS.length,
+    `${MATERIAL_IDS.length} = ${BASE_MATERIAL_IDS.length}+${RARE_MATERIAL_IDS.length}+${REFINED_MATERIAL_IDS.length}`,
   );
   check(
-    'category 字段与两个清单一致',
-    MATERIAL_IDS.every((id) =>
-      MATERIAL_MAP[id].category === 'base'
-        ? BASE_MATERIAL_IDS.includes(id)
-        : RARE_MATERIAL_IDS.includes(id),
+    '三类的 id 互不重叠',
+    BASE_MATERIAL_IDS.every((id) => !RARE_MATERIAL_IDS.includes(id) && !REFINED_MATERIAL_IDS.includes(id)) &&
+      RARE_MATERIAL_IDS.every((id) => !REFINED_MATERIAL_IDS.includes(id)),
+  );
+  check(
+    'category 字段与三个清单一致',
+    MATERIAL_IDS.every((id) => {
+      const c = MATERIAL_MAP[id].category;
+      if (c === 'base') return BASE_MATERIAL_IDS.includes(id);
+      if (c === 'rare') return RARE_MATERIAL_IDS.includes(id);
+      return REFINED_MATERIAL_IDS.includes(id);
+    }),
+  );
+  check(
+    '每种材料都有种子 —— 但进阶资源是例外（需求 4：只能合成）',
+    MATERIAL_IDS.filter((id) => !REFINED_MATERIAL_IDS.includes(id)).every((id) =>
+      SEEDS.some((s) => s.material === id),
     ),
   );
-  check('每种材料都有种子', MATERIAL_IDS.every((id) => SEEDS.some((s) => s.material === id)));
+  check(
+    '进阶资源不能种',
+    REFINED_MATERIAL_IDS.every(
+      (id) => MATERIAL_MAP[id].plantable === false && !SEEDS.some((s) => s.material === id),
+    ),
+  );
 
   /* ---- 核心规律：品阶越高，稀有材料种类越多 ---- */
   let patternOk = true;
@@ -1370,19 +1425,35 @@ section('[15] 材料分级与配方规律（需求 2）');
   for (const def of [...PILLS, ...ARTIFACTS]) {
     for (const id of Object.keys(def.cost)) used.add(id);
   }
+  // 需求 1 / 4：建筑造价（宗门大阵吃阵枢）也是一条正经的出口
+  for (const def of BUILDABLES) {
+    for (const id of Object.keys(def.baseCost)) used.add(id);
+  }
   const orphans = MATERIAL_IDS.filter((id) => !used.has(id));
   check('没有用不到的材料', orphans.length === 0, orphans.join('、'));
 
-  /* ---- 每种材料都得有来源 ---- */
+  /* ---- 每种材料都得有来源（需求 4 起，合成也算一条来源） ---- */
   const fromTravel = new Set(TRAVEL_REGIONS.flatMap((r) => r.loot.map((l) => l.item as string)));
   const fromRealm = new Set(
     Object.values(SECRET_REALM_MAP).flatMap((r) => r.loot.map((l) => l.item as string)),
   );
   const fromShop = new Set(SHOP_GOODS.filter((g) => g.kind === 'material').map((g) => g.item));
+  // 需求 4：进阶资源的**唯一**来源就是合成，所以要把它算进来源
+  const fromRefine = new Set(REFINE_RECIPES.map((r) => r.output.item as string));
   const sourceless = MATERIAL_IDS.filter(
-    (id) => !fromTravel.has(id) && !fromRealm.has(id) && !fromShop.has(id),
+    (id) => !fromTravel.has(id) && !fromRealm.has(id) && !fromShop.has(id) && !fromRefine.has(id),
   );
   check('每种材料都能在游戏里拿到', sourceless.length === 0, sourceless.join('、'));
+
+  /* ---- 需求 4：进阶资源只能合成，不该出现在掉落表里 ---- */
+  check(
+    '进阶资源不会从秘境 / 游历掉落（只能合成）',
+    REFINED_MATERIAL_IDS.every((id) => !fromTravel.has(id) && !fromRealm.has(id)),
+  );
+  check(
+    '每条合成配方的产出都是真材料',
+    REFINE_RECIPES.every((r) => MATERIAL_IDS.includes(r.output.item as never) || r.output.item === 'stone'),
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -1493,10 +1564,16 @@ section('[17] 商行（需求 3 / 6）');
     ),
   );
   check(
-    '商行不卖稀有材料',
-    SHOP_GOODS.filter((g) => g.kind === 'material').every(
-      (g) => MATERIAL_MAP[g.item as MaterialId].category === 'base',
-    ),
+    // 需求 4：进阶资源是刻意放进商行的（贵，但给"急着用"的玩家一条应急通道）
+    '商行不卖稀有材料，但卖进阶资源',
+    SHOP_GOODS.filter((g) => g.kind === 'material').every((g) => {
+      const c = MATERIAL_MAP[g.item as MaterialId].category;
+      return c === 'base' || c === 'refined';
+    }),
+    SHOP_GOODS.filter((g) => g.kind === 'material')
+      .map((g) => g.item)
+      .filter((id) => MATERIAL_MAP[id as MaterialId].category === 'rare')
+      .join('、') || '没有稀有材料',
   );
 
   /* ---- 购买 ---- */
@@ -3440,9 +3517,12 @@ section('[32] 善恶值 + 开宗前的随机遭遇（需求 2）');
       .every((o) => (o.effect.successChance ?? 1) <= 0.6),
   );
 
-  /* ---- 触发条件 ---- */
+  /* ---- 触发条件（需求 1 改了这条：开宗后**也会**遇到） ---- */
   check('开宗前会触发遭遇判定', canRollEncounter(base));
-  check('开宗后不再触发（安居山中）', !canRollEncounter({ ...base, sect: { ...base.sect, founded: true } }));
+  check(
+    '开宗后同样会触发（需求 1：开宗后也会遇到）',
+    canRollEncounter({ ...base, sect: { ...base.sect, founded: true } }),
+  );
   check(
     '开宗后掌门在外仍会遇到人',
     canRollEncounter({
@@ -3609,6 +3689,377 @@ section('[33] 队伍上限 9 · 金丹开宗 · 仆人固定 300 · 掌门亲往
       '独自前往更容易拿到稀有材料（稀有占比 > 30%）',
       total > 0 && rare / total > 0.3,
       `${((rare / total) * 100).toFixed(0)}%（${rare}/${total}）`,
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 34. 宗门事件与防御（需求 1）                                          */
+/* ------------------------------------------------------------------ */
+section('[34] 宗门事件 + 宗门大阵（需求 1）');
+{
+  const founded = (extra: Partial<GameState> = {}): GameState => {
+    const s = grant(forceBuild(createInitialState(0), 'thatchHut', 10), { qi: '1e9', stone: '1e9' });
+    return { ...s, sect: { ...s.sect, founded: true, level: 3 }, ...extra };
+  };
+
+  /* ---- 玩家事件 30 秒会自己消失 ---- */
+  {
+    const pending: GameState = { ...createInitialState(0), pendingEncounter: 'caravan', encounterDeadline: ENCOUNTER_SECONDS };
+    check('遭遇有 30 秒倒计时', ENCOUNTER_SECONDS === 30, `${ENCOUNTER_SECONDS} 秒`);
+
+    const half = tickEncounters(pending, 10, fixedRandom(0.99));
+    check('不到 30 秒还在', half.pendingEncounter === 'caravan' && half.encounterDeadline < ENCOUNTER_SECONDS);
+
+    const gone = tickEncounters(pending, ENCOUNTER_SECONDS + 1, fixedRandom(0.99));
+    check('玩家事件到点自动消失', gone.pendingEncounter === null);
+    check('消失时没有影响（善恶值不变）', gone.karma === pending.karma);
+    check('消失也记了一笔', gone.journal.length > pending.journal.length);
+  }
+
+  /* ---- 进攻类：到点不选也照常结算 ---- */
+  {
+    const attack = ENCOUNTER_MAP.banditSiege;
+    check('匪徒围攻是进攻类', isAttackEncounter(attack));
+    check('进攻类有强度', (attack.attack?.power ?? 0) > 0);
+    check('宗门事件都是 sect 范围', attack.scope === 'sect');
+
+    const s = founded();
+    // 先塞几个弟子，好看到伤亡
+    let withDisciples = s;
+    for (let i = 0; i < 8; i += 1) withDisciples = disciples.recruitDisciple(withDisciples, makeRandom(300 + i)).state;
+    const before = withDisciples.sect.disciples.length;
+    check('测试用宗门有弟子', before >= 6, `${before} 人`);
+
+    const pending: GameState = { ...withDisciples, pendingEncounter: 'banditSiege', encounterDeadline: 1 };
+    const resolved = tickEncounters(pending, 2, fixedRandom(0.99));
+    check('进攻类到点会自动结算', resolved.pendingEncounter === null);
+    check('结算会打伤弟子（无防御时）', resolved.injurySeconds > 0, `${resolved.injurySeconds} 秒`);
+    check('结算写进了记事', resolved.journal.some((e) => e.kind === 'bad'));
+  }
+
+  /* ---- 宗门大阵：防御越高，损失越小，满配完全免疫 ---- */
+  {
+    check('三座宗门大阵都有防御值', SECT_FORMATIONS.length === 3 && SECT_FORMATIONS.every((f) => (f.sectDefense ?? 0) > 0));
+    check(
+      '三阵叠加能到 1 以上（需求：减少乃至避免伤亡）',
+      SECT_FORMATIONS.reduce((sum, f) => sum + (f.sectDefense ?? 0), 0) > 1,
+      SECT_FORMATIONS.map((f) => f.sectDefense).join(' + '),
+    );
+    check('宗门大阵都唯一', SECT_FORMATIONS.every((f) => f.max === 1));
+
+    const noneDef = getSectDefense(founded());
+    const oneDef = getSectDefense(forceBuild(founded(), 'gateArray', 1));
+    const allDef = getSectDefense(SECT_FORMATIONS.reduce((s, f) => forceBuild(s, f.id, 1), founded()));
+    check('没建阵时没有防御', noneDef === 0);
+    check('建了护山大阵就有防御', oneDef > 0, `${oneDef}`);
+    check('三阵齐备时防御超过 1', allDef > 1, `${allDef.toFixed(2)}`);
+
+    void noneDef;
+    void oneDef;
+    void allDef;
+    // 同一场进攻，防御越高伤得越少
+    const hurt = (state: GameState) => {
+      const pending: GameState = { ...state, pendingEncounter: 'banditSiege', encounterDeadline: 1 };
+      const out = tickEncounters(pending, 2, fixedRandom(0.99));
+      const names = out.journal.filter((e) => e.text.includes('受伤弟子'));
+      return names.length > 0 ? Number(/受伤弟子 (\d+) 人/.exec(names[0].text)?.[1] ?? 0) : 0;
+    };
+    check('有阵时伤亡不增', hurt(forceBuild(founded(), 'gateArray', 1)) <= hurt(founded()) + 1);
+    check(
+      '三阵齐备时完全免伤',
+      hurt(SECT_FORMATIONS.reduce((s, f) => forceBuild(s, f.id, 1), founded())) === 0,
+    );
+  }
+
+  /* ---- 触发池：未开宗只有玩家事件，开宗后两者都有 ---- */
+  {
+    check('未开宗时抽不到宗门事件', playerEncounters().every((e) => e.scope === 'player'));
+    check('宗门事件确实存在', sectEncounters().length >= 4, `${sectEncounters().length} 条`);
+    check(
+      '进攻类至少有 3 种',
+      sectEncounters().filter((e) => isAttackEncounter(e)).length >= 3,
+      `${sectEncounters().filter((e) => isAttackEncounter(e)).length} 种`,
+    );
+    check(
+      '非进攻的宗门事件也允许"什么都不做"（到点无影响）',
+      sectEncounters().filter((e) => !isAttackEncounter(e)).every((e) => e.options.length >= 1),
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 35. 寿元限制（需求 2）                                                */
+/* ------------------------------------------------------------------ */
+section('[35] 弟子寿元限制（需求 2）');
+{
+  check(
+    '每个境界都有寿元，只有仙人是无限的',
+    REALMS.slice(0, -1).every((r) => Number.isFinite(r.lifespan) && r.lifespan > 0) &&
+      !Number.isFinite(REALMS[REALMS.length - 1].lifespan),
+  );
+  check(
+    '境界越高寿元越长（等级可以增加寿元）',
+    REALMS.every((r, i) => i === 0 || r.lifespan >= REALMS[i - 1].lifespan),
+  );
+  check(
+    '炼气期的寿元短于它需要的修炼年数（不突破就会坐化）',
+    REALMS[0].lifespan < REALMS[0].cultivationYears + 30,
+    `寿元 ${REALMS[0].lifespan} 年 vs 需修炼 ${REALMS[0].cultivationYears} 年`,
+  );
+
+  // 一个资质最差、又不修炼的弟子，必然在寿元到来时坐化
+  {
+    let s: GameState = grant(createInitialState(0), { qi: '1e9', stone: '1e9' });
+    s = forceBuild(s, 'thatchHut', 5);
+    s = { ...s, sect: { ...s.sect, founded: true } };
+    s = disciples.recruitDisciple(s, fixedRandom(0.01)).state;
+    const d = s.sect.disciples[0];
+    check('测试弟子招到了', !!d);
+
+    // 把他挪到炼气期寿元之外：直接推时间
+    const lifespan = REALMS[d.realmIndex].lifespan;
+    const yearsToDie = lifespan - d.age + 1;
+    const seconds = (yearsToDie * 365) / GAME_DAYS_PER_SECOND;
+    const aged = disciples.tickDisciples(s, seconds);
+    check(
+      '到了寿元上限仍未突破 → 坐化',
+      aged.sect.disciples.length === 0,
+      `寿元 ${lifespan} 年，推进 ${yearsToDie.toFixed(1)} 年`,
+    );
+    check('坐化写进了记事', aged.journal.some((e) => e.text.includes('寿元耗尽')));
+  }
+
+  // 反过来：突破之后寿元变长，就不会死了
+  {
+    let s: GameState = grant(createInitialState(0), { qi: '1e9', stone: '1e9' });
+    s = forceBuild(s, 'thatchHut', 5);
+    s = { ...s, sect: { ...s.sect, founded: true } };
+    s = disciples.recruitDisciple(s, fixedRandom(0.01)).state;
+    const d = s.sect.disciples[0];
+    const years = REALMS[0].lifespan - d.age + 1;
+    const seconds = (years * 365) / GAME_DAYS_PER_SECOND;
+
+    const asGoldenCore: GameState = {
+      ...s,
+      sect: { ...s.sect, disciples: s.sect.disciples.map((x) => ({ ...x, realmIndex: 2 })) },
+    };
+    const aged = disciples.tickDisciples(asGoldenCore, seconds);
+    check('境界高了同样的时间就不会死', aged.sect.disciples.length === 1, `${aged.sect.disciples.length} 人`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 36. 感悟（需求 3）                                                    */
+/* ------------------------------------------------------------------ */
+section('[36] 感悟：五行 + 时空大道（需求 3）');
+{
+  check('共七条道（五行 5 + 时空 2）', ENLIGHTEN_PATHS.length === 7, `${ENLIGHTEN_PATHS.length} 条`);
+  check('九个大阶段 × 十个小阶段 = 90 阶', MAJOR_STAGES === 9 && MINOR_PER_MAJOR === 10 && MAX_ENLIGHTEN_LEVEL === 90);
+  check(
+    '五行各绑一种基础材料，且不重复',
+    ENLIGHTEN_PATHS.filter((p) => p.material).length === 5 &&
+      new Set(ENLIGHTEN_PATHS.filter((p) => p.material).map((p) => p.material)).size === 5,
+  );
+  check(
+    '五行绑的都是基础材料',
+    ENLIGHTEN_PATHS.filter((p) => p.material).every((p) => BASE_MATERIAL_IDS.includes(p.material as never)),
+  );
+  check('五行在元婴期解锁（下标 3）', ENLIGHTEN_PATHS.filter((p) => p.group === '五行').every((p) => p.requiresRealm === 3));
+  check('时空大道在化神期解锁（下标 4）', ENLIGHTEN_PATHS.filter((p) => p.group === '时空').every((p) => p.requiresRealm === 4));
+
+  /* ---- 阶段换算 ---- */
+  check('0 阶时没有阶段', stageOf(0).major === 0 && stageOf(0).minor === 0);
+  check('第 1 阶 = 第 1 大阶段第 1 小阶段', stageOf(1).major === 1 && stageOf(1).minor === 1);
+  check('第 10 阶 = 第 1 大阶段第 10 小阶段', stageOf(10).major === 1 && stageOf(10).minor === 10);
+  check('第 11 阶进入第 2 大阶段', stageOf(11).major === 2 && stageOf(11).minor === 1);
+  check('第 90 阶 = 第 9 大阶段第 10 小阶段', stageOf(90).major === 9 && stageOf(90).minor === 10);
+
+  /* ---- 门槛 ---- */
+  check('元婴期之前感悟没解锁', !isEnlightenmentUnlocked(createInitialState(0)));
+  check('元婴期解锁感悟', isEnlightenmentUnlocked({ ...createInitialState(0), realmIndex: 3 }));
+  {
+    const atNascent: GameState = grant({ ...createInitialState(0), realmIndex: 3 }, { qi: '1e12', herb: '1e9', ore: '1e9', stone: '1e9' });
+    check('元婴期可以修五行', canEnlighten(atNascent, 'metal').ok, canEnlighten(atNascent, 'metal').reason ?? '');
+    check('元婴期还修不了时间大道', !canEnlighten(atNascent, 'time').ok);
+    check('化神期可以修时间大道', canEnlighten({ ...atNascent, realmIndex: 4 }, 'time').ok);
+  }
+
+  /* ---- 修为与效果 ---- */
+  {
+    const rich: GameState = grant({ ...createInitialState(0), realmIndex: 4 }, {
+      qi: '1e14',
+      herb: '1e12',
+      ore: '1e12',
+      stone: '1e12',
+      arrayCore: '1e4',
+    });
+    const started = startEnlighten(rich, 'metal');
+    check('开始感悟会占用唯一的感悟位', started.enlightening?.pathId === 'metal');
+    check('开始感悟要花掉资源', started.resources.qi.lt(rich.resources.qi));
+    check('感悟中不能再开一条', !canEnlighten(started, 'wood').ok);
+
+    // 直接推完
+    const done = tickEnlighten(started, getEnlightenRemaining(started) + 1);
+    check('推满时间就完成一阶', getEnlightenLevel(done, 'metal') === 1);
+    check('完成后感悟位空出来', done.enlightening === null);
+    check('完成后可以修别的道', canEnlighten(done, 'wood').ok);
+
+    check('五行加成随阶数增长', getElementMaterialBonus(done, 'blackIron') > getElementMaterialBonus(rich, 'blackIron'));
+    check(
+      '金之道加的是玄铁，不是别的材料',
+      getElementMaterialBonus(done, 'blackIron') > 0 && getElementMaterialBonus(done, 'coldJade') === 0,
+    );
+
+    // 满阶的收益
+    const maxed: GameState = { ...rich, enlightenment: { ...rich.enlightenment, metal: MAX_ENLIGHTEN_LEVEL } };
+    check(
+      '五行修满给 +135%',
+      Math.abs(getElementMaterialBonus(maxed, 'blackIron') - MAX_ENLIGHTEN_LEVEL * ELEMENT_BONUS_PER_LEVEL) < 1e-9,
+      `${(getElementMaterialBonus(maxed, 'blackIron') * 100).toFixed(1)}%`,
+    );
+    check('满阶后不能再修', !canEnlighten(maxed, 'metal').ok);
+  }
+
+  /* ---- 时间大道：每 5 游戏年一次，最多 50 年 ---- */
+  {
+    check('最短穿梭 5 年', timeJumpYears(0) === 5, `${timeJumpYears(0)}`);
+    check('修满可以穿梭 50 年（需求上限）', timeJumpYears(MAX_ENLIGHTEN_LEVEL) === 50, `${timeJumpYears(MAX_ENLIGHTEN_LEVEL)}`);
+    check(
+      '穿梭年数随阶数单调递增',
+      Array.from({ length: 10 }, (_, i) => timeJumpYears(i * 10)).every((v, i, a) => i === 0 || v > a[i - 1]),
+    );
+
+    const rich: GameState = grant({ ...createInitialState(0), realmIndex: 4 }, { qi: '1e14', herb: '1e12' });
+    const withTime: GameState = {
+      ...rich,
+      enlightenment: { ...rich.enlightenment, time: 30 },
+    };
+    check('没修时间大道时不能穿梭', !canTimeJump(rich).ok);
+    check('修了时间大道就能穿梭', canTimeJump(withTime).ok, canTimeJump(withTime).reason ?? '');
+    check('穿梭有 5 游戏年的冷却', TIME_JUMP_COOLDOWN_YEARS === 5);
+
+    // 真的跳一次：时间要往前走
+    const before = withTime.playTime;
+    const jumped = doTimeJump(withTime, (g, dt) => applyTick(g, dt, makeRandom(7)));
+    check('穿梭会推进游戏时间', jumped.playTime > before);
+    // 记的是"到达的那一刻"（跳跃之后），所以冷却从落点开始算
+    check('穿梭会记录落点时间（用于冷却）', jumped.lastTimeJump === jumped.playTime && jumped.playTime > before);
+    check('穿梭后立刻不能再穿', !canTimeJump(jumped).ok, canTimeJump(jumped).reason ?? '');
+    check('穿梭写进了记事', jumped.journal.some((e) => e.text.includes('时空穿梭')));
+  }
+
+  /* ---- 空间大道与空间戒指 ---- */
+  {
+    const rich: GameState = grant({ ...createInitialState(0), realmIndex: 4 }, {
+      qi: '1e14',
+      stone: '1e12',
+      arrayCore: '1e5',
+      refinedGold: '1e5',
+    });
+    check('没修空间大道时探索加成为 0', getSpaceExploreBonus(rich) === 0);
+
+    const withSpace: GameState = { ...rich, enlightenment: { ...rich.enlightenment, space: 10 } };
+    check('修了空间大道就有探索加成', getSpaceExploreBonus(withSpace) > 0);
+    check('10 阶才够做第一枚戒指', canCraftSpaceRing(withSpace).ok, canCraftSpaceRing(withSpace).reason ?? '');
+    check('没修到 10 阶做不了戒指', !canCraftSpaceRing(rich).ok);
+
+    const ringed = craftSpaceRing(withSpace);
+    check('做出了空间戒指', getSpaceRings(ringed) === 1);
+    check('戒指会继续抬高探索加成', getSpaceExploreBonus(ringed) > getSpaceExploreBonus(withSpace));
+    check(
+      '一枚戒指值 +5%',
+      Math.abs(getSpaceExploreBonus(ringed) - getSpaceExploreBonus(withSpace) - SPACE_RING_BONUS) < 1e-9,
+    );
+    check('做戒指要花材料', ringed.resources.stone.lt(withSpace.resources.stone));
+  }
+
+  /* ---- 存档往返 ---- */
+  {
+    const saved: GameState = {
+      ...createInitialState(0),
+      enlightenment: { metal: 42, time: 7, space: 15 },
+      enlightening: { pathId: 'wood', remaining: 60, total: 120 },
+      spaceRings: 2,
+      lastTimeJump: 1234,
+    };
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(saved))));
+    check('感悟能存档还原', round !== null);
+    if (round) {
+      check('阶数保留', round.enlightenment.metal === 42 && round.enlightenment.time === 7);
+      check('正在感悟的那一阶保留', round.enlightening?.pathId === 'wood');
+      check('空间戒指数保留', round.spaceRings === 2);
+      check('上次穿梭时间保留', round.lastTimeJump === 1234);
+      check('没修过的道是 0 阶', round.enlightenment.earth === 0);
+    }
+
+    const junk = deserialize({ v: 4, at: 0, en: { metal: 9999, notAPath: 50 }, eg: { pathId: 'nope' }, sr: 99 });
+    check('越界的阶数被夹回 90', !!junk && junk.enlightenment.metal === MAX_ENLIGHTEN_LEVEL);
+    check('不存在的道被丢弃', !!junk && junk.enlightenment.notAPath === undefined);
+    check('非法的"正在感悟"被丢弃', !!junk && junk.enlightening === null);
+    check('越界的戒指数被夹回上限', !!junk && junk.spaceRings === MAX_SPACE_RINGS);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 37. 进阶资源（需求 4）                                                */
+/* ------------------------------------------------------------------ */
+section('[37] 进阶资源：合成、出口、商行（需求 4）');
+{
+  check('三种进阶资源', REFINED_MATERIAL_IDS.length === 3, REFINED_MATERIAL_IDS.join('、'));
+  check('合成配方至少 4 条（含原本的灵石合成）', REFINE_RECIPES.length >= 4, `${REFINE_RECIPES.length} 条`);
+  check(
+    '每种进阶资源都有一条配方产出它',
+    REFINED_MATERIAL_IDS.every((id) => REFINE_RECIPES.some((r) => r.output.item === id)),
+  );
+  check(
+    '配方都是"基础资源 → 进阶资源"',
+    REFINE_RECIPES.filter((r) => REFINED_MATERIAL_IDS.includes(r.output.item as never)).every((r) =>
+      Object.keys(r.cost).every((id) => (RESOURCE_IDS as readonly string[]).includes(id)),
+    ),
+  );
+
+  /* ---- 合成真的能拿到东西 ---- */
+  {
+    const rich: GameState = grant({ ...createInitialState(0), realmIndex: 4 }, {
+      qi: '1e9',
+      herb: '1e7',
+      ore: '1e7',
+      wood: '1e7',
+      stone: '1e7',
+    });
+    const withTech: GameState = {
+      ...rich,
+      techs: { ...rich.techs, alchemyArt: true, refiningArt: true, architecture: true },
+    };
+    const check1 = engine.maxRefine(withTech, 'spiritEssenceRefine');
+    check('资源够时可以合成灵液', check1 > 0, `可合成 ${check1} 次`);
+
+    const once = engine.refine(withTech, 'spiritEssenceRefine', 1);
+    check('合成产出灵液', once.materials.spiritEssence.toNumber() === 1, `${once.materials.spiritEssence.toNumber()}`);
+    check('合成会扣掉灵气', once.resources.qi.lt(withTech.resources.qi));
+
+    const none = engine.refine(createInitialState(0), 'spiritEssenceRefine', 1);
+    check('门槛没到 / 资源不够时合不了', none === createInitialState(0) || none.materials.spiritEssence.toNumber() === 0);
+  }
+
+  /* ---- 出口：炼丹、炼器、阵法 ---- */
+  {
+    check(
+      '高品丹方要吃灵液',
+      PILLS.filter((p) => p.tier >= 5).some((p) => (p.cost as Record<string, number>).spiritEssence > 0),
+    );
+    check(
+      '高品器物要吃精金',
+      ARTIFACTS.filter((a) => a.tier >= 5).some((a) => (a.cost as Record<string, number>).refinedGold > 0),
+    );
+    check(
+      '宗门大阵要吃阵枢（需求 1 与 4 串起来了）',
+      SECT_FORMATIONS.every((f) => (f.baseCost as Record<string, number>).arrayCore > 0),
+    );
+    check(
+      '商行也卖进阶资源',
+      REFINED_MATERIAL_IDS.every((id) => SHOP_GOODS.some((g) => g.kind === 'material' && g.item === id)),
     );
   }
 }

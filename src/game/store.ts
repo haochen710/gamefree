@@ -10,7 +10,16 @@
  */
 import { create } from 'zustand';
 import { fmt, fmtDuration } from './decimal';
-import { AUTO_REFINE_LEVEL_MAX, BUILDABLE_MAP, SERVANT_JOB_MAP, type MaterialId, type ServantJobId } from './content';
+import {
+  AUTO_REFINE_LEVEL_MAX,
+  BUILDABLE_MAP,
+  ITEM_MAP,
+  REFINE_RECIPE_MAP,
+  SERVANT_JOB_MAP,
+  type ItemId,
+  type MaterialId,
+  type ServantJobId,
+} from './content';
 import * as engine from './engine';
 import * as disciples from './disciples';
 import * as expeditions from './expeditions';
@@ -20,6 +29,9 @@ import * as planting from './planting';
 import * as shop from './shop';
 import * as travel from './travel';
 import * as encounter from './encounter';
+import * as enlightenment from './enlightenment';
+import * as tick from './tick';
+import { gameRandom } from './random';
 import * as sectActivity from './sectActivity';
 import { applyTick } from './tick';
 import { createAscendedState, createInitialState, type GameState } from './state';
@@ -99,6 +111,15 @@ export interface GameStore {
   startSoloRealm(realmId: string): void;
   /** 选择随机遭遇里的某个选项（需求 2） */
   chooseEncounter(optionIndex: number): void;
+  /** 合成 / 精炼（需求 4） */
+  refine(recipeId: string, times: number): void;
+  /* ---- 感悟（需求 3） ---- */
+  enlighten(pathId: string): void;
+  cancelEnlighten(): void;
+  /** 制作空间戒指（需求 3） */
+  craftSpaceRing(): void;
+  /** 时空穿梭（需求 3） */
+  timeJump(): void;
   /** 普通探索（需求 1）：小区域还没发现秘境时只能这么做 */
   startSurvey(regionId: string, ids: string[]): void;
 
@@ -510,7 +531,62 @@ export const useGame = create<GameStore>()((set, get) => ({
 
   /* ------------------------------------------------------------ 秘境 */
 
-  /** 随机遭遇里选一个（需求 2） */
+  /** 合成 / 精炼（需求 4） */
+  refine: (recipeId, times) => {
+    set((s) => {
+      const recipe = REFINE_RECIPE_MAP[recipeId];
+      if (!recipe) return {};
+      const next = engine.refine(s.game, recipeId, times);
+      if (next === s.game) return { notice: '材料不足，或还没到能合成的境界' };
+      const out = ITEM_MAP[recipe.output.item as ItemId];
+      return {
+        ...nextGame(s.game, next),
+        notice: `合成完成：${out?.icon ?? ''}${out?.name ?? recipe.output.item} ×${recipe.output.amount * times}`,
+      };
+    });
+  },
+
+  /* ---- 感悟（需求 3） ---- */
+
+  enlighten: (pathId) => {
+    set((s) => {
+      const check = enlightenment.canEnlighten(s.game, pathId);
+      if (!check.ok) return { notice: check.reason ?? '无法感悟' };
+      return { ...nextGame(s.game, enlightenment.startEnlighten(s.game, pathId)), notice: '开始感悟' };
+    });
+  },
+
+  cancelEnlighten: () => {
+    set((s) => {
+      const next = enlightenment.cancelEnlighten(s.game);
+      return next === s.game ? {} : { ...nextGame(s.game, next), notice: '感悟已中断（投入的资源不退）' };
+    });
+  },
+
+  craftSpaceRing: () => {
+    set((s) => {
+      const check = enlightenment.canCraftSpaceRing(s.game);
+      if (!check.ok) return { notice: check.reason ?? '无法制作' };
+      return { ...nextGame(s.game, enlightenment.craftSpaceRing(s.game)), notice: '空间戒指已成' };
+    });
+  },
+
+  /**
+   * 时空穿梭（需求 3）。
+   *
+   * 结算就是把一大段时间交给 `applyTick` —— 所以产出、钻研、灵植、
+   * 弟子的修炼与寿元、秘境冷却全都会按"这些时间真的过了一遍"来算。
+   */
+  timeJump: () => {
+    set((s) => {
+      const check = enlightenment.canTimeJump(s.game);
+      if (!check.ok) return { notice: check.reason ?? '还不能穿梭' };
+      const years = enlightenment.getTimeJumpYears(s.game);
+      const next = enlightenment.doTimeJump(s.game, (g, dt) => tick.applyTick(g, dt, gameRandom));
+      return { ...nextGame(s.game, next), notice: `时空穿梭 ${years} 年` };
+    });
+  },
+
   chooseEncounter: (optionIndex) => {
     set((s) => {
       const result = encounter.chooseEncounterOption(s.game, optionIndex);

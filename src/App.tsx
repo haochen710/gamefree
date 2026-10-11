@@ -11,6 +11,8 @@ import ActionPanel from './components/ActionPanel';
 import ServantPanel from './components/ServantPanel';
 import BuildingsPanel from './components/BuildingsPanel';
 import BuildQueuePanel from './components/BuildQueuePanel';
+import RefinePanel from './components/RefinePanel';
+import EnlightenmentPanel from './components/EnlightenmentPanel';
 import ResearchPanel from './components/ResearchPanel';
 import RealmPanel from './components/RealmPanel';
 import SeasonPanel, { SeasonStrip } from './components/SeasonPanel';
@@ -85,6 +87,8 @@ function CultivationTab() {
         {/* 需求 2：开宗前的随机遭遇与善恶值，放在修行页最上面 */}
         <EncounterPanel />
         <RealmPanel />
+        {/* 需求 3：元婴期后解锁的感悟 */}
+        <EnlightenmentPanel />
         <SeasonPanel />
         <StonePanel />
         <AscendPanel />
@@ -101,6 +105,7 @@ function CaveTab() {
       </div>
       <div className="layout__right">
         <BuildQueuePanel />
+        <RefinePanel />
         <ResearchPanel />
         <SavePanel />
       </div>

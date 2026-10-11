@@ -53,6 +53,7 @@ import {
 import { pushJournal } from './disciples';
 import { getEnvironmentMaterialBonus } from './season';
 import { getKarmaExploreBonus } from './encounter';
+import { getElementMaterialBonus, getSpaceExploreBonus } from './enlightenment';
 import { addSeeds } from './planting';
 import { gameRandom, weightedDraw, type RandomSource } from './random';
 import type { GameState, PersonalTravel } from './state';
@@ -216,9 +217,11 @@ export function resolveSoloRealm(
   const gains: TravelGain[] = [];
   for (const entry of picked) {
     // 季节对基础材料仍然生效
-    const seasonal = isBasicMaterial(entry.item) ? 1 + getEnvironmentMaterialBonus(working, entry.item) : 1;
+    const seasonal = isBasicMaterial(entry.item)
+      ? (1 + getEnvironmentMaterialBonus(working, entry.item)) * (1 + getElementMaterialBonus(working, entry.item))
+      : 1;
     const variance = YIELD_VARIANCE_MIN + random() * (YIELD_VARIANCE_MAX - YIELD_VARIANCE_MIN);
-    const amount = Math.max(1, Math.floor(entry.amount * Math.max(0, seasonal) * variance * (1 + getKarmaExploreBonus(working))));
+    const amount = Math.max(1, Math.floor(entry.amount * Math.max(0, seasonal) * variance * (1 + getKarmaExploreBonus(working) + getSpaceExploreBonus(working))));
     working = addItem(working, entry.item, D(amount));
     const existing = gains.find((g) => g.id === entry.item);
     if (existing) existing.amount += amount;
@@ -324,7 +327,9 @@ export function resolveTravel(
   for (const entry of picked) {
     const variance = YIELD_VARIANCE_MIN + random() * (YIELD_VARIANCE_MAX - YIELD_VARIANCE_MIN);
     // 季节与天象对基础材料的加成（需求 1）在游历里同样生效
-    const seasonal = isBasicMaterial(entry.item) ? Math.max(0, 1 + getEnvironmentMaterialBonus(state, entry.item)) : 1;
+    const seasonal = isBasicMaterial(entry.item)
+      ? Math.max(0, 1 + getEnvironmentMaterialBonus(state, entry.item)) * (1 + getElementMaterialBonus(state, entry.item))
+      : 1;
     let amount = Math.max(1, Math.floor(entry.amount * variance * seasonal));
     // 出门一趟至少带回 TRAVEL_MIN_STONE 灵石，
     // 保证"第一次出门一定有实在收益"

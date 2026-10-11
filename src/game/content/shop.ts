@@ -79,6 +79,17 @@ export const SHOP_GOODS: ShopGoodDef[] = [
     weight: 6,
   })),
 
+  /*
+   * ---- 进阶资源（需求 4：可用于商行交易） ----
+   *
+   * 商行**卖**它们，但价格定得很贵（合成才是正路）——
+   * 这样"急着用又懒得合成"的玩家有一条应急通道，
+   * 又不会让合成这条线失去意义。稀有度越高、权重越低。
+   */
+  { kind: 'material', item: 'spiritEssence', baseAmount: 3, basePrice: 9000, weight: 4 },
+  { kind: 'material', item: 'refinedGold', baseAmount: 2, basePrice: 26000, weight: 3 },
+  { kind: 'material', item: 'arrayCore', baseAmount: 2, basePrice: 22000, weight: 3 },
+
   /* ---- 基础材料种子 ---- */
   ...SHOP_SEEDS.map((seed) => ({
     kind: 'seed' as const,

@@ -23,6 +23,8 @@ import {
   MATERIAL_IDS,
   MAP_REGIONS,
   QUEUE_UPGRADES,
+  REFINE_RECIPES,
+  ENLIGHTEN_PATHS,
   MATERIAL_MAP,
   PILL_MAP,
   REALMS,
@@ -48,6 +50,8 @@ import * as research from '../src/game/research';
 import * as planting from '../src/game/planting';
 import * as shop from '../src/game/shop';
 import * as encounter from '../src/game/encounter';
+import * as enlightenment from '../src/game/enlightenment';
+import { applyTick as applyTickSim } from '../src/game/tick';
 import * as travel from '../src/game/travel';
 import * as sectActivity from '../src/game/sectActivity';
 import { applyTick } from '../src/game/tick';
@@ -227,6 +231,9 @@ function runSimulation(seed: number): SimResult {
   let seenQueue = false;
   let seenSurvey = false;
   let encountersSeen = 0;
+  const seenRefine = new Set<string>();
+  let seenEnlighten = false;
+  let seenTimeJump = false;
   let seenServant = false;
 
   const milestones: Milestone[] = [];
@@ -743,6 +750,79 @@ function runSimulation(seed: number): SimResult {
       }
     }
 
+    /* ---------------- 3d. 合成进阶资源（需求 4） ----------------
+       什么时候该合？AI 的判断很简单：**只要有盈余就一直合**。
+       三种进阶资源都是中后期的硬通货（炼丹 / 炼器 / 阵法），
+       而它们的原料（灵气、灵草、灵矿、灵木、灵石）在中期本来就会顶到储存上限，
+       与其让产量白白溢出，不如换成进阶资源囤着。 */
+    {
+      for (const recipe of REFINE_RECIPES) {
+        if (recipe.output.item === 'stone') {
+          // 灵石合成走原来的自动合成档位，这里不重复点
+          continue;
+        }
+        if (engine.maxRefine(state, recipe.id) <= 0) continue;
+        const next = engine.refine(state, recipe.id, 1);
+        if (next !== state) {
+          state = next;
+          if (!seenRefine.has(recipe.id)) {
+            seenRefine.add(recipe.id);
+            record(`首次合成${recipe.output.item === 'spiritEssence' ? '灵液' : recipe.output.item === 'refinedGold' ? '精金' : '阵枢'}`);
+          }
+          break;
+        }
+      }
+    }
+
+    /* ---------------- 3e. 感悟（需求 3） ----------------
+       AI 的策略：
+         - 五行优先补"当前最缺的那条"（简单起见按顺序轮转，反正都要修）；
+         - 时间大道修到能开就偶尔穿梭一次（它是"结算"，不改变长期收益，
+           但能让 AI 更快跑到中后期，正好也验证穿梭不会把弟子全熬死）；
+         - 空间大道修满 10 阶就去做戒指。 */
+    if (enlightenment.isEnlightenmentUnlocked(state)) {
+      // 制作空间戒指
+      if (enlightenment.canCraftSpaceRing(state).ok) {
+        const next = enlightenment.craftSpaceRing(state);
+        if (next !== state) {
+          state = next;
+          record(`制成第 ${enlightenment.getSpaceRings(state)} 枚空间戒指`);
+          continue;
+        }
+      }
+      // 时空穿梭：每 5 游戏年一次，能跳就跳
+      if (enlightenment.canTimeJump(state).ok && enlightenment.getEnlightenLevel(state, 'time') > 0) {
+        const years = enlightenment.getTimeJumpYears(state);
+        const next = enlightenment.doTimeJump(state, (g, dt) => applyTickSim(g, dt));
+        if (next !== state) {
+          state = next;
+          if (!seenTimeJump) {
+            seenTimeJump = true;
+            record(`首次时空穿梭（${years} 年）`);
+          }
+          continue;
+        }
+      }
+      // 修感悟：按"阶数最低的那条先修"，保证七条道大致同步推进
+      if (!state.enlightening) {
+        const candidates = ENLIGHTEN_PATHS.filter((p) => enlightenment.canEnlighten(state, p.id).ok).sort(
+          (a, b) => enlightenment.getEnlightenLevel(state, a.id) - enlightenment.getEnlightenLevel(state, b.id),
+        );
+        const pick = candidates[0];
+        if (pick) {
+          const next = enlightenment.startEnlighten(state, pick.id);
+          if (next !== state) {
+            state = next;
+            if (!seenEnlighten) {
+              seenEnlighten = true;
+              record(`首次感悟（${pick.name}）`);
+            }
+            continue;
+          }
+        }
+      }
+    }
+
     /* ---------------- 死锁检测 ----------------
        真正的死锁只有一个判据：灵气满了，且什么都买不起。
        所有建筑都含灵气造价，灵气一满收入就永远是 0。
@@ -923,6 +1003,18 @@ function printDetail(result: SimResult): void {
   ).map((def) => `${def.name}×${engine.getBuildingCount(state, def.id)}`);
   console.log(`  宗门建筑：${hallBuilt.length === 0 ? '无' : hallBuilt.join('，')}`);
   {
+    const levels = ENLIGHTEN_PATHS.map(
+      (p) => `${p.name} ${enlightenment.getEnlightenLevel(state, p.id)}`,
+    ).join(' · ');
+    console.log(`  感悟（需求 3）：${levels}`);
+    console.log(
+      `  进阶资源（需求 4）：灵液 ${Math.round(state.materials.spiritEssence?.toNumber() ?? 0)}` +
+        ` · 精金 ${Math.round(state.materials.refinedGold?.toNumber() ?? 0)}` +
+        ` · 阵枢 ${Math.round(state.materials.arrayCore?.toNumber() ?? 0)}` +
+        ` · 空间戒指 ${enlightenment.getSpaceRings(state)} 枚`,
+    );
+  }
+  {
     const karmaLabel = encounter.getKarmaLabel(state);
     console.log(
       `  善恶值（需求 2）：${Math.round(state.karma)}（${karmaLabel.icon}${karmaLabel.name}）` +
@@ -999,9 +1091,13 @@ function printDetail(result: SimResult): void {
     .filter(([, amount]) => amount.gt(0))
     .map(([id, amount]) => `${MATERIAL_MAP[id as keyof typeof MATERIAL_MAP]?.name ?? id} ${fmt(amount)}`);
   console.log(`  材料：${materials.length === 0 ? '无' : materials.join('，')}`);
+  // ⚠️ 这里看的是**终盘还剩多少**，不是"有没有拿到过"。
+  // 需求 4 的进阶资源会被持续消耗（炼丹 / 炼器 / 阵法 / 空间戒指），
+  // 终盘为 0 只说明"用光了"，不代表没拿到 —— 拿到过的证据在里程碑里
+  // （"首次合成阵枢"那一类）。文案写清楚，免得被读成回归。
   const missing = MATERIAL_IDS.filter((id) => state.materials[id].lte(0));
   console.log(
-    `  本轮未获取的材料：${missing.length === 0 ? '无（全部材料都拿到过）' : missing.map((id) => MATERIAL_MAP[id].name).join('、')}`,
+    `  终盘已用尽的材料：${missing.length === 0 ? '无' : missing.map((id) => MATERIAL_MAP[id].name).join('、')}`,
   );
   console.log('    （AI 只在"卡住"时才出门游历，所以高境界材料未必会被取到；来源见冒烟测试）');
 

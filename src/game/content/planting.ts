@@ -51,19 +51,26 @@ function dropWeightOf(rarity: number): number {
  * 之所以「全都有种子」，是为了让炼丹炼器的材料清单和种子清单一一对应 ——
  * 玩家看到某个丹方缺「九幽魂火」，能立刻知道"这东西能种，但要先探索拿到种子"。
  */
-export const SEEDS: SeedDef[] = (Object.keys(MATERIAL_MAP) as MaterialId[]).map((material) => {
-  const def = MATERIAL_MAP[material];
-  return {
-    material,
-    name: `${def.name}种子`,
-    icon: def.icon,
-    rarity: def.rarity,
-    category: def.category,
-    growSeconds: GROW_SECONDS[def.rarity] ?? 300,
-    yield: HARVEST_YIELD[def.rarity] ?? 2,
-    dropWeight: dropWeightOf(def.rarity),
-  };
-});
+export const SEEDS: SeedDef[] = (Object.keys(MATERIAL_MAP) as MaterialId[])
+  /*
+   * 需求 4：进阶资源**没有种子** —— 它们只能靠合成。
+   * 用 `plantable` 过滤而不是写死一份 id 清单，
+   * 将来再加"只能合成"的材料时不会漏掉这里。
+   */
+  .filter((material) => MATERIAL_MAP[material].plantable)
+  .map((material) => {
+    const def = MATERIAL_MAP[material];
+    return {
+      material,
+      name: `${def.name}种子`,
+      icon: def.icon,
+      rarity: def.rarity,
+      category: def.category,
+      growSeconds: GROW_SECONDS[def.rarity] ?? 300,
+      yield: HARVEST_YIELD[def.rarity] ?? 2,
+      dropWeight: dropWeightOf(def.rarity),
+    };
+  });
 
 export const SEED_MAP: Record<string, SeedDef> = SEEDS.reduce(
   (acc, s) => {

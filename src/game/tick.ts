@@ -27,6 +27,7 @@ import {
   tickRealmCooldowns,
 } from './engine';
 import { tickEncounters } from './encounter';
+import { tickEnlighten } from './enlightenment';
 import { tickDisciples } from './disciples';
 import { tickExpeditions } from './expeditions';
 import { tickPlantings } from './planting';
@@ -86,6 +87,8 @@ export function applyTick(state: GameState, dt: number, random: RandomSource = g
   next = tickBuildQueue(next);
   // 随机遭遇（需求 2）：开宗前与掌门在外时会遇到人
   next = tickEncounters(next, dt, random);
+  // 感悟（需求 3）：一阶一阶地推，和钻研同一类
+  next = tickEnlighten(next, dt);
   next = clampResources(next);
 
   return next;

@@ -18,6 +18,10 @@ import {
   BUILD_QUEUE_MAX_SLOTS,
   QUEUE_UPGRADES,
   ENCOUNTER_MAP,
+  ENLIGHTEN_PATH_IDS,
+  ENLIGHTEN_PATH_MAP,
+  MAX_ENLIGHTEN_LEVEL,
+  MAX_SPACE_RINGS,
   DISCOVERY_PITY_FAILURES,
   MAP_REGION_MAP,
   FINAL_REALM_INDEX,
@@ -51,7 +55,7 @@ import {
 import { ARENA_INTERVAL_SECONDS } from './sectActivity';
 import { getSurveyDuration } from './expeditions';
 import { SOLO_REALM_DURATION_MULT } from './travel';
-import { ENCOUNTER_INTERVAL, KARMA_MAX, KARMA_MIN } from './encounter';
+import { ENCOUNTER_INTERVAL, ENCOUNTER_SECONDS, KARMA_MAX, KARMA_MIN } from './encounter';
 import { applyTick } from './tick';
 import { refreshUnlocks } from './engine';
 import {
@@ -149,6 +153,13 @@ export interface SerializedGame {
   ka?: number;
   pe?: string | null;
   et?: number;
+  /** 当前遭遇的剩余秒数（需求 1） */
+  ed?: number;
+  /** 感悟阶数 / 正在感悟的那一阶 / 空间戒指数 / 上次穿梭时间（需求 3） */
+  en?: Record<string, number>;
+  eg?: { pathId: string; remaining: number; total: number } | null;
+  sr?: number;
+  lj?: number;
   /** arenaEnabled / arenaTimer / arenaBuffSeconds：宗门大比（需求 4） */
   ae?: boolean;
   arn?: number;
@@ -226,6 +237,11 @@ export function serialize(state: GameState): SerializedGame {
     ka: state.karma,
     pe: state.pendingEncounter,
     et: state.encounterTimer,
+    ed: state.encounterDeadline,
+    en: { ...state.enlightenment },
+    eg: state.enlightening,
+    sr: state.spaceRings,
+    lj: state.lastTimeJump,
     ae: state.arenaEnabled,
     arn: state.arenaTimer,
     arb: state.arenaBuffSeconds,
@@ -448,6 +464,28 @@ function toSeedMap(raw: unknown): Record<string, number> {
     out[key] = Math.min(Math.floor(value), 1e9);
   }
   return out;
+}
+
+/** 感悟阶数：只认还存在的道，并夹到 0~90 */
+function sanitizeEnlightenment(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const id of ENLIGHTEN_PATH_IDS) out[id] = 0;
+  if (raw === null || typeof raw !== 'object') return out;
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(id in out)) continue;
+    out[id] = toInt(value, 0, 0, MAX_ENLIGHTEN_LEVEL);
+  }
+  return out;
+}
+
+/** 正在感悟的那一阶：道要存在、剩余时间要有效 */
+function sanitizeEnlightening(raw: unknown): GameState['enlightening'] {
+  if (raw === null || typeof raw !== 'object') return null;
+  const e = raw as { pathId?: unknown; remaining?: unknown; total?: unknown };
+  if (typeof e.pathId !== 'string' || !ENLIGHTEN_PATH_MAP[e.pathId]) return null;
+  const total = toFloat(e.total, 0, 0, 1e9);
+  if (total <= 0) return null;
+  return { pathId: e.pathId, remaining: toFloat(e.remaining, 0, 0, total), total };
 }
 
 function sanitizeTravel(raw: unknown): PersonalTravel | null {
@@ -729,6 +767,11 @@ export function deserialize(raw: unknown): GameState | null {
     // 只认还存在的遭遇 id：旧存档若挂着一个已经删掉的遭遇，就会永远点不掉
     pendingEncounter: typeof data.pe === 'string' && ENCOUNTER_MAP[data.pe] ? data.pe : null,
     encounterTimer: toFloat(data.et, 0, 0, ENCOUNTER_INTERVAL),
+    encounterDeadline: toFloat(data.ed, 0, 0, ENCOUNTER_SECONDS),
+    enlightenment: sanitizeEnlightenment(data.en),
+    enlightening: sanitizeEnlightening(data.eg),
+    spaceRings: toInt(data.sr, 0, 0, MAX_SPACE_RINGS),
+    lastTimeJump: toFloat(data.lj, 0, 0, 1e12),
     // 旧存档的 `dp` 是"累积保底概率"（0~0.5 的小数），与现在的"连续失败次数"
     // 语义不同，所以直接丢弃不用。丢掉最多只是少一点保底进度，不会损坏存档。
     discoveryFailures: toFloat(data.df, 0, 0, DISCOVERY_PITY_FAILURES),
