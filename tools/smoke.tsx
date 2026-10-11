@@ -326,6 +326,38 @@ section('[2c] 仆役（杂役）');
   check('仆人可以在工种间调派', (moved.servants.ore ?? 0) === 0 && (moved.servants.herb ?? 0) === 1);
   check('调派不改变总人数', engine.getServantCount(moved) === 1);
 
+  /*
+   * 回归测试：界面上「想让某个岗位少一个人、把人挪去别处」必须走 assignServant。
+   *
+   * 早先仆役面板每行只有一对 −/＋ 按钮，而 − 直接调 dismissServant（真遣散），
+   * 于是玩家想调岗却把人开除了。现在两件事在界面上分开，
+   * 所以这里把「调岗不掉人、遣散才掉人」这个区别钉死。
+   */
+  {
+    const two: GameState = { ...moved, servants: { ore: 2, herb: 1 } };
+    const before = engine.getServantCount(two);
+    const shifted = engine.assignServant(two, 'ore', 'herb');
+    check(
+      '调岗（减一个岗位）不会减少总人数',
+      engine.getServantCount(shifted) === before && (shifted.servants.ore ?? 0) === 1 && (shifted.servants.herb ?? 0) === 2,
+      `${before} → ${engine.getServantCount(shifted)} 人`,
+    );
+    check(
+      '调岗后该岗位的产量加成随之转移',
+      engine.getServantBonus(shifted, 'herb') > engine.getServantBonus(two, 'herb'),
+    );
+    // 只有明确的遣散才会真少人
+    check(
+      '遣散才会真正少一名',
+      engine.getServantCount(engine.dismissServant(two, 'ore')) === before - 1,
+    );
+    // 空岗位调不动，不会凭空变出人
+    check(
+      '空岗位无法调派（不会变成负数）',
+      engine.getServantCount(engine.assignServant({ ...two, servants: {} }, 'ore', 'herb')) === 0,
+    );
+  }
+
   // 遣散
   const fired = engine.dismissServant(moved, 'herb');
   check('可以遣散仆人', engine.getServantCount(fired) === 0);
@@ -2181,6 +2213,22 @@ section('[23] store 动作闭环');
 /* ------------------------------------------------------------------ */
 section('[24] 地图与探索距离（需求 5）');
 {
+  /* ---- 本次需求的硬指标：18 个区域，每区 2~3 处秘境 ---- */
+  check('地图共有 18 个区域', MAP_REGIONS.length === 18, `${MAP_REGIONS.length} 个`);
+  const perRegion = MAP_REGIONS.map((region) => ({
+    region,
+    realms: SECRET_REALMS.filter((r) => r.regionId === region.id),
+  }));
+  const badCount = perRegion.filter((entry) => entry.realms.length < 2 || entry.realms.length > 3);
+  check(
+    '每个区域都有 2~3 处秘境',
+    badCount.length === 0,
+    badCount.length > 0
+      ? badCount.map((e) => `${e.region.name}=${e.realms.length}`).join('、')
+      : `共 ${SECRET_REALMS.length} 处，区间 ${Math.min(...perRegion.map((e) => e.realms.length))}~${Math.max(...perRegion.map((e) => e.realms.length))}`,
+  );
+  check('秘境总数随之扩到 40 以上', SECRET_REALMS.length >= 40, `${SECRET_REALMS.length} 处`);
+
   /* ---- 地图完整性：秘境与游历目的地都必须挂到某个区域 ---- */
   const realmOrphans = SECRET_REALMS.filter((r) => !MAP_REGION_MAP[r.regionId]);
   check('每处秘境都挂在一个已定义的地图区域下', realmOrphans.length === 0, realmOrphans.map((r) => r.name).join('、'));
@@ -2188,25 +2236,69 @@ section('[24] 地图与探索距离（需求 5）');
   const travelOrphans = TRAVEL_REGIONS.filter((r) => !MAP_REGION_MAP[r.regionId]);
   check('每个游历目的地都挂在已定义区域下', travelOrphans.length === 0, travelOrphans.map((r) => r.name).join('、'));
 
-  const unlistedRealms = SECRET_REALMS.filter(
-    (r) => !MAP_REGIONS.some((region) => region.realms.includes(r.id)),
+  check('没有秘境被漏在地图之外', perRegion.every((e) => e.realms.length > 0));
+  check(
+    '每个区域的秘境 id 不重复',
+    new Set(SECRET_REALMS.map((r) => r.id)).size === SECRET_REALMS.length,
   );
-  check('没有秘境被漏在地图之外', unlistedRealms.length === 0, unlistedRealms.map((r) => r.name).join('、'));
-
-  const unlistedTravel = TRAVEL_REGIONS.filter(
-    (r) => !MAP_REGIONS.some((region) => region.travel.includes(r.id)),
-  );
-  check('没有游历目的地被漏在地图之外', unlistedTravel.length === 0, unlistedTravel.map((r) => r.name).join('、'));
+  // 区域小节标题下面再出现一个同名秘境，读起来像界面 bug
+  {
+    const regionNames = new Set(MAP_REGIONS.map((r) => r.name));
+    const clash = SECRET_REALMS.filter((r) => regionNames.has(r.name));
+    check('没有秘境与所在（或任何）区域同名', clash.length === 0, clash.map((r) => r.name).join('、'));
+    const realmNames = SECRET_REALMS.map((r) => r.name);
+    check('秘境之间没有重名', new Set(realmNames).size === realmNames.length);
+    // 名字不撞了，文案也不能撞 —— 区域和它的同名秘境一字不差同样是界面 bug
+    const regionDescs = new Set(MAP_REGIONS.map((r) => r.desc));
+    const dupDesc = SECRET_REALMS.filter((r) => regionDescs.has(r.desc));
+    check('没有秘境照抄所在区域的说明文字', dupDesc.length === 0, dupDesc.map((r) => r.name).join('、'));
+    const allDescs = [...MAP_REGIONS.map((r) => r.desc), ...SECRET_REALMS.map((r) => r.desc)];
+    check('区域与秘境的说明文字互不重复', new Set(allDescs).size === allDescs.length);
+  }
 
   check(
-    '秘境所在区域的境界门槛不低于秘境自身的弟子门槛',
-    SECRET_REALMS.every((r) => MAP_REGION_MAP[r.regionId].requiresRealm <= r.minRealm),
+    '秘境的弟子门槛不会比所在区域高出一级以上',
+    SECRET_REALMS.every((r) => MAP_REGION_MAP[r.regionId].requiresRealm <= r.minRealm + 1),
+  );
+  check(
+    '秘境所在区域的门槛不高于秘境自身的弟子门槛上限',
+    SECRET_REALMS.every((r) => r.minRealm <= MAP_REGION_MAP[r.regionId].requiresRealm),
   );
   check(
     '游历目的地不会出现在还没抵达的区域里',
     TRAVEL_REGIONS.every((r) => r.minRealm >= MAP_REGION_MAP[r.regionId].requiresRealm),
   );
   check('区域按距离由近到远排列', MAP_REGIONS.every((r, i) => i === 0 || r.distance > MAP_REGIONS[i - 1].distance));
+  check(
+    '区域境界门槛单调不减（越远越难去）',
+    MAP_REGIONS.every((r, i) => i === 0 || r.requiresRealm >= MAP_REGIONS[i - 1].requiresRealm),
+  );
+
+  /* ---- 秘境数值随档次单调变难（44 处靠表格生成，得守住方向） ---- */
+  const byTier = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((tier) => ({
+    tier,
+    realms: SECRET_REALMS.filter((r) => r.tier === tier),
+  }));
+  check('九个档次都至少有一处秘境', byTier.every((e) => e.realms.length > 0), byTier.map((e) => `${e.tier}:${e.realms.length}`).join(' '));
+  check(
+    '档次越高满编人数越多',
+    byTier.every((e) => e.realms.every((r) => r.maxParty >= e.tier + 3)),
+  );
+  check(
+    '档次越高冷却越长',
+    byTier.every((e, i) => i === 0 || Math.min(...e.realms.map((r) => r.cooldown)) > Math.min(...byTier[i - 1].realms.map((r) => r.cooldown))),
+  );
+  check(
+    '档次越高伤亡率越高',
+    byTier.every((e, i) => i === 0 || Math.min(...e.realms.map((r) => r.baseCasualty)) > Math.min(...byTier[i - 1].realms.map((r) => r.baseCasualty))),
+  );
+  check(
+    '同区域内越靠后的秘境越难也越肥',
+    MAP_REGIONS.every((region) => {
+      const list = SECRET_REALMS.filter((r) => r.regionId === region.id).sort((a, b) => a.requiredPower - b.requiredPower);
+      return list.every((r, i) => i === 0 || r.requiredPower > list[i - 1].requiredPower);
+    }),
+  );
 
   /* ---- 探索距离随境界增长（需求 5 的核心） ---- */
   const atRealm = (idx: number) => ({ ...createInitialState(0), realmIndex: idx });
@@ -2214,13 +2306,19 @@ section('[24] 地图与探索距离（需求 5）');
   const range3 = engine.getExplorationRange(atRealm(3));
   const range8 = engine.getExplorationRange(atRealm(8));
 
-  check('开局只能抵达最近的一个区域', range0.reachable.length === 1, `${range0.reachable.length} 区`);
-  check('境界越高可抵达区域越多', range3.reachable.length > range0.reachable.length);
+  const openingRegions = MAP_REGIONS.filter((r) => r.requiresRealm === 0).length;
+  check(
+    '开局能抵达的正是门槛为炼气期的区域',
+    range0.reachable.length === openingRegions,
+    `${range0.reachable.length} / ${openingRegions}`,
+  );
+  check('境界越高可抵达区域越多', range3.reachable.length > range0.reachable.length, `${range0.reachable.length} → ${range3.reachable.length}`);
   check('境界越高探索距离越远', range3.distance > range0.distance, `${range0.distance} → ${range3.distance} 里`);
   check('最高境界可达全部区域', range8.reachable.length === MAP_REGIONS.length, `${range8.reachable.length}/${MAP_REGIONS.length}`);
   check(
     '距离是各区域距离之和',
     range8.distance === MAP_REGIONS.reduce((sum, r) => sum + r.distance, 0),
+    `${range8.distance} 里`,
   );
 
   /* ---- 灵舟坊提高探索距离（造物加成） ---- */

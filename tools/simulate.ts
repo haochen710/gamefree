@@ -756,8 +756,16 @@ function printDetail(result: SimResult): void {
       .map((r) => r.name)
       .join('、')}）`,
   );
+  // 44 处秘境的名字全列出来会把报告刷屏，所以只报数量 + 前几处
+  const sample = discovered.slice(0, 6).map((r) => r.name).join('、');
   console.log(
-    `  已发现秘境：${discovered.length}/${SECRET_REALMS.length}（${discovered.map((r) => r.name).join('、')}）`,
+    `  已发现秘境：${discovered.length}/${SECRET_REALMS.length}` +
+      (discovered.length > 0 ? `（${sample}${discovered.length > 6 ? ' …' : ''}）` : ''),
+  );
+  console.log(
+    `  秘境档次分布：${[1, 2, 3, 4, 5, 6, 7, 8, 9]
+      .map((tier) => `${tier}档 ${SECRET_REALMS.filter((r) => r.tier === tier).length} 处`)
+      .join(' · ')}`,
   );
   const cooling = Object.entries(state.realmCooldowns);
   console.log(

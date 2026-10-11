@@ -142,7 +142,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'frostHollow',
-    regionId: 'starfallDeep',
+    regionId: 'iceValley',
     name: '寒泉幽谷',
     icon: '❄',
     desc: '万年寒泉自谷底涌出，泉边结满寒玉，月华在此凝露。',
@@ -183,7 +183,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'netherRift',
-    regionId: 'netherVoid',
+    regionId: 'starCorridor',
     name: '九幽裂隙',
     icon: '🕳',
     desc: '直通九幽的裂口，魂火飘荡，寻常修士靠近便神魂受损。',
@@ -203,7 +203,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'chaosSea',
-    regionId: 'outerChaos',
+    regionId: 'primordialRemnant',
     name: '混沌之海',
     icon: '🌊',
     desc: '未经开辟的混沌之水，一滴可压塌山岳，紫气自其中翻涌而出。',
@@ -222,7 +222,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'primordialVoid',
-    regionId: 'outerChaos',
+    regionId: 'starSeaEnd',
     name: '鸿蒙虚空',
     icon: '🌌',
     desc: '开天辟地之前的遗迹，法则尚未成形，道果就悬在最深处。',

@@ -16,6 +16,9 @@ import {
   ITEM_MAP,
   MAP_REGIONS,
   REALMS,
+  TRAVEL_REGIONS,
+  realmsOfRegion,
+  SECRET_REALMS,
   TRAVEL_REGION_MAP,
   type ItemId,
   type MapRegionDef,
@@ -52,14 +55,17 @@ import type { GameState } from '../game/state';
 
 function MapNode({ region, state }: { region: MapRegionDef; state: GameState }) {
   const reachable = canReachRegion(state, region);
-  const visible = isRegionVisible(state, region);
-  if (!visible) return null;
+  const preview = isRegionVisible(state, region);
+  // 远处的区域也画出来（暗掉、不显示秘境进度）——
+  // 18 个区域若只显示能去的 4 个，地图就完全没有"世界很大"的感觉了
+  const all = realmsOfRegion(region.id);
+  const found = all.filter((r) => state.discoveredRealms[r.id] === true).length;
 
-  const found = region.realms.filter((id) => state.discoveredRealms[id] === true).length;
+  const tone = reachable ? 'map-node--on' : preview ? 'map-node--off' : 'map-node--far';
 
   return (
     <div
-      className={reachable ? 'map-node map-node--on' : 'map-node map-node--off'}
+      className={`map-node ${tone}`}
       style={{ left: `${region.x}%`, top: `${region.y}%` }}
       title={region.desc}
     >
@@ -67,7 +73,11 @@ function MapNode({ region, state }: { region: MapRegionDef; state: GameState }) 
       <span className="map-node__name">{region.name}</span>
       <span className="map-node__meta">
         {region.distance} 里
-        {reachable ? ` · 秘境 ${found}/${region.realms.length}` : ` · 需${REALMS[region.requiresRealm].name}`}
+        {reachable
+          ? ` · 秘境 ${found}/${all.length}`
+          : preview
+            ? ` · 需${REALMS[region.requiresRealm].name}`
+            : ` · ${REALMS[region.requiresRealm].name}`}
       </span>
     </div>
   );
@@ -263,15 +273,13 @@ function TravelCard({ def, state }: { def: TravelRegionDef; state: GameState }) 
 
 function RegionSection({ region, state }: { region: MapRegionDef; state: GameState }) {
   const reachable = canReachRegion(state, region);
-  const discovered = getDiscoveredRealms(state);
-  const realms = region.realms
-    .map((id) => discovered.find((r) => r.id === id))
-    .filter((r): r is SecretRealmDef => Boolean(r));
-  const hidden = region.realms.length - realms.length;
+  // 「本区域有哪些秘境 / 游历目的地」的唯一事实来源是它们自己的 regionId，
+  // 区域本身不再存一份副本（两处各存一份必然会漂移）
+  const all = realmsOfRegion(region.id);
+  const realms = all.filter((r) => state.discoveredRealms[r.id] === true);
+  const hidden = all.length - realms.length;
 
-  const travelTargets = region.travel
-    .map((id) => TRAVEL_REGION_MAP[id])
-    .filter((t): t is TravelRegionDef => Boolean(t));
+  const travelTargets = TRAVEL_REGIONS.filter((t) => t.regionId === region.id);
 
   const visible = reachable || isRegionVisible(state, region);
   if (!visible) return null;
@@ -284,7 +292,7 @@ function RegionSection({ region, state }: { region: MapRegionDef; state: GameSta
         </h2>
         <span className="panel__hint">
           {region.distance} 里 ·{' '}
-          {reachable ? `秘境 ${realms.length}/${region.realms.length}` : `需${REALMS[region.requiresRealm].name}`}
+          {reachable ? `秘境 ${realms.length}/${all.length}` : `需${REALMS[region.requiresRealm].name}`}
         </span>
       </div>
 
@@ -331,12 +339,14 @@ export function MapPanel() {
         <div className="panel__head">
           <h2>修仙界地图</h2>
           <span className="panel__hint">
-            探索距离 {fmt(range.distance, 0)} 里 · 可达 {range.reachable.length}/{MAP_REGIONS.length} 区
+            探索距离 {fmt(range.distance, 0)} 里 · 可达 {range.reachable.length}/{MAP_REGIONS.length} 区 · 已发现{' '}
+            {SECRET_REALMS.length - undiscovered}/{SECRET_REALMS.length} 秘境
           </span>
         </div>
         <p className="panel__note">
-          境界越高、越能飞行，探索距离就越远。远处的区域藏着更好的秘境与材料 ——
-          已发现的秘境会<strong>永久固定</strong>在对应区域里，但每次探索后都要等冷却结束才能再探。
+          境界越高、越能飞行，探索距离就越远。十八个区域由近及远排开，
+          每区各有两三处秘境 —— 已发现的秘境会<strong>永久固定</strong>在对应区域里，
+          但每次探索后都要等冷却结束才能再探。
         </p>
 
         <div className="map">

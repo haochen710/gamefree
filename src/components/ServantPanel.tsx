@@ -6,6 +6,15 @@
  *
  * 关键取舍：**仆人与弟子共用居所名额**（见 engine.getDiscipleCapacity）。
  * 前期名额全给仆人换产量；开宗之后就得决定要不要腾房间收弟子。
+ *
+ * ⚠️ 这里曾经有过一个把玩家坑到的交互 bug：
+ * 早先每行只有一对「− / ＋」按钮，而「−」直接调的是 dismissServant ——
+ * 也就是**真正把人遣散**。玩家想的是"从这个岗位调一个人去另一个岗位"，
+ * 于是点一下少一个人、还得重新招。现在的规则是：
+ *   ＋ 招收  → 往这个岗位加一名（总人数 +1，要花灵气）
+ *   调往…   → 从这岗位调一名去别处（**总人数不变**，免费）
+ *   遣散    → 真正少一名（明确文字 + 二次确认）
+ * 也就是说：想让某个岗位的人数下降，默认路径是「调往」而不是「遣散」。
  */
 import { fmt } from '../game/decimal';
 import { RESOURCE_MAP, SERVANT_BONUS_PER_HEAD, SERVANT_JOBS } from '../game/content';
@@ -61,8 +70,9 @@ export function ServantPanel() {
 
       <p className="panel__note">
         每名仆人给对应资源提供 <strong>+{Math.round(SERVANT_BONUS_PER_HEAD * 100)}%</strong> 产量。
-        仆人与弟子<strong>共用居所名额</strong>
-        {game.sect.founded && ' —— 想多收弟子，就得先遣散一部分仆人'}。
+        调整岗位请用「<strong>调往</strong>」—— 人数不变、不花灵气；
+        「遣散」才会真正少一名，以后再招要重新花灵气。
+        {game.sect.founded && ' 仆人与弟子共用居所名额，想多收弟子就得先遣散一部分仆人。'}
       </p>
 
       <div className="servant-list">
@@ -70,6 +80,12 @@ export function ServantPanel() {
           const count = game.servants[job.id] ?? 0;
           const target = RESOURCE_MAP[job.resource];
           const bonus = getServantBonus(game, job.resource);
+          // 遣散后再招回来的价格：仆人数越少越便宜，所以报的是「少一人后」的价
+          const rehireCost = getServantCost({
+            ...game,
+            servants: { ...game.servants, [job.id]: Math.max(0, count - 1) },
+          });
+          const others = SERVANT_JOBS.filter((other) => other.id !== job.id);
 
           return (
             <div key={job.id} className="servant">
@@ -93,37 +109,52 @@ export function ServantPanel() {
                 <button
                   type="button"
                   className="btn btn--tiny"
-                  disabled={count <= 0}
-                  onClick={() => dismissServant(job.id)}
-                  title="遣散一名，腾出居所"
-                >
-                  −
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--tiny"
                   disabled={!check.ok}
                   onClick={() => recruitServant(job.id)}
                   title={check.ok ? `招收一名（☯${fmt(cost)}）` : check.reason ?? ''}
                 >
-                  ＋
+                  ＋ 招收
                 </button>
-                <select
-                  className="servant__move"
-                  value=""
-                  disabled={count <= 0}
-                  onChange={(e) => {
-                    if (e.target.value) assignServant(job.id, e.target.value);
-                  }}
-                  title="调派一名到别的岗位"
-                >
-                  <option value="">调派…</option>
-                  {SERVANT_JOBS.filter((other) => other.id !== job.id).map((other) => (
-                    <option key={other.id} value={other.id}>
-                      → {other.name}
-                    </option>
-                  ))}
-                </select>
+
+                {count > 0 && (
+                  <>
+                    {/* 这是「减人数」的正常路径：换岗，总人数不变 */}
+                    <select
+                      className="servant__move"
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value) assignServant(job.id, e.target.value);
+                      }}
+                      title="从本岗位调一名到别处（总人数不变，不花灵气）"
+                    >
+                      <option value="">调往…</option>
+                      {others.map((other) => (
+                        <option key={other.id} value={other.id}>
+                          → {other.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      className="btn btn--tiny btn--danger"
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `确定遣散一名「${job.name}」的仆人？\n\n` +
+                              `这会真正少一名仆人，以后重新招收要花 ☯${fmt(rehireCost)}。\n` +
+                              '如果只是想换个岗位，请用旁边的「调往…」。',
+                          )
+                        ) {
+                          dismissServant(job.id);
+                        }
+                      }}
+                      title="彻底遣散一名（总人数 −1）"
+                    >
+                      遣散
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           );
