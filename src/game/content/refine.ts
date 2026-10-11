@@ -80,7 +80,7 @@ export const REFINE_RECIPES: RefineRecipe[] = [
     name: '刻制阵枢',
     icon: '🔯',
     desc: '以灵木为骨、灵石为血，一刀一刀刻出符文的枢纽。凡大型阵法都少不了它。',
-    cost: { wood: 12000, stone: 3000 },
+    cost: { wood: 8000, stone: 2000 },
     output: { item: 'arrayCore', amount: 1 },
     requiresRealm: 3,
     requiresTech: 'architecture',

@@ -756,20 +756,43 @@ function runSimulation(seed: number): SimResult {
        而它们的原料（灵气、灵草、灵矿、灵木、灵石）在中期本来就会顶到储存上限，
        与其让产量白白溢出，不如换成进阶资源囤着。 */
     {
-      for (const recipe of REFINE_RECIPES) {
-        if (recipe.output.item === 'stone') {
-          // 灵石合成走原来的自动合成档位，这里不重复点
-          continue;
-        }
-        if (engine.maxRefine(state, recipe.id) <= 0) continue;
-        const next = engine.refine(state, recipe.id, 1);
+      /*
+       * 合成进阶资源（需求 4）。
+       *
+       * ⚠️ 这里有一条踩过两次的线：**合成必须限量**。
+       *
+       *   - 一次迭代把三条配方全合一遍 → 灵气/灵木/灵矿/灵石的支出直接三倍，
+       *     经济被抽干，30 天只修到炼虚期、弟子掉到 18 人；
+       *   - 只合第一条付得起的（原来的 `break`）→ 阵枢永远轮不到，
+       *     宗门大阵与空间戒指整局都做不出来。
+       *
+       * 所以现在的规则是"**补最短的那一块，且只补到够用的量**"：
+       * 目标存量随境界增长（够造三座大阵 + 九枚戒指就行），
+       * 每次只合一批，并且优先合存量最少的那种。
+       */
+      const target = 800 * (state.realmIndex + 1);
+      const stock = (id: string) => state.materials[id as keyof typeof state.materials]?.toNumber() ?? 0;
+      const candidates = REFINE_RECIPES.filter((r) => r.output.item !== 'stone')
+        .filter((r) => engine.maxRefine(state, r.id) > 0)
+        .filter((r) => stock(r.output.item) < target)
+        .sort((a, b) => stock(a.output.item) - stock(b.output.item));
+
+      const pick = candidates[0];
+      if (pick) {
+        const next = engine.refine(state, pick.id, 1);
         if (next !== state) {
           state = next;
-          if (!seenRefine.has(recipe.id)) {
-            seenRefine.add(recipe.id);
-            record(`首次合成${recipe.output.item === 'spiritEssence' ? '灵液' : recipe.output.item === 'refinedGold' ? '精金' : '阵枢'}`);
+          if (!seenRefine.has(pick.id)) {
+            seenRefine.add(pick.id);
+            const name =
+              pick.output.item === 'spiritEssence'
+                ? '灵液'
+                : pick.output.item === 'refinedGold'
+                  ? '精金'
+                  : '阵枢';
+            record(`首次合成${name}`);
           }
-          break;
+          continue;
         }
       }
     }
@@ -793,7 +816,15 @@ function runSimulation(seed: number): SimResult {
       // 时空穿梭：每 5 游戏年一次，能跳就跳
       if (enlightenment.canTimeJump(state).ok && enlightenment.getEnlightenLevel(state, 'time') > 0) {
         const years = enlightenment.getTimeJumpYears(state);
-        const next = enlightenment.doTimeJump(state, (g, dt) => applyTickSim(g, dt));
+        /*
+         * ⚠️ `random` 必须显式传。
+         *
+         * `applyTick(state, dt, random = gameRandom)` 的默认值就是 `Math.random`，
+         * 漏传这一处会让整份模拟从"首次穿梭"那一刻起被真随机污染 ——
+         * 同一份代码连跑两次，合体期能从 1天1小时 漂到 1天14小时。
+         * 这个坑这一轮我又踩了一次（上一轮是 advanceLayer / startExpedition）。
+         */
+        const next = enlightenment.doTimeJump(state, (g, dt) => applyTickSim(g, dt, random));
         if (next !== state) {
           state = next;
           if (!seenTimeJump) {
