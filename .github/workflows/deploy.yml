@@ -55,6 +55,11 @@ jobs:
 
       - name: 配置 Pages
         uses: actions/configure-pages@v5
+        with:
+          # 仓库还没开 Pages 时自动开启（需要上面声明的 pages: write 权限）。
+          # 这样首次推送就能直接部署，不必先手动去 Settings → Pages 点一次。
+          # 万一这里报权限错误，就手动到 Settings → Pages → Source 选「GitHub Actions」。
+          enablement: true
 
       - name: 上传构建产物
         uses: actions/upload-pages-artifact@v3
