@@ -55,11 +55,14 @@ jobs:
 
       - name: 配置 Pages
         uses: actions/configure-pages@v5
-        with:
-          # 仓库还没开 Pages 时自动开启（需要上面声明的 pages: write 权限）。
-          # 这样首次推送就能直接部署，不必先手动去 Settings → Pages 点一次。
-          # 万一这里报权限错误，就手动到 Settings → Pages → Source 选「GitHub Actions」。
-          enablement: true
+        # 注意：这里**不要**加 enablement: true。
+        # GITHUB_TOKEN 只能向「已存在的」Pages 站点发布，无权新建站点 ——
+        # 加了 enablement 反而会在第一次运行时直接失败，报
+        #   Create Pages site failed: Resource not accessible by integration
+        # 正确做法是手动开一次（两种任选）：
+        #   网页：Settings → Pages → Source 选「GitHub Actions」
+        #   命令行：gh api -X POST /repos/<owner>/<repo>/pages -f build_type=workflow
+        # 之后这个工作流每次都会自动构建并发布。
 
       - name: 上传构建产物
         uses: actions/upload-pages-artifact@v3
