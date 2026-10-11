@@ -50,7 +50,7 @@ import {
   isRegionVisible,
   recordDiscoveryFailure,
 } from './engine';
-import { pushJournal } from './disciples';
+import { addInsight, pushJournal } from './disciples';
 import { getEnvironmentMaterialBonus } from './season';
 import { getKarmaExploreBonus } from './encounter';
 import { getElementMaterialBonus, getSpaceExploreBonus } from './enlightenment';
@@ -396,7 +396,7 @@ export function resolveTravel(
       ...working,
       sect: {
         ...working.sect,
-        disciples: working.sect.disciples.map((d) => ({ ...d, insight: d.insight + insightGain })),
+    disciples: working.sect.disciples.map((d) => ({ ...d, insight: addInsight(working, d, insightGain).insight })),
       },
     };
   }

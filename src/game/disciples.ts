@@ -316,6 +316,19 @@ export function tickDisciples(state: GameState, dt: number): GameState {
   };
 }
 
+/**
+ * 给弟子加心得，并**自动夹到上限**。
+ *
+ * 心得有三条来源（秘境探索 / 普通探索 / 掌门游历），原先各自裸加，
+ * 只有大比与建筑事件那条路夹了上限 —— 于是字段会涨到 256/240 这种值。
+ * 效果本身不受影响（`getDiscipleSpeed` 取 min），但界面会出现「心得 256/240」，
+ * 报告里的"最高心得"读数也会被虚高的字段带偏。
+ * 统一走这一个函数，三处来源就不会再各自漂。
+ */
+export function addInsight(state: GameState, disciple: Disciple, gain: number): Disciple {
+  return { ...disciple, insight: Math.min(getInsightMax(state), disciple.insight + gain) };
+}
+
 /** 把弟子标记为探索中 / 空闲 */
 export function setDiscipleStatus(
   state: GameState,

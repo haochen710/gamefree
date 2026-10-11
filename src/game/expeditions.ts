@@ -72,7 +72,7 @@ import {
   isRealmDiscovered,
   recordDiscoveryFailure,
 } from './engine';
-import { getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
+import { addInsight, getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
 import { getEnvironmentMaterialBonus, getWeatherEffects } from './season';
 import { getKarmaExploreBonus } from './encounter';
 import { getElementMaterialBonus, getSpaceExploreBonus } from './enlightenment';
@@ -414,7 +414,7 @@ export function resolveExpedition(
       const survived = survivorSet.has(d.id);
       // 生还者：回空闲 + 涨心得；其他人（未参与本次）原样保留
       return survived
-        ? { ...d, status: 'idle' as const, expeditionId: undefined, insight: d.insight + insightGain }
+      ? { ...d, status: 'idle' as const, expeditionId: undefined, insight: addInsight(working, d, insightGain).insight }
         : d;
     });
 
@@ -685,7 +685,7 @@ export function resolveSurvey(
     ),
   );
   const disciples = working.sect.disciples.map((d) =>
-    alive.includes(d.id) ? { ...d, status: 'idle' as const, expeditionId: undefined, insight: d.insight + insightGain } : d,
+    alive.includes(d.id) ? { ...d, status: 'idle' as const, expeditionId: undefined, insight: addInsight(working, d, insightGain).insight } : d,
   );
   working = { ...working, sect: { ...working.sect, disciples } };
 
