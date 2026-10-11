@@ -1,0 +1,73 @@
+# GitHub Actions：构建并发布到 GitHub Pages
+#
+# 触发方式：推送到 main 分支，或在 Actions 页面手动触发。
+# 首次使用需要到仓库 Settings → Pages → Source 选择「GitHub Actions」。
+#
+# 关于路径：站点会发布在 https://<用户名>.github.io/<仓库名>/ 下，
+# 所以 vite.config.ts 里的 base 必须是 "/<仓库名>/"，否则资源全 404。
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# GITHUB_TOKEN 的最小权限：读代码 + 写 Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只允许一个部署；排队中的旧任务直接取消，但正在跑的不打断
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查与冒烟测试
+        run: |
+          pnpm typecheck
+          pnpm smoke
+
+      - name: 构建
+        run: pnpm build
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传构建产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 发布到 Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

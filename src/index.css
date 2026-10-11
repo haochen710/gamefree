@@ -1,0 +1,681 @@
+/* ==========================================================================
+   仙途 —— 水墨宣纸风格样式
+   纯 CSS，没有引入 UI 框架，方便你随手改配色
+   ========================================================================== */
+
+:root {
+  --paper: #f4eee2;
+  --paper-2: #fffdf7;
+  --paper-3: #ece3d2;
+  --ink: #2e2a24;
+  --ink-soft: #6d6455;
+  --ink-faint: #a2988a;
+  --line: rgba(122, 96, 60, 0.24);
+  --line-strong: rgba(122, 96, 60, 0.45);
+  --accent: #93404a;
+  --accent-soft: rgba(147, 64, 74, 0.12);
+  --jade: #3d7a63;
+  --gold: #a8792a;
+  --shadow: 0 2px 10px rgba(80, 62, 38, 0.08);
+  --radius: 10px;
+  --font-body: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --font-serif: "Songti SC", "STSong", "SimSun", "Noto Serif SC", Georgia, serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--ink);
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.7), transparent 45%),
+    radial-gradient(circle at 82% 78%, rgba(200, 182, 150, 0.28), transparent 50%);
+  background-attachment: fixed;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2 {
+  font-family: var(--font-serif);
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- 布局 */
+
+.app {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px 16px 40px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.layout__left,
+.layout__right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------------------------------------------------------------- 顶部 */
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line-strong);
+  margin-bottom: 14px;
+}
+
+.header__title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.header__title h1 {
+  font-size: 30px;
+  letter-spacing: 0.16em;
+  color: var(--ink);
+}
+
+.header__subtitle {
+  font-size: 12px;
+  color: var(--ink-faint);
+  letter-spacing: 0.28em;
+}
+
+.header__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat__label {
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.14em;
+}
+
+.stat__value {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.stat__value--big {
+  font-size: 20px;
+}
+
+.stat__value--gold {
+  color: var(--gold);
+}
+
+.stat__layer {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-soft);
+  margin-left: 8px;
+}
+
+/* ------------------------------------------------------------ 资源栏 */
+
+.resource-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 620px) {
+  .resource-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.resource {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  box-shadow: var(--shadow);
+}
+
+.resource--idle {
+  opacity: 0.5;
+}
+
+.resource__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.resource__icon {
+  font-size: 15px;
+}
+
+.resource__amount {
+  font-family: var(--font-serif);
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: break-all;
+}
+
+.resource__rate {
+  font-size: 12px;
+  color: var(--jade);
+}
+
+.resource__rate--zero {
+  color: var(--ink-faint);
+}
+
+/* ------------------------------------------------------------ 面板 */
+
+.panel {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px 16px;
+  box-shadow: var(--shadow);
+}
+
+.panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.panel__head h2 {
+  font-size: 17px;
+  letter-spacing: 0.1em;
+}
+
+.panel__hint {
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.1em;
+}
+
+.panel__note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+
+.panel--action .btn--big {
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------------------ 按钮 */
+
+.btn {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: linear-gradient(180deg, #fffefa, var(--paper-3));
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: transform 0.06s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #fff, #e6dbc6);
+  box-shadow: 0 2px 6px rgba(80, 62, 38, 0.14);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: linear-gradient(180deg, #a24b55, var(--accent));
+  border-color: #7c333c;
+  color: #fff9f4;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #b0545f, #8a3943);
+}
+
+.btn--danger {
+  background: linear-gradient(180deg, #8a6a3a, #6f5227);
+  border-color: #5a4220;
+  color: #fff8ec;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: linear-gradient(180deg, #9a7842, #7a5b2c);
+}
+
+.btn--big {
+  width: 100%;
+  padding: 14px;
+  font-size: 17px;
+  font-family: var(--font-serif);
+  letter-spacing: 0.14em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.btn--wide {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px;
+}
+
+.btn__sub {
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.85;
+  letter-spacing: 0.02em;
+}
+
+.btn-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.btn-row--wrap {
+  margin-top: 10px;
+}
+
+.btn-row .btn {
+  flex: 1 1 auto;
+}
+
+/* ------------------------------------------------------------ 设施 */
+
+.generator-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.generator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.generator--locked {
+  opacity: 0.62;
+}
+
+.generator__main {
+  display: flex;
+  gap: 10px;
+  min-width: 220px;
+  flex: 1 1 260px;
+}
+
+.generator__icon {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.generator__text {
+  min-width: 0;
+}
+
+.generator__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.generator__name {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.generator__count {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.generator__output {
+  font-size: 12px;
+  color: var(--jade);
+}
+
+.generator__desc {
+  font-size: 11px;
+  color: var(--ink-faint);
+  line-height: 1.5;
+}
+
+.generator__buy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex: 0 1 auto;
+}
+
+.generator__price {
+  min-height: 20px;
+}
+
+.cost-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.cost {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.cost--short {
+  background: rgba(147, 64, 74, 0.22);
+  color: #7d2b34;
+  font-weight: 700;
+}
+
+.cost__icon {
+  font-size: 11px;
+}
+
+/* ------------------------------------------------------------ 境界 */
+
+.realm__name {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.realm__desc {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 10px;
+}
+
+.bar {
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(122, 96, 60, 0.15);
+  overflow: hidden;
+}
+
+.bar__fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--jade), #6aa78c);
+  transition: width 0.25s ease;
+}
+
+.realm__layers {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 6px;
+}
+
+.realm__bonus {
+  color: var(--ink-faint);
+}
+
+.realm__action {
+  margin-top: 12px;
+}
+
+.realm__req {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 6px;
+}
+
+.realm__done {
+  margin-top: 12px;
+  padding: 10px;
+  text-align: center;
+  font-family: var(--font-serif);
+  color: var(--gold);
+  background: rgba(168, 121, 42, 0.1);
+  border-radius: 7px;
+}
+
+/* ------------------------------------------------------------ 飞升 */
+
+.ascend__gain {
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: rgba(168, 121, 42, 0.1);
+  color: var(--gold);
+  text-align: center;
+}
+
+.ascend__gain strong {
+  font-family: var(--font-serif);
+  font-size: 19px;
+}
+
+/* ------------------------------------------------------------ 存档 */
+
+.save__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  font-size: 12px;
+}
+
+.save__stats > div {
+  display: flex;
+  gap: 6px;
+}
+
+.save__label {
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+
+.save__block {
+  margin-top: 12px;
+}
+
+.textarea {
+  width: 100%;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  resize: vertical;
+  margin: 6px 0;
+  word-break: break-all;
+}
+
+/* ------------------------------------------------------------ 弹窗 */
+
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(46, 42, 36, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 50;
+}
+
+.modal {
+  width: min(420px, 100%);
+  background: var(--paper-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 12px 40px rgba(40, 30, 18, 0.3);
+}
+
+.modal__title {
+  font-size: 20px;
+  text-align: center;
+  letter-spacing: 0.16em;
+  margin-bottom: 10px;
+}
+
+.modal__text {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin: 0 0 12px;
+}
+
+.modal__list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.modal__list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(61, 122, 99, 0.08);
+}
+
+.modal__list strong {
+  color: var(--jade);
+  margin-left: auto;
+}
+
+.modal__icon {
+  font-size: 14px;
+}
+
+.modal__footnote {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin: 0 0 14px;
+}
+
+/* ------------------------------------------------------------ 提示条 */
+
+.notice {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  background: rgba(46, 42, 36, 0.9);
+  color: #fdf9f1;
+  font-size: 13px;
+  padding: 9px 20px;
+  border-radius: 22px;
+  z-index: 60;
+  box-shadow: 0 6px 20px rgba(40, 30, 18, 0.3);
+  animation: notice-in 0.2s ease;
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* ------------------------------------------------------------ 页脚 */
+
+.footer {
+  margin-top: 26px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.footer a {
+  margin-left: 4px;
+}

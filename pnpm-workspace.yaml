@@ -1,0 +1,7 @@
+# pnpm 11 起，包管理设置统一放在这个文件里（不再读 package.json 的 "pnpm" 字段）。
+#
+# esbuild 是 Vite 底层的打包器，安装时需要跑一次安装脚本放置平台二进制文件。
+# pnpm 出于供应链安全，默认拦截所有依赖的构建脚本并直接报错中断，
+# 所以这里显式放行 esbuild，否则 install / build 都会失败（ERR_PNPM_IGNORED_BUILDS）。
+allowBuilds:
+  esbuild: true
