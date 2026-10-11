@@ -10,6 +10,7 @@ import {
   MATERIAL_IDS,
   RESOURCE_IDS,
   STARTER_REALM_ID,
+  WEATHER_ROLL_INTERVAL,
   createEmptyBuffs,
   type ActiveBuffs,
   type AptitudeId,
@@ -217,6 +218,18 @@ export interface GameState {
   /** 距离下次宗门随机事件判定的秒数 */
   sectEventTimer: number;
 
+  /* ---- 季节与天象（需求 1） ---- */
+  /** 当前季节下标（0 春 / 1 夏 / 2 秋 / 3 冬） */
+  season: number;
+  /** 本季已经过去的秒数 */
+  seasonSeconds: number;
+  /** 当前天象 id；没有天象时为 null */
+  weatherId: string | null;
+  /** 当前天象剩余秒数 */
+  weatherSeconds: number;
+  /** 距离下次天象判定的秒数 */
+  weatherTimer: number;
+
   /* ---- 商行（需求 3） ---- */
   shop: ShopState;
 
@@ -342,6 +355,12 @@ export function createInitialState(now = Date.now()): GameState {
     arenaTimer: 0,
     arenaBuffSeconds: 0,
     sectEventTimer: 0,
+    // 开局定在春天：灵草与灵木的第一波加成能让新手期顺一点
+    season: 0,
+    seasonSeconds: 0,
+    weatherId: null,
+    weatherSeconds: 0,
+    weatherTimer: WEATHER_ROLL_INTERVAL,
     shop: createEmptyShop(),
     daoYun: D(0),
     ascensions: 0,

@@ -12,6 +12,7 @@ import ServantPanel from './components/ServantPanel';
 import BuildingsPanel from './components/BuildingsPanel';
 import ResearchPanel from './components/ResearchPanel';
 import RealmPanel from './components/RealmPanel';
+import SeasonPanel, { SeasonStrip } from './components/SeasonPanel';
 import AscendPanel from './components/AscendPanel';
 import StonePanel from './components/StonePanel';
 import SectPanel from './components/SectPanel';
@@ -80,6 +81,7 @@ function CultivationTab() {
       </div>
       <div className="layout__right">
         <RealmPanel />
+        <SeasonPanel />
         <StonePanel />
         <AscendPanel />
       </div>
@@ -191,6 +193,8 @@ export default function App() {
       <div className="shell">
         <aside className="shell__side" aria-label="资源">
           <ResourceBar />
+          {/* 季节会改变所有资源产出，所以放在资源栏下面常驻可见（需求 1） */}
+          <SeasonStrip />
         </aside>
 
         <div className="shell__main">

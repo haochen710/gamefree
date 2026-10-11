@@ -2008,3 +2008,168 @@ a {
     flex: 1 1 110px;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* 季节与天象（需求 1）                                                 */
+/* ------------------------------------------------------------------ */
+
+/* 侧栏那一行紧凑条：季节会影响所有资源，所以它要常驻可见 */
+.season-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+}
+
+.season-strip__row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.season-strip__row--good { color: #2f7d4f; }
+.season-strip__row--bad { color: #a8471f; }
+.season-strip__row--mixed { color: #8a6a1f; }
+
+.season-strip__icon { font-size: 14px; }
+.season-strip__name { flex: 1; }
+.season-strip__time { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* 加成小标签 */
+.season__effects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.season-chip {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid transparent;
+}
+
+.season-chip--up {
+  background: rgba(60, 140, 90, 0.12);
+  border-color: rgba(60, 140, 90, 0.32);
+  color: #26663f;
+}
+
+.season-chip--down {
+  background: rgba(180, 70, 40, 0.1);
+  border-color: rgba(180, 70, 40, 0.3);
+  color: #943d1c;
+}
+
+/* 当前天象 */
+.weather {
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.weather--good { border-color: rgba(60, 140, 90, 0.45); background: rgba(60, 140, 90, 0.07); }
+.weather--bad { border-color: rgba(180, 70, 40, 0.45); background: rgba(180, 70, 40, 0.06); }
+.weather--mixed { border-color: rgba(180, 140, 40, 0.5); background: rgba(180, 140, 40, 0.08); }
+
+.weather__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.weather__icon { font-size: 18px; }
+.weather__name { font-weight: 600; }
+.weather__time { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+.weather__desc {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.weather__tone {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid currentColor;
+}
+
+.weather__tone--good { color: #2f7d4f; }
+.weather__tone--bad { color: #a8471f; }
+.weather__tone--mixed { color: #8a6a1f; }
+
+/* 全年图鉴 */
+.season__book {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.season__book > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.season__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.season-card {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.season-card--current {
+  border-color: var(--accent, #7a603c);
+  background: rgba(122, 96, 60, 0.09);
+}
+
+.season-card__head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.season-card__icon { font-size: 16px; }
+.season-card__name { font-weight: 600; }
+
+.season-card__now {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--accent, #7a603c);
+}
+
+.season__table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.season__table th,
+.season__table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.season__table th {
+  color: var(--muted);
+  font-weight: 500;
+}
+

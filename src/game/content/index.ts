@@ -11,6 +11,7 @@
  *   travel.ts       个人游历区域（需求 1）
  *   secretRealms.ts 秘境（发现机制、冷却、人数产出）
  *   sectActivity.ts 心得、宗门随机事件、大比（需求 4）
+ *   seasons.ts      季节与天象（需求 1）
  *   realms.ts       境界体系、突破成功率、时间尺度
  *   recipes.ts      丹方、器方、炼丹炼器品阶
  *   sect.ts         弟子资质、宗门品阶、招收规则、名字生成
@@ -27,6 +28,7 @@ export * from './map';
 export * from './travel';
 export * from './secretRealms';
 export * from './sectActivity';
+export * from './seasons';
 export * from './realms';
 export * from './recipes';
 export * from './sect';

@@ -19,10 +19,12 @@ import {
   SEED_MAP,
   hastenQiCost,
   hastenStoneCost,
+  isBasicMaterial,
   type MaterialId,
   type SeedDef,
 } from './content';
 import { addItem, getPlotCapacity } from './engine';
+import { getEnvironmentMaterialBonus } from './season';
 import { pushJournal } from './disciples';
 import { gameRandom, randomId, type RandomSource } from './random';
 import type { GameState, Planting } from './state';
@@ -169,7 +171,11 @@ export function harvestPlanting(state: GameState, id: string): HarvestResult {
   if (!planting || !isPlantingReady(planting)) return { state, gains: [] };
 
   const seed = SEED_MAP[planting.material];
-  const amount = Math.max(1, Math.floor(seed?.yield ?? 1));
+  // 季节与天象会改变基础材料的收成（需求 1）：春天种灵草比冬天多收四成多
+  const seasonal = isBasicMaterial(planting.material)
+    ? Math.max(0, 1 + getEnvironmentMaterialBonus(state, planting.material))
+    : 1;
+  const amount = Math.max(1, Math.floor((seed?.yield ?? 1) * seasonal));
   const def = MATERIAL_MAP[planting.material];
 
   let next = addItem(state, planting.material, D(amount));

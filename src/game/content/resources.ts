@@ -273,6 +273,20 @@ export function isResourceId(id: ItemId): id is ResourceId {
   return RESOURCE_ID_SET.has(id);
 }
 
+const RARE_MATERIAL_SET = new Set<string>(RARE_MATERIAL_IDS);
+
+/**
+ * 这个物品是不是「**基础材料**」（材料里除稀有材料之外的那几种）。
+ *
+ * 季节与天象只影响基础材料的产出：稀有材料来自秘境深处，
+ * 不该被地表的气候左右 —— 否则一年里总有一段时间刷不到星辰砂。
+ */
+export function isBasicMaterial(id: ItemId): id is MaterialId {
+  return MATERIAL_ID_SET.has(id) && !RARE_MATERIAL_SET.has(id);
+}
+
+const MATERIAL_ID_SET = new Set<string>(MATERIAL_IDS);
+
 
 export interface ItemDef {
   id: ItemId;

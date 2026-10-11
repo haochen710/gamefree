@@ -42,6 +42,7 @@ import {
   YIELD_VARIANCE_MAX,
   YIELD_VARIANCE_MIN,
   expeditionSlots,
+  isBasicMaterial,
   type ItemId,
   type LootEntry,
   type MaterialId,
@@ -61,6 +62,7 @@ import {
   recordDiscoveryFailure,
 } from './engine';
 import { getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
+import { getEnvironmentMaterialBonus, getWeatherEffects } from './season';
 import { addSeeds } from './planting';
 import type { Disciple, Expedition, GameState } from './state';
 
@@ -244,9 +246,10 @@ export function resolveExpedition(
   const yieldFactor = Math.min(Math.max(powerRatio, MIN_YIELD_FACTOR), MAX_YIELD_FACTOR);
   const sizeFactor = getPartySizeFactor(def, partySize);
   const artifacts = getArtifactBonuses(state);
+  const weather = getWeatherEffects(state);
   const yieldMultiplier =
     state.buffs.yieldMultiplier *
-    (1 + artifacts.expeditionYield + getStructureBonus(state, 'expeditionYieldBonus'));
+    (1 + artifacts.expeditionYield + getStructureBonus(state, 'expeditionYieldBonus') + (weather.expeditionYield ?? 0));
 
   /* ---- 1. 计算产出 ---- */
   const pool = def.loot.filter((entry) => !entry.guaranteed);
@@ -259,9 +262,15 @@ export function resolveExpedition(
 
   for (const entry of picked) {
     const variance = YIELD_VARIANCE_MIN + random() * (YIELD_VARIANCE_MAX - YIELD_VARIANCE_MIN);
+    /*
+     * 季节与天象对**基础材料**的加成在这里生效（需求 1）。
+     * 稀有材料不吃这个加成：它们是秘境深处的产物，不该被地表气候左右 ——
+     * 否则一年里总有一段时间刷不到星辰砂，节奏会变得莫名其妙。
+     */
+    const seasonal = isBasicMaterial(entry.item) ? 1 + getEnvironmentMaterialBonus(state, entry.item) : 1;
     const amount = Math.max(
       1,
-      Math.floor(entry.amount * yieldFactor * sizeFactor * yieldMultiplier * variance),
+      Math.floor(entry.amount * yieldFactor * sizeFactor * yieldMultiplier * variance * Math.max(0, seasonal)),
     );
     working = addItem(working, entry.item, D(amount));
     gains.push({
@@ -355,6 +364,12 @@ export function resolveExpedition(
     ),
   );
   const baseRate = powerRatio > 0 ? def.baseCasualty / powerRatio : MAX_CASUALTY_RATE;
+  /*
+   * 注意：天象**不影响**伤亡率。
+   * 试过让血月 / 罡风临时抬高伤亡，结果是把伤亡的正反馈推过临界点 ——
+   * 多死几个 → 队伍凑不满 → 战力比下降 → 伤亡更高 → 弟子全灭。
+   * 随机天象不该有能力掀翻宗门，所以那两条天象改用别的方式做代价。
+   */
   const casualtyRate = Math.min(Math.max(baseRate, 0), MAX_CASUALTY_RATE) * (1 - safety);
 
   const casualties: { id: string; name: string }[] = [];
@@ -447,7 +462,8 @@ export function resolveExpedition(
 export function getExpeditionSpeed(state: GameState): number {
   const artifacts = getArtifactBonuses(state);
   const buildings = getStructureBonus(state, 'expeditionSpeedBonus');
-  return state.buffs.speedMultiplier * (1 + artifacts.expeditionSpeed + buildings);
+  const weather = getWeatherEffects(state).expeditionSpeed ?? 0;
+  return Math.max(0.1, state.buffs.speedMultiplier * (1 + artifacts.expeditionSpeed + buildings + weather));
 }
 
 export function tickExpeditions(state: GameState, dt: number, random: RandomSource = gameRandom): GameState {

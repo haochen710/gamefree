@@ -25,12 +25,16 @@ import {
   RESOURCE_IDS,
   SECRET_REALMS,
   SECRET_REALM_MAP,
+  SEASON_SECONDS,
+  SEASONS,
   SEED_MAP,
   SERVANT_JOB_MAP,
   SHOP_GOOD_MAP,
   TECHS,
   TECH_MAP,
   TRAVEL_REGION_MAP,
+  WEATHER_MAP,
+  WEATHER_ROLL_INTERVAL,
   createEmptyBuffs,
   type ActiveBuffs,
   type AptitudeId,
@@ -135,6 +139,13 @@ export interface SerializedGame {
   arb?: number;
   /** sectEventTimer：距离下次宗门随机事件的秒数（需求 4） */
   se?: number;
+  /** 季节与天象（需求 1）：sn 季节下标 / ss 本季已过秒数 */
+  sn?: number;
+  ss?: number;
+  /** wt 天象 id / ws 剩余秒数 / wr 距下次判定秒数 */
+  wt?: string | null;
+  ws?: number;
+  wr?: number;
   dy: string;
   asc: number;
   tq: string;
@@ -197,6 +208,13 @@ export function serialize(state: GameState): SerializedGame {
     arn: state.arenaTimer,
     arb: state.arenaBuffSeconds,
     se: state.sectEventTimer,
+    // 季节与天象（需求 1）：`sn` 季节下标 / `ss` 本季已过秒数
+    // `wt` 天象 id / `ws` 天象剩余秒数 / `wr` 距下次天象判定秒数
+    sn: state.season,
+    ss: state.seasonSeconds,
+    wt: state.weatherId,
+    ws: state.weatherSeconds,
+    wr: state.weatherTimer,
     dy: state.daoYun.toString(),
     asc: state.ascensions,
     tq: state.totalQi.toString(),
@@ -660,6 +678,16 @@ export function deserialize(raw: unknown): GameState | null {
     arenaTimer: toFloat(data.arn, ARENA_INTERVAL_SECONDS, 0, 1e9),
     arenaBuffSeconds: toFloat(data.arb, 0, 0, 1e9),
     sectEventTimer: toFloat(data.se, 0, 0, 1e9),
+    // 季节与天象（需求 1）。旧存档没有这几个字段时回到"春天、无天象"。
+    season: toInt(data.sn, 0, 0, SEASONS.length - 1),
+    seasonSeconds: toFloat(data.ss, 0, 0, SEASON_SECONDS),
+    // 天象 id 必须是表里有的，否则当作没有天象（同时把计时归零，免得挂着一个空 id）
+    weatherId: typeof data.wt === 'string' && WEATHER_MAP[data.wt] ? data.wt : null,
+    weatherSeconds:
+      typeof data.wt === 'string' && WEATHER_MAP[data.wt]
+        ? toFloat(data.ws, 0, 0, WEATHER_MAP[data.wt].duration)
+        : 0,
+    weatherTimer: toFloat(data.wr, WEATHER_ROLL_INTERVAL, 0, WEATHER_ROLL_INTERVAL),
     daoYun: toDec(data.dy, 0),
     ascensions: toInt(data.asc, 0, 0, Number.MAX_SAFE_INTEGER),
     totalQi: toDec(data.tq, 0),

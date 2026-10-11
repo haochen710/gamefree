@@ -29,6 +29,7 @@ import { tickDisciples } from './disciples';
 import { tickExpeditions } from './expeditions';
 import { tickPlantings } from './planting';
 import { tickResearch } from './research';
+import { tickSeason } from './season';
 import { tickArena, tickSectEvents } from './sectActivity';
 import { tickShop } from './shop';
 import { tickTravel } from './travel';
@@ -62,6 +63,8 @@ export function applyTick(state: GameState, dt: number, random: RandomSource = g
   if (dt <= 0) return state;
 
   let next = state;
+  // 季节与天象排在最前面：它决定这一 tick 的产出该按哪个季节算（需求 1）
+  next = tickSeason(next, dt, random);
   next = produceResources(next, dt);
   next = autoRefine(next, dt);
   next = tickMind(next, dt);

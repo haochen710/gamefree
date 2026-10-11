@@ -335,6 +335,17 @@ function runSimulation(seed: number): SimResult {
           if (!engine.isRealmDiscovered(state, realm)) continue;
           const party = expeditions.autoSelectParty(state, realm.id);
           if (party.length < realm.minParty) continue;
+          /*
+           * 理性玩家不会把队伍送进去送死。
+           *
+           * 这道闸是补上来的：早先的 AI 只看"能不能派出人"，不看战力够不够，
+           * 于是它会把刚招进来的弟子成批送进远低于推荐战力的秘境。
+           * 而伤亡是个正反馈 —— 多死几个 → 队伍凑不满 → 战力比更低 → 死得更多 ——
+           * 一旦踩进去就再也爬不出来：实测 30 天结束时**弟子 0 人**、心得 0。
+           * 那不是游戏数值的问题，是 AI 的问题，所以修在这里而不是改平衡。
+           */
+          const power = disciples.getPartyPower(state, party);
+          if (power < realm.requiredPower * 0.9) continue;
           const next = expeditions.startExpedition(state, realm.id, party);
           if (next !== state) {
             state = next;

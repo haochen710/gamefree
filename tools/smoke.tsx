@@ -72,11 +72,16 @@ import {
   REALMS,
   SECRET_REALMS,
   SECRET_REALM_MAP,
+  SEASONS,
+  SEASON_SECONDS,
   SEEDS,
   SERVANT_BONUS_PER_HEAD,
   SHOP_GOODS,
   STONE_REFINE_COST,
   STONE_REFINE_OUTPUT,
+  WEATHERS,
+  WEATHER_MAP,
+  isBasicMaterial,
   BASE_STORAGE,
   STRUCTURES,
   TECHS,
@@ -99,6 +104,7 @@ import * as planting from '../src/game/planting';
 import * as shop from '../src/game/shop';
 import * as travel from '../src/game/travel';
 import * as sectActivity from '../src/game/sectActivity';
+import * as seasonModule from '../src/game/season';
 import { applyTick } from '../src/game/tick';
 import { gameRandom } from '../src/game/random';
 import { applyOffline, deserialize, exportCode, importCode, serialize } from '../src/game/save';
@@ -827,11 +833,18 @@ section('[8] 离线收益');
 
   const oneHour = applyOffline(state, 3600 * 1000, makeRandom(1));
   const qiGain = oneHour.report?.gains.find((g) => g.id === 'qi')?.amount.toNumber() ?? 0;
-  check('1 小时离线按 50% 结算', Math.abs(qiGain - 6 * 3600 * 0.5) < 1e-6, `实际 ${qiGain}`);
+  // 期望值从**实际产量**推出来，而不是写死 6 —— 季节与天象都会改变每秒产量
+  const perSecond = engine.getProduction(oneHour.state).qi.toNumber();
+  check('1 小时离线按 50% 结算', Math.abs(qiGain - perSecond * 3600 * 0.5) < 1e-6, `实际 ${qiGain}`);
 
   const longAway = applyOffline(state, 100 * 3600 * 1000, makeRandom(1));
   const capped = longAway.report?.gains.find((g) => g.id === 'qi')?.amount.toNumber() ?? 0;
-  check('超长离线被 8 小时上限截断', Math.abs(capped - 6 * 8 * 3600 * 0.5) < 1e-6, `实际 ${capped}`);
+  const cappedPerSecond = engine.getProduction(longAway.state).qi.toNumber();
+  check(
+    '超长离线被 8 小时上限截断',
+    Math.abs(capped - cappedPerSecond * 8 * 3600 * 0.5) < 1e-6,
+    `实际 ${capped}`,
+  );
 
   const shortAway = applyOffline(state, 10 * 1000, makeRandom(1));
   check('短暂离开不触发离线结算', shortAway.report === null);
@@ -2739,6 +2752,221 @@ section('[26] 宗门建筑与大比（需求 4）');
   /* ---- 计时器按固定间隔判定，而不是每帧掷骰 ---- */
   const ticked = sectActivity.tickSectEvents(hall, 1, makeRandom(1));
   check('不足一个间隔时只累积计时器', ticked.sectEventTimer > 0 && ticked.journal.length === hall.journal.length);
+}
+
+/* ------------------------------------------------------------------ */
+/* 27. 季节与天象（需求 1）                                              */
+/* ------------------------------------------------------------------ */
+section('[27] 季节与天象（需求 1）');
+{
+  /* ---- 内容表本身 ---- */
+  check('共有四季', SEASONS.length === 4, SEASONS.map((s) => s.name).join('、'));
+  check('天象表至少 8 条', WEATHERS.length >= 8, `${WEATHERS.length} 条`);
+  check('季节 id 唯一', new Set(SEASONS.map((s) => s.id)).size === SEASONS.length);
+
+  // 每一季都要有得有失：否则玩家只会等到"最好的季节"再干活
+  const lopsided = SEASONS.filter((s) => {
+    const all = [...Object.values(s.resources), ...Object.values(s.materials)];
+    return !all.some((v) => v > 0) || !all.some((v) => v < 0);
+  });
+  check('每一季都同时有增益与减益', lopsided.length === 0, lopsided.map((s) => s.name).join('、'));
+
+  const badWeather = WEATHERS.filter((w) => !['good', 'bad', 'mixed'].includes(w.tone) || w.weight <= 0 || w.duration <= 0);
+  check('每条天象的倾向 / 权重 / 时长都合法', badWeather.length === 0, badWeather.map((w) => w.name).join('、'));
+  check('天象三种倾向都有', new Set(WEATHERS.map((w) => w.tone)).size === 3);
+
+  /*
+   * 硬约束：天象**不许**提供发现秘境的概率。
+   * 上一轮的需求写明「发现概率增加只能通过寻宝宝盘增加」，
+   * 这一轮加天象时最容易顺手破坏它，所以在这里钉死。
+   */
+  check('没有任何天象提供发现秘境的概率', WEATHERS.every((w) => !('discovery' in w.effects)));
+
+  /* ---- 季节推进 ---- */
+  const fresh = createInitialState(0);
+  check('开局是春天', seasonModule.getSeason(fresh).id === 'spring');
+  check('开局有天象判定计时', fresh.weatherTimer > 0);
+
+  const midSeason = seasonModule.tickSeason(fresh, SEASON_SECONDS / 2, makeRandom(1));
+  check('半季之后仍是同一季', seasonModule.getSeason(midSeason).id === 'spring');
+  check(
+    '本季进度过了一半',
+    Math.abs(seasonModule.getSeasonProgress(midSeason) - 0.5) < 1e-6,
+    `${(seasonModule.getSeasonProgress(midSeason) * 100).toFixed(0)}%`,
+  );
+
+  const nextSeason = seasonModule.tickSeason(fresh, SEASON_SECONDS + 1, makeRandom(1));
+  check('满一季之后换季', seasonModule.getSeason(nextSeason).id === 'summer', seasonModule.getSeason(nextSeason).name);
+
+  const fourSeasons = seasonModule.tickSeason(fresh, SEASON_SECONDS * 4, makeRandom(1));
+  check('四季一轮回', seasonModule.getSeason(fourSeasons).id === 'spring');
+
+  // 粗粒度路径（离线 / 模拟器一次跳很久）
+  const coarse = seasonModule.tickSeason(fresh, SEASON_SECONDS * 6 + 30, makeRandom(1));
+  check('粗粒度推进能把季节推到位', coarse.season === 2, `落在第 ${coarse.season} 季（应为 2 秋）`);
+  check('粗粒度推进不会让本季进度溢出一季', coarse.seasonSeconds < SEASON_SECONDS, `${coarse.seasonSeconds}`);
+
+  /* ---- 天象出现与到期 ---- */
+  const summoned = seasonModule.summonWeather(fresh, makeRandom(3));
+  check('可以召来天象', summoned.weatherId !== null, WEATHER_MAP[summoned.weatherId as string]?.name ?? '');
+  check('召来的天象有正数剩余时长', summoned.weatherSeconds > 0);
+  const weatherDef = WEATHER_MAP[summoned.weatherId as string];
+  const afterWeather = seasonModule.tickSeason(summoned, weatherDef.duration + 1, makeRandom(1));
+  check('天象到时自然散去', afterWeather.weatherId === null);
+
+  const rolled = seasonModule.tickSeason({ ...fresh, weatherTimer: 0.01 }, 0.02, fixedRandom(0.01));
+  check('判定点命中概率时会挂上天象', rolled.weatherId !== null);
+
+  /* ---- 季节真的改变了产量 ---- */
+  {
+    let farm = forceBuild(createInitialState(0), 'spiritArray', 10); // 灵气
+    farm = forceBuild(farm, 'herbField', 10); // 灵草
+    const spring = { ...farm, season: 0, weatherId: null };
+    const winter = { ...farm, season: 3, weatherId: null };
+    const springQi = engine.getProduction(spring).qi.toNumber();
+    const winterQi = engine.getProduction(winter).qi.toNumber();
+    const springHerb = engine.getProduction(spring).herb.toNumber();
+    const winterHerb = engine.getProduction(winter).herb.toNumber();
+
+    check('春天灵气高于冬天', springQi > winterQi, `${springQi.toFixed(2)} vs ${winterQi.toFixed(2)}`);
+    check('春天灵草远高于冬天', springHerb > winterHerb * 1.5, `${springHerb.toFixed(2)} vs ${winterHerb.toFixed(2)}`);
+    // 春天灵气 +10%、冬天 0：比值应当正好是 1.1
+    check(
+      '季节对资源的加成是加算的（春天灵气 = 冬天 × 1.1）',
+      Math.abs(springQi / winterQi - 1.1) < 1e-9,
+      `×${(springQi / winterQi).toFixed(4)}`,
+    );
+  }
+
+  /* ---- 天象真的改变了全局倍率 / 修行速度 / 突破率 ---- */
+  {
+    const base = { ...createInitialState(0), weatherId: null };
+    const good = { ...base, weatherId: 'purpleQi' };
+    const bad = { ...base, weatherId: 'bitterCold' };
+    check(
+      '吉象抬高全局倍率',
+      engine.getGlobalMultiplier(good).gt(engine.getGlobalMultiplier(base)),
+      `${engine.getGlobalMultiplier(base).toNumber().toFixed(2)} → ${engine.getGlobalMultiplier(good).toNumber().toFixed(2)}`,
+    );
+    check(
+      '凶象压低全局倍率',
+      engine.getGlobalMultiplier(bad).lt(engine.getGlobalMultiplier(base)),
+      `→ ${engine.getGlobalMultiplier(bad).toNumber().toFixed(2)}`,
+    );
+    check(
+      '灵雨加快弟子修行',
+      engine.getCultivationSpeedMultiplier({ ...base, weatherId: 'spiritRain' }) >
+        engine.getCultivationSpeedMultiplier(base),
+    );
+    check(
+      '极寒拖慢弟子修行',
+      engine.getCultivationSpeedMultiplier({ ...base, weatherId: 'bitterCold' }) <
+        engine.getCultivationSpeedMultiplier(base),
+    );
+    check(
+      '天雷劫云提高突破成功率',
+      engine.getSuccessRate({ ...base, weatherId: 'thunderCloud' }, false) >
+        engine.getSuccessRate(base, false),
+    );
+    check(
+      '天象不影响发现秘境的概率',
+      Math.abs(engine.getDiscoveryChance(good) - engine.getDiscoveryChance(base)) < 1e-9 &&
+        Math.abs(engine.getDiscoveryChance(bad) - engine.getDiscoveryChance(base)) < 1e-9,
+    );
+  }
+
+  /* ---- 季节影响基础材料，但不影响稀有材料 ---- */
+  {
+    const base = { ...createInitialState(0), season: 0, weatherId: null };
+    check('春天妖丹有加成', seasonModule.getEnvironmentMaterialBonus(base, 'demonCore') > 0);
+    check('春天寒玉是减益', seasonModule.getEnvironmentMaterialBonus(base, 'coldJade') < 0);
+    check('基础材料判定正确', isBasicMaterial('demonCore') && isBasicMaterial('coldJade'));
+    check('稀有材料不算基础材料', !isBasicMaterial('starSand') && !isBasicMaterial('chaosQi'));
+    check('资源不算材料', !isBasicMaterial('qi'));
+  }
+
+  /* ---- 存档往返 ---- */
+  {
+    const savedState: GameState = {
+      ...createInitialState(0),
+      season: 2,
+      seasonSeconds: 41.5,
+      weatherId: 'bloodMoon',
+      weatherSeconds: 17,
+      weatherTimer: 9,
+    };
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(savedState))));
+    check('季节与天象能存档还原', round !== null);
+    if (round) {
+      check('季节下标保留', round.season === 2);
+      check('本季进度保留', Math.abs(round.seasonSeconds - 41.5) < 1e-9);
+      check('天象保留', round.weatherId === 'bloodMoon' && Math.abs(round.weatherSeconds - 17) < 1e-9);
+      check('天象判定计时保留', Math.abs(round.weatherTimer - 9) < 1e-9);
+    }
+
+    // 非法天象 id 必须被丢掉、剩余时长归零（免得挂着一个空 id）
+    const junk = deserialize({ v: 4, at: 0, wt: 'notAWeather', ws: 30, sn: 99, ss: 1e9 });
+    check('非法天象被丢弃', junk !== null && junk.weatherId === null);
+    if (junk) {
+      check('非法天象的剩余时长归零', junk.weatherSeconds === 0);
+      check('越界的季节下标被夹回范围', junk.season >= 0 && junk.season < SEASONS.length);
+      check('越界的本季进度被夹回一季内', junk.seasonSeconds <= SEASON_SECONDS);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 28. 全局倍率曲线（需求 2）                                            */
+/* ------------------------------------------------------------------ */
+section('[28] 全局倍率曲线（需求 2）');
+{
+  // 玩家原话：「全局倍率增加得有点快了，刚筑基就三倍了，
+  //            而且每一小等级都加百分之五的全局倍率也有点高了」
+  check('筑基期的境界倍率不再是 ×3', REALMS[1].realmMultiplier < 3, `×${REALMS[1].realmMultiplier}`);
+  check('炼气期的境界倍率仍是 ×1', REALMS[0].realmMultiplier === 1);
+
+  // 每一小境界的加成统一压到 4% 以下（仙人只有一层，单独放宽）
+  const layerBonuses = REALMS.slice(0, 9).map((r) => r.layerBonus);
+  check(
+    '每小境界的加成统一为 4%',
+    layerBonuses.every((b) => Math.abs(b - 0.04) < 1e-9),
+    layerBonuses.join(' / '),
+  );
+  // 仙人只有一层，单独放宽；前九境一律不超过 5%
+  check('前九境的每层加成不超过 5%', REALMS.slice(0, 9).every((r) => r.layerBonus <= 0.05), REALMS.slice(0, 9).map((r) => r.layerBonus).join(' / '));
+
+  /*
+   * 这条是这轮最重要的护栏。
+   *
+   * 我一开始按等比把整条 realmMultiplier 压平（×3 → ×2.9），结果经济雪崩：
+   * 30 天模拟结束时弟子 0 人、心得 0。因为 realmMultiplier 就是整个经济的刻度。
+   * 所以最后的做法是"只压早期台阶、中后期补回来、顶端不动"——
+   * 下面这条断言就是钉住"顶端不许动"。
+   */
+  check(
+    '最高的境界倍率没有被下调（经济总量不变）',
+    REALMS[REALMS.length - 1].realmMultiplier === 19683,
+    `×${REALMS[REALMS.length - 1].realmMultiplier}`,
+  );
+
+  // 境界倍率必须单调不减，否则"越修越弱"
+  check(
+    '境界倍率单调不减',
+    REALMS.every((r, i) => i === 0 || r.realmMultiplier >= REALMS[i - 1].realmMultiplier),
+  );
+  // 参悟下一层的成本也必须单调递增（不然高境界反而更便宜）
+  check(
+    '首层参悟成本单调递增',
+    REALMS.every((r, i) => i === 0 || r.baseLayerCost > REALMS[i - 1].baseLayerCost),
+  );
+
+  // 层加成被压平之后，同一境界内的倍率跨度不能太大（这是"压平曲线"的本意）
+  const spread = REALMS.slice(0, 9).map((r) => 1 + r.layerBonus * r.layerCount);
+  check(
+    '一层到圆满之间的倍率跨度不超过 1.4 倍',
+    spread.every((s) => s <= 1.4),
+    `最大 ×${Math.max(...spread).toFixed(2)}`,
+  );
 }
 
 /* ------------------------------------------------------------------ */

@@ -71,6 +71,7 @@ import {
   type ServantJobId,
 } from './content';
 import { gameRandom, type RandomSource } from './random';
+import { getEnvironmentResourceBonus, getWeatherEffects, getWeatherProductionBonus } from './season';
 import type { GameState, ResourceMap } from './state';
 
 /** 一份消耗清单：资源与材料混用 */
@@ -212,7 +213,7 @@ export function getGlobalMultiplier(state: GameState): Decimal {
   const artifact = getArtifactBonuses(state).production;
   return getRealmMultiplier(state)
     .mul(getDaoYunMultiplier(state))
-    .mul(1 + artifact + getStructureBonus(state, 'productionBonus'))
+    .mul(1 + artifact + getStructureBonus(state, 'productionBonus') + getWeatherProductionBonus(state))
     .mul(state.buffs.productionMultiplier)
     .mul(getInjuryMultiplier(state))
     .mul(getTravelMultiplier(state));
@@ -289,7 +290,10 @@ export function getStructureBonus(state: GameState, key: StructureBonusKey): num
 export function getCultivationSpeedMultiplier(state: GameState): number {
   const buildings = getStructureBonus(state, 'cultivationBonus');
   const arena = state.arenaBuffSeconds > 0 ? ARENA_BUFF_BONUS : 0;
-  return 1 + buildings + arena;
+  // 天象（灵雨 / 极寒之潮）临时改变修行速度（需求 1）。
+  // 它是独立的一项，所以不会永久抬高前面算出来的那个天花板。
+  const weather = getWeatherEffects(state).cultivation ?? 0;
+  return Math.max(0, 1 + buildings + arena + weather);
 }
 
 /**
@@ -605,13 +609,27 @@ export function getProduction(state: GameState): ResourceMap {
     out[job.resource] = out[job.resource].mul(1 + count * SERVANT_BONUS_PER_HEAD);
   }
 
+  /*
+   * 季节与天象：作用在**每一种资源**上（需求 1）。
+   *
+   * 必须放在这里而不是 getGlobalMultiplier 里 —— 因为四季对不同资源
+   * 的加成不一样（春 +45% 灵草、冬 -35% 灵草），一个全局倍率表达不了。
+   * 放在这里的好处是：资源栏显示的每秒产量、实际落袋的产量、
+   * 以及"丹药给 N 秒产量"这类一次性结算，全都自动吃到了季节加成。
+   */
+  for (const id of RESOURCE_IDS) {
+    const bonus = getEnvironmentResourceBonus(state, id);
+    if (bonus !== 0) out[id] = out[id].mul(Math.max(0, 1 + bonus));
+  }
+
   return out;
 }
 
-/** 单个设施已计入全局倍率的每秒产量 */
+/** 单个设施已计入全局倍率与季节的每秒产量 */
 export function getGeneratorOutput(state: GameState, def: GeneratorDef): Decimal {
   const count = state.buildings[def.id] ?? 0;
-  return D(count).mul(def.baseOutput).mul(getGlobalMultiplier(state));
+  const seasonal = Math.max(0, 1 + getEnvironmentResourceBonus(state, def.produces));
+  return D(count).mul(def.baseOutput).mul(getGlobalMultiplier(state)).mul(seasonal);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1030,11 +1048,12 @@ export function getSuccessRate(state: GameState, usePill: boolean): number {
     usePill && realm.breakthroughPill && (state.pills[realm.breakthroughPill] ?? 0) > 0
       ? BREAKTHROUGH_PILL_BONUS
       : 0;
-  // 雷池等建筑也提供突破加成
+  // 雷池等建筑也提供突破加成；天象（天雷劫云）也会临时加一点（需求 1）
   const building = getStructureBonus(state, 'breakthroughBonus');
+  const weather = getWeatherEffects(state).breakthrough ?? 0;
 
   return Math.min(
-    realm.baseSuccess + pity + state.globalBreakthroughBonus + pill + building,
+    realm.baseSuccess + pity + state.globalBreakthroughBonus + pill + building + weather,
     BREAKTHROUGH_MAX_SUCCESS,
   );
 }

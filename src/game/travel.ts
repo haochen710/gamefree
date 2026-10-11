@@ -28,6 +28,7 @@ import {
   TRAVEL_REGIONS,
   YIELD_VARIANCE_MAX,
   YIELD_VARIANCE_MIN,
+  isBasicMaterial,
   type ItemId,
   type MaterialId,
   type TravelRegionDef,
@@ -44,6 +45,7 @@ import {
   recordDiscoveryFailure,
 } from './engine';
 import { pushJournal } from './disciples';
+import { getEnvironmentMaterialBonus } from './season';
 import { addSeeds } from './planting';
 import { gameRandom, weightedDraw, type RandomSource } from './random';
 import type { GameState, PersonalTravel } from './state';
@@ -177,7 +179,9 @@ export function resolveTravel(
 
   for (const entry of picked) {
     const variance = YIELD_VARIANCE_MIN + random() * (YIELD_VARIANCE_MAX - YIELD_VARIANCE_MIN);
-    let amount = Math.max(1, Math.floor(entry.amount * variance));
+    // 季节与天象对基础材料的加成（需求 1）在游历里同样生效
+    const seasonal = isBasicMaterial(entry.item) ? Math.max(0, 1 + getEnvironmentMaterialBonus(state, entry.item)) : 1;
+    let amount = Math.max(1, Math.floor(entry.amount * variance * seasonal));
     // 出门一趟至少带回 TRAVEL_MIN_STONE 灵石，
     // 保证"第一次出门一定有实在收益"
     if (entry.item === 'stone') {
