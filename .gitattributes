@@ -2,6 +2,12 @@
 # CI 跑在 ubuntu 上，不统一的话 Windows 提交的 CRLF 会造成满屏无意义 diff。
 * text=auto eol=lf
 
+# Windows 批处理例外：必须是 CRLF + GBK 编码。
+# cmd.exe 按当前代码页解析批处理文件，且 if(...) 多行块在 LF 下会解析失败，
+# 所以禁止 git 对它做任何换行或编码转换（-text = 完全按二进制处理）。
+*.cmd -text
+*.bat -text
+
 # 二进制文件不要被当成文本处理
 *.png binary
 *.jpg binary
