@@ -2919,6 +2919,68 @@ a {
   margin-bottom: 2px;
 }
 
+/* 自动合成（本轮需求 2） */
+.auto-refine {
+  margin: 8px 0 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(90, 120, 170, 0.4);
+  border-radius: var(--radius);
+  background: rgba(90, 120, 170, 0.06);
+}
+
+.auto-refine__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.refine__target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.refine__target input {
+  width: 84px;
+  margin: 0 4px;
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.7);
+  font: inherit;
+  font-size: 12px;
+  text-align: right;
+}
+
+/* 循环探索（本轮需求 4） */
+.repeat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 7px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.repeat-row input {
+  width: 62px;
+  margin: 0 4px;
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.7);
+  font: inherit;
+  font-size: 12px;
+  text-align: right;
+}
+
 /* 资源富集区秘境的「开启」区（需求 1） */
 .realm-card__open {
   margin-top: 8px;

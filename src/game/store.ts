@@ -107,7 +107,7 @@ export interface GameStore {
   holdArena(): void;
 
   /* 秘境 */
-  startExpedition(realmId: string, ids: string[]): void;
+  startExpedition(realmId: string, ids: string[], repeat?: number): void;
   /** 掌门独自前往已发现的秘境（需求 5） */
   startSoloRealm(realmId: string): void;
   /** 掌门亲自做普通探索（需求 5）：开宗前也能用 */
@@ -118,6 +118,8 @@ export interface GameStore {
   refine(recipeId: string, times: number): void;
   /** 花资源开启资源富集区的秘境（需求 1） */
   openRealm(realmId: string): void;
+  /** 设置某条配方的自动合成目标存量（本轮需求 2） */
+  setAutoRefineTarget(recipeId: string, target: number): void;
   /* ---- 感悟（需求 3） ---- */
   enlighten(pathId: string): void;
   cancelEnlighten(): void;
@@ -126,7 +128,7 @@ export interface GameStore {
   /** 时空穿梭（需求 3） */
   timeJump(): void;
   /** 普通探索（需求 1）：小区域还没发现秘境时只能这么做 */
-  startSurvey(regionId: string, ids: string[]): void;
+  startSurvey(regionId: string, ids: string[], repeat?: number): void;
 
   /* 丹器 */
   craftPill(id: string, count: number): void;
@@ -552,7 +554,8 @@ export const useGame = create<GameStore>()((set, get) => ({
   },
 
   /** 花资源开启资源富集区的秘境（需求 1） */
-  openRealm: (realmId) => {    set((s) => {
+  openRealm: (realmId) => {
+    set((s) => {
       const def = SECRET_REALM_MAP[realmId];
       if (!def) return {};
       const check = engine.canOpenRealm(s.game, def);
@@ -561,6 +564,17 @@ export const useGame = create<GameStore>()((set, get) => ({
         ...nextGame(s.game, engine.openRealm(s.game, def)),
         notice: `${def.name} 已开启`,
       };
+    });
+  },
+
+  /** 设置某条配方的自动合成目标存量（本轮需求 2） */
+  setAutoRefineTarget: (recipeId, target) => {
+    set((s) => {
+      const next = Math.max(0, Math.floor(target));
+      const targets = { ...s.game.autoRefineTargets };
+      if (next > 0) targets[recipeId] = next;
+      else delete targets[recipeId];
+      return { game: { ...s.game, autoRefineTargets: targets } };
     });
   },
 
@@ -643,24 +657,24 @@ export const useGame = create<GameStore>()((set, get) => ({
     });
   },
 
-  startExpedition: (realmId, ids) => {
+  startExpedition: (realmId, ids, repeat = 1) => {
     set((s) => {
       const check = expeditions.canStartExpedition(s.game, realmId, ids);
       if (!check.ok) return { notice: check.reason ?? '无法派遣' };
       return {
-        ...nextGame(s.game, expeditions.startExpedition(s.game, realmId, ids)),
+        ...nextGame(s.game, expeditions.startExpedition(s.game, realmId, ids, gameRandom, repeat)),
         notice: '已派遣弟子前往探索',
       };
     });
   },
 
   /* 普通探索（需求 1）：还没发现秘境的小区域只能这么探 */
-  startSurvey: (regionId, ids) => {
+  startSurvey: (regionId, ids, repeat = 1) => {
     set((s) => {
       const check = expeditions.canStartSurvey(s.game, regionId, ids);
       if (!check.ok) return { notice: check.reason ?? '无法派遣' };
       return {
-        ...nextGame(s.game, expeditions.startSurvey(s.game, regionId, ids)),
+        ...nextGame(s.game, expeditions.startSurvey(s.game, regionId, ids, gameRandom, repeat)),
         notice: '已派遣弟子在附近做普通探索',
       };
     });

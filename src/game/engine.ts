@@ -29,6 +29,7 @@ import {
   BUILD_QUEUE_MAX_SLOTS,
   QUEUE_UPGRADES,
   REFINE_RECIPE_MAP,
+  REFINE_RECIPES,
   DAO_YUN_BONUS,
   DAO_YUN_DIVISOR,
   DAO_YUN_EXPONENT,
@@ -63,6 +64,7 @@ import {
   SHOP_OFFER_COUNT,
   STONE_REFINE_COST,
   STONE_REFINE_OUTPUT,
+  spiritArrayCultivationBonus,
   STRUCTURES,
   TECH_MAP,
   discipleCapBySect,
@@ -365,11 +367,18 @@ export function getStructureBonus(state: GameState, key: StructureBonusKey): num
  */
 export function getCultivationSpeedMultiplier(state: GameState): number {
   const buildings = getStructureBonus(state, 'cultivationBonus');
+    /*
+     * 本轮需求 6：聚灵阵的座数也算进修行加成。
+     * 它是**设施**（generator）而不是建筑（structure），而 `getStructureBonus`
+     * 只遍历 STRUCTURES，所以这里单独加一项 —— 顺带让"聚灵阵等级"这个说法
+     * 在公式里有一个明确的位置。
+     */
+    const spiritArray = spiritArrayCultivationBonus(getBuildingCount(state, 'spiritArray'));
   const arena = state.arenaBuffSeconds > 0 ? ARENA_BUFF_BONUS : 0;
   // 天象（灵雨 / 极寒之潮）临时改变修行速度（需求 1）。
   // 它是独立的一项，所以不会永久抬高前面算出来的那个天花板。
   const weather = getWeatherEffects(state).cultivation ?? 0;
-  return Math.max(0, 1 + buildings + arena + weather);
+  return Math.max(0, 1 + buildings + spiritArray + arena + weather);
 }
 
 /**
@@ -1642,55 +1651,103 @@ export function refineStone(state: GameState, times: number): GameState {
  */
 export const AUTO_REFINE_BACKLOG_BATCHES = 3600;
 
-/** 当前自动合成档位对应的速率（批/秒），0 表示关闭 */
+/** 当前自动合成的**全局**速率（批/秒），0 表示关闭 */
 export function getAutoRefineRate(state: GameState): number {
   const level = Math.min(Math.max(Math.floor(state.autoRefineLevel), 0), AUTO_REFINE_LEVEL_MAX);
   return AUTO_REFINE_RATES[level];
 }
 
+/** 某条配方现在最多还能合成几批（受它的原料存量与产出的储存上限限制） */
+export function maxAutoRefineBatchesFor(state: GameState, recipeId: string): number {
+  const recipe = REFINE_RECIPE_MAP[recipeId];
+  if (!recipe) return 0;
+  if (getRefineGate(recipe, state) !== null) return 0;
 
-/** 现在最多还能合成几批（受灵气、灵矿与灵石储存上限三者共同限制） */
+  /*
+   * ⚠️ 原料看**存量**，产出看**余量** —— 这两者不能混。
+   *
+   * 第一版把原料也按"储存余量"（`cap - have`）算了，于是灵气快满时反而合不出东西：
+   * 明明是"有 20000 灵气、只剩 250 的空位"，却被算成"只能拿 250 灵气去合成"。
+   * 原料是**花掉**的，不是存进去的；只有产出才需要仓库有空位。
+   */
+  let limit = Number.POSITIVE_INFINITY;
+  for (const [id, amount] of Object.entries(refineCostMap(recipe)) as [ItemId, ReturnType<typeof D>][]) {
+    if (amount.lte(0)) continue;
+    limit = Math.min(limit, getAmount(state, id).div(amount).floor().toNumber());
+  }
+  if ((RESOURCE_IDS as readonly string[]).includes(recipe.output.item)) {
+    const out = recipe.output.item as ResourceId;
+    const room = getStorageCap(state, out).sub(state.resources[out]);
+    if (room.lte(0)) return 0;
+    limit = Math.min(limit, room.div(recipe.output.amount).floor().toNumber());
+  }
+  return Math.max(0, Number.isFinite(limit) ? limit : 0);
+}
+
+/** 灵石那条老接口：界面与测试还在用 */
 export function maxAutoRefineBatches(state: GameState): number {
-  const room = getStorageCap(state, 'stone').sub(state.resources.stone);
-  if (room.lte(0)) return 0;
+  return maxAutoRefineBatchesFor(state, 'stoneRefine');
+}
 
-  const byRoom = room.div(STONE_REFINE_OUTPUT).floor().toNumber();
-  const byQi = state.resources.qi.div(STONE_REFINE_COST.qi).floor().toNumber();
-  const byOre = state.resources.ore.div(STONE_REFINE_COST.ore).floor().toNumber();
-
-  return Math.max(0, Math.min(byRoom, byQi, byOre));
+/** 距离目标还差多少（产出存量低于目标才算"欠"） */
+function autoRefineShortfall(state: GameState, recipeId: string): number {
+  const recipe = REFINE_RECIPE_MAP[recipeId];
+  if (!recipe) return 0;
+  const target = state.autoRefineTargets[recipeId] ?? 0;
+  if (target <= 0) return 0;
+  const have = getAmount(state, recipe.output.item);
+  return have.gte(target) ? 0 : target - have.toNumber();
 }
 
 /**
- * 自动合成。
+ * 自动合成（本轮需求 2：从"只管灵石"扩到"管全部配方"）。
  *
- * 用 autoRefineProgress 攒成整批再合成，而不是每帧产出小数灵石 ——
- * 否则界面上会一直显示「灵石 12.37」这种数字。
+ * 需求原文：「合成栏位内所有材料都可以自动合成，可以设置需要合成到多少」。
+ *
+ * 所以规则从"按速率产灵石"改成"**按目标存量补齐**"：
+ *   - 玩家给每条配方设一个目标数（0 = 那条不管）；
+ *   - 总速率由 `autoRefineLevel` 决定（所有配方共用，见 AUTO_REFINE_RATES 的注释）；
+ *   - 每一批优先补**缺口最大**的那条配方，补到目标就自动停手。
+ *
+ * 这样"我要 2000 灵液"是一句话就能表达的意图，而不是"开 0.8 批/秒然后盯着屏幕"。
  */
 export function autoRefine(state: GameState, dt: number): GameState {
   const rate = getAutoRefineRate(state);
   if (rate <= 0 || dt <= 0) return state;
 
   const demanded = state.autoRefineProgress + rate * dt;
-  const wanted = Math.floor(demanded);
+  let wanted = Math.floor(demanded);
+  // 还没攒够一批，先记账
   if (wanted <= 0) return { ...state, autoRefineProgress: demanded };
 
-  const actual = Math.min(wanted, maxAutoRefineBatches(state));
-  // 剩下的欠账留着（等资源补上再合成），但设上限防止离线积压失控
-  const leftover = Math.min(demanded - actual, AUTO_REFINE_BACKLOG_BATCHES);
+  let next = state;
+  let done = 0;
+  let guard = 0;
+  while (done < wanted && guard < 64) {
+    guard += 1;
+    // 挑"缺口最大且还炼得动"的那条
+    const candidates = REFINE_RECIPES.map((r) => ({
+      id: r.id,
+      short: autoRefineShortfall(next, r.id),
+    }))
+      .filter((c) => c.short > 0)
+      .filter((c) => maxAutoRefineBatchesFor(next, c.id) > 0)
+      .sort((a, b) => b.short - a.short);
 
-  if (actual <= 0) return { ...state, autoRefineProgress: leftover };
+    const pick = candidates[0];
+    if (!pick) break;
 
-  return {
-    ...state,
-    resources: {
-      ...state.resources,
-      qi: state.resources.qi.sub(STONE_REFINE_COST.qi * actual),
-      ore: state.resources.ore.sub(STONE_REFINE_COST.ore * actual),
-      stone: state.resources.stone.add(STONE_REFINE_OUTPUT * actual),
-    },
-    autoRefineProgress: leftover,
-  };
+    const paid = refine(next, pick.id, 1);
+    if (paid === next) break;
+    next = paid;
+    done += 1;
+  }
+
+  /*
+   * 没做完的"欠账"不保留：目标是"补到目标就停"，攒着欠账只会在
+   * 资源突然变多的一瞬间爆发式合成，把灵气抽干（那正是上一版的老毛病）。
+   */
+  return { ...next, autoRefineProgress: 0 };
 }
 
 /* ------------------------------------------------------------------ */

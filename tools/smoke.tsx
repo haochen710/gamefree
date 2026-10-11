@@ -26,7 +26,6 @@ import ResourceBar from '../src/components/ResourceBar';
 import ActionPanel from '../src/components/ActionPanel';
 import ServantPanel from '../src/components/ServantPanel';
 import RealmPanel from '../src/components/RealmPanel';
-import StonePanel from '../src/components/StonePanel';
 import AscendPanel from '../src/components/AscendPanel';
 import SectPanel from '../src/components/SectPanel';
 import DisciplePanel from '../src/components/DisciplePanel';
@@ -122,11 +121,13 @@ import {
   REFINING_TIER_COST,
   ITEM_MAP,
   type ItemId,
+  type StructureDef,
   RICH_SUB_INDEX,
   CRAFT_BASE_SUCCESS,
   PILL_MAP,
   recruitCost,
   SHOP_GOODS,
+  spiritArrayCultivationBonus,
   STONE_REFINE_COST,
   STONE_REFINE_OUTPUT,
   WEATHERS,
@@ -151,6 +152,10 @@ import {
   canStartExpedition,
   canStartSurvey,
   canSurveyRegion,
+  startExpedition,
+  tickExpeditions,
+  MAX_EXPEDITION_REPEAT,
+  clampRepeat,
 } from '../src/game/expeditions';
 import { surveyReachRealm } from '../src/game/content';
 import {
@@ -1750,7 +1755,12 @@ section('[18] 灵石自动合成（需求 4）');
   );
   check('关闭时也不产灵石', off.resources.stone.eq(stocked.resources.stone));
 
-  const fast: GameState = { ...stocked, autoRefineLevel: AUTO_REFINE_LEVEL_MAX };
+  // 本轮需求 2：自动合成改成「按目标存量补齐」，所以要给灵石那条设一个目标
+  const fast: GameState = {
+    ...stocked,
+    autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
+    autoRefineTargets: { stoneRefine: 100000 },
+  };
   const on = applyTick(fast, 60, makeRandom(1));
   check('开启后产出灵石', on.resources.stone.gt(stocked.resources.stone), `+${fmt(on.resources.stone.sub(stocked.resources.stone))}`);
   check('开启后消耗灵气', on.resources.qi.lt(stocked.resources.qi));
@@ -1771,6 +1781,7 @@ section('[18] 灵石自动合成（需求 4）');
   const noQi: GameState = {
     ...grant(forceBuild(createInitialState(0), 'storagePouch', 10), { ore: '8000' }),
     autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
+    autoRefineTargets: { stoneRefine: 100000 },
   };
   const starved = applyTick(noQi, 60, makeRandom(1));
   check('灵气为 0 时合成不出灵石', starved.resources.stone.eq(noQi.resources.stone));
@@ -1780,6 +1791,7 @@ section('[18] 灵石自动合成（需求 4）');
   const full: GameState = {
     ...stocked,
     autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
+    autoRefineTargets: { stoneRefine: 100000 },
     resources: { ...stocked.resources, stone: stoneCap },
   };
   const noRoom = applyTick(full, 60, makeRandom(1));
@@ -1787,7 +1799,7 @@ section('[18] 灵石自动合成（需求 4）');
   check('灵石被上限截断', noRoom.resources.stone.eq(stoneCap));
 
   /* ---- 慢档比快档少烧灵气 ---- */
-  const slow = applyTick({ ...stocked, autoRefineLevel: 1 }, 60, makeRandom(1));
+  const slow = applyTick({ ...stocked, autoRefineLevel: 1, autoRefineTargets: { stoneRefine: 100000 } }, 60, makeRandom(1));
   check(
     '慢档消耗少于快档',
     slow.resources.qi.gt(on.resources.qi),
@@ -1922,7 +1934,8 @@ section('[20] 钻研与图纸（需求 6）');
   /* ---- 除基础资源设施外，建筑都有技术 / 图纸 / 境界门槛 ---- */
   // 例外只有两样：茅屋（开局唯一的居所）与储物袋
   // —— 它们是"能攒下灵气去突破"的前提，卡住它们会直接把游戏锁死
-  const UNGATED_OK = new Set(['thatchHut', 'storagePouch']);
+  // 静室是本轮需求 6 明确要的「初期就能建」，所以它刻意不带任何门槛
+  const UNGATED_OK = new Set(['thatchHut', 'storagePouch', 'quietRoom']);
   const needTech = STRUCTURES.filter(
     (s) =>
       s.group !== 'resource' &&
@@ -2257,7 +2270,6 @@ section('[22] 界面：非空状态渲染');
       ['洞府建设', <BuildingsPanel />],
       ['钻研', <ResearchPanel />],
       ['境界', <RealmPanel />],
-      ['灵石合成', <StonePanel />],
       ['飞升', <AscendPanel />],
       ['宗门', <SectPanel />],
       ['弟子', <DisciplePanel />],
@@ -3697,7 +3709,9 @@ section('[32] 善恶值 + 开宗前的随机遭遇（需求 2）');
 section('[33] 队伍上限 9 · 金丹开宗 · 仆人固定 300 · 掌门亲往（需求 3、4、5）');
 {
   /* ---- 需求 3：宗门等级越高，队伍越多，最多 9 ---- */
-  check('一品宗门 1 支队伍', expeditionSlots(1) === 1, `${expeditionSlots(1)}`);
+  // 本轮需求 7：起步从 1 支提到 3 支（1 支会让大量弟子永远排不上队、修为原地踏步）
+  check('一品宗门 3 支队伍', expeditionSlots(1) === 3, `${expeditionSlots(1)}`);
+  check('二品宗门 4 支队伍', expeditionSlots(2) === 4, `${expeditionSlots(2)}`);
   check('九品宗门 9 支队伍', expeditionSlots(9) === 9, `${expeditionSlots(9)}`);
   check('最多 9 支，不会再涨', MAX_EXPEDITION_SLOTS === 9 && expeditionSlots(99) === 9);
   check(
@@ -4805,6 +4819,166 @@ section('[42] 顺序体检：前置不能比产物更晚（需求 3）');
       }
     }
     check('富集区开启花费不会晚于该小区域的开放境界', badUnlock.length === 0, badUnlock.slice(0, 3).join('、'));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 43. 本轮：自动合成 / 循环探索 / 聚灵阵 / 起步队伍（需求 1~7）          */
+/* ------------------------------------------------------------------ */
+section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
+{
+  /* ---- 需求 2：所有配方都能自动合成，且能设目标 ---- */
+  {
+    const rich: GameState = grant(
+      {
+        ...createInitialState(0),
+        realmIndex: 4,
+        techs: { ...createInitialState(0).techs, alchemyArt: true, refiningArt: true, architecture: true },
+      },
+      { qi: '1e12', herb: '1e9', ore: '1e9', wood: '1e9', stone: '1e9', arrayCore: '1e6' },
+    );
+
+    // 给「灵液」设目标 50：跑一会儿应该补到那个数附近并停手
+    const targeted: GameState = {
+      ...rich,
+      autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
+      autoRefineTargets: { spiritEssenceRefine: 50 },
+    };
+    let t = targeted;
+    for (let i = 0; i < 60; i += 1) t = engine.autoRefine(t, 10);
+    const got = t.materials.spiritEssence.toNumber();
+    check('自动合成会补到设定的目标', got >= 50, '灵液 ' + got);
+    check('到了目标就停手（不会一直合下去）', got < 60, '灵液 ' + got);
+    check('没设目标的配方不会被自动合成', t.materials.arrayCore.eq(targeted.materials.arrayCore));
+    check('没设目标时不会消耗材料', t.resources.wood.eq(targeted.resources.wood));
+
+    // 灵石那条也走同一套（界面上它是「灵石合成」）
+    // ⚠️ 灵石是**有储存上限**的产出：先腾空仓库，否则"满了就不合"是对的、测试会误判
+    const stoneRun: GameState = {
+      ...grant(rich, { stone: '0', qi: '1e9', ore: '1e6' }),
+      autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
+      autoRefineTargets: { stoneRefine: 1000 },
+    };
+    let s2 = stoneRun;
+    for (let i = 0; i < 60; i += 1) s2 = engine.autoRefine(s2, 10);
+    check('灵石合成也在自动合成的覆盖范围内', s2.resources.stone.gt(stoneRun.resources.stone));
+  }
+
+  /* ---- 需求 5：灵石合成的成本降下来了，而且只有一份来源 ---- */
+  {
+    const recipe = REFINE_RECIPES.find((r) => r.id === 'stoneRefine');
+    check('找得到灵石合成配方', Boolean(recipe));
+    if (recipe) {
+      check('灵石合成只吃灵气与灵矿', Object.keys(recipe.cost).sort().join() === 'ore,qi');
+      check(
+        '灵石合成的成本比旧版低得多（灵气 ≤ 1000、灵矿 ≤ 120）',
+        (recipe.cost.qi ?? 0) <= 1000 && (recipe.cost.ore ?? 0) <= 120,
+        recipe.cost.qi + ' 灵气 + ' + recipe.cost.ore + ' 灵矿 → ' + recipe.output.amount + ' 灵石',
+      );
+      check(
+        'STONE_REFINE_COST 与配方同源（不再是两份副本）',
+        STONE_REFINE_COST.qi === recipe.cost.qi && STONE_REFINE_COST.ore === recipe.cost.ore,
+      );
+      check('STONE_REFINE_OUTPUT 与配方一致', STONE_REFINE_OUTPUT === recipe.output.amount);
+    }
+  }
+
+  /* ---- 需求 4：循环探索 ---- */
+  {
+    check('循环上限是 30', MAX_EXPEDITION_REPEAT === 30);
+    check('次数会被夹到 1~30', clampRepeat(0) === 1 && clampRepeat(999) === 30 && clampRepeat(7) === 7);
+
+    let s: GameState = grant(createInitialState(0), { qi: '1e12', stone: '1e9', wood: '1e9', ore: '1e9' });
+    s = forceBuild(s, 'thatchHut', 20);
+    s = { ...s, realmIndex: 3, sect: { ...s.sect, founded: true, level: 5 } };
+    const realm = SECRET_REALMS.find((r) => r.minRealm <= 3 && r.tier <= 3);
+    check('找到一处可探索的秘境', Boolean(realm));
+    if (realm) {
+      const discovered: GameState = { ...s, discoveredRealms: { ...s.discoveredRealms, [realm.id]: true } };
+      let withParty = discovered;
+      for (let i = 0; i < realm.minParty + 1; i += 1) {
+        withParty = disciples.recruitDisciple(withParty, makeRandom(500 + i)).state;
+      }
+      const ids = withParty.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
+      const startCheck = canStartExpedition(withParty, realm.id, ids);
+      check('可以派出队伍', startCheck.ok, startCheck.reason ?? '');
+
+      const looping = startExpedition(withParty, realm.id, ids, makeRandom(1), 3);
+      check('循环次数写进了队伍', looping.expeditions[0]?.repeatLeft === 3);
+      check(
+        '队员保持探索中',
+        looping.sect.disciples.filter((d) => ids.includes(d.id)).every((d) => d.status === 'exploring'),
+      );
+
+      // 推完第一趟：应该自动重新排上，并进入「等冷却」（负进度）
+      const done = tickExpeditions(looping, realm.duration + 1, makeRandom(2));
+      check('做完一趟后还剩 2 趟', done.expeditions[0]?.repeatLeft === 2, String(done.expeditions[0]?.repeatLeft));
+      check(
+        '重新排上时在等冷却（负进度）',
+        (done.expeditions[0]?.progress ?? 0) < 0,
+        String(done.expeditions[0]?.progress),
+      );
+      check(
+        '队员仍然在探索中（没被放回）',
+        done.sect.disciples.filter((d) => ids.includes(d.id)).every((d) => d.status === 'exploring'),
+      );
+
+      // 只做一趟时不该重排
+      const single = startExpedition(withParty, realm.id, ids, makeRandom(3), 1);
+      const singleDone = tickExpeditions(single, realm.duration + 1, makeRandom(4));
+      check('只做一趟时不会重排', singleDone.expeditions.length === 0);
+      check(
+        '只做一趟后队员恢复空闲',
+        singleDone.sect.disciples.filter((d) => ids.includes(d.id)).every((d) => d.status === 'idle'),
+      );
+    }
+  }
+
+  /* ---- 需求 6：聚灵阵给修行加成 + 两座初期建筑 ---- */
+  {
+    const bare = createInitialState(0);
+    const withArrays = forceBuild(bare, 'spiritArray', 10);
+    check(
+      '聚灵阵越多，弟子修炼越快',
+      engine.getCultivationSpeedMultiplier(withArrays) > engine.getCultivationSpeedMultiplier(bare),
+      'x' + engine.getCultivationSpeedMultiplier(bare).toFixed(2) + ' → x' + engine.getCultivationSpeedMultiplier(withArrays).toFixed(2),
+    );
+    check(
+      '十座聚灵阵给 +6.3%（2% × √10，收益递减）',
+      Math.abs(
+        engine.getCultivationSpeedMultiplier(withArrays) - (1 + spiritArrayCultivationBonus(10)),
+      ) < 1e-9,
+      'x' + engine.getCultivationSpeedMultiplier(withArrays).toFixed(3),
+    );
+    check(
+      '收益递减：座数翻四倍，加成只翻一倍',
+      Math.abs(spiritArrayCultivationBonus(400) - 2 * spiritArrayCultivationBonus(100)) < 1e-9,
+    );
+    check(
+      '上限不至于顶穿修行曲线（400 座也只 +40%）',
+      spiritArrayCultivationBonus(400) <= 0.41,
+      String(spiritArrayCultivationBonus(400)),
+    );
+
+    // 静室 / 悟道石都是 structure，直接取它们的 StructureDef
+    const quiet = BUILDABLE_MAP.quietRoom as unknown as StructureDef;
+    check('存在初期就能建的修行建筑「静室」', Boolean(quiet) && (quiet.cultivationBonus ?? 0) > 0);
+    check(
+      '静室在开局就能建（无技术 / 图纸 / 境界门槛）',
+      !quiet.requiresTech && !quiet.requiresBlueprint && quiet.requiresRealm === undefined,
+    );
+    check('静室开局就买得起（造价 ≤ 1000 灵气）', (quiet.baseCost.qi ?? 0) <= 1000, String(quiet.baseCost.qi));
+    check('悟道石也是修行建筑', ((BUILDABLE_MAP.daoStone as unknown as StructureDef).cultivationBonus ?? 0) > 0);
+
+    const withQuiet = forceBuild(bare, 'quietRoom', 5);
+    check('静室确实提高修炼倍率', engine.getCultivationSpeedMultiplier(withQuiet) > engine.getCultivationSpeedMultiplier(bare));
+  }
+
+  /* ---- 需求 3：底部那句话没了 ---- */
+  {
+    const out = renderToString(<App />);
+    check('底部不再有「进度保存在你自己的浏览器里」', !out.includes('进度保存在你自己的浏览器里'));
+    check('也不再提「数值设定见仓库中的 BALANCE.md」', !out.includes('数值设定见仓库中的 BALANCE'));
   }
 }
 

@@ -105,6 +105,20 @@ export interface StartCheck {
   reason: string | null;
 }
 
+/**
+ * 循环探索的次数上限（本轮需求 4）。
+ *
+ * 需求原文：「弟子探索可以设置循环多次探索，上限 30 次」。
+ * 设上限是因为一支队伍挂上 30 趟之后，冷却 + 时长合起来可能要跑现实里好几个小时，
+ * 再往上加只会让人忘了自己排过队。
+ */
+export const MAX_EXPEDITION_REPEAT = 30;
+
+/** 把玩家填的次数夹到 1~30 */
+export function clampRepeat(repeat: number): number {
+  if (!Number.isFinite(repeat)) return 1;
+  return Math.max(1, Math.min(MAX_EXPEDITION_REPEAT, Math.floor(repeat)));
+}
 export function canStartExpedition(state: GameState, realmId: string, ids: string[]): StartCheck {
   const def = SECRET_REALM_MAP[realmId];
   if (!def) return { ok: false, reason: '秘境不存在' };
@@ -169,6 +183,8 @@ export function startExpedition(
   realmId: string,
   ids: string[],
   random: RandomSource = gameRandom,
+  /** 连做几趟（本轮需求 4，上限 MAX_EXPEDITION_REPEAT） */
+  repeat = 1,
 ): GameState {
   const check = canStartExpedition(state, realmId, ids);
   if (!check.ok) return state;
@@ -185,6 +201,7 @@ export function startExpedition(
     progress: 0,
     duration: def.duration,
     kind: 'realm',
+    repeatLeft: clampRepeat(repeat),
   };
 
   const withStatus = setDiscipleStatus(state, ids, 'exploring', expedition.id);
@@ -491,7 +508,39 @@ export function resolveExpedition(
     };
   }
 
-  const next: GameState = gearState;
+  let queued: GameState = gearState;
+
+  /*
+   * 本轮需求 4：循环探索。
+   *
+   * 这一趟结算完之后，如果 `repeatLeft > 1`，就**原地重新排上**同一处秘境：
+   *   - `progress` 设成 `-def.cooldown` —— 负进度就是"在等冷却"，
+   *     等它涨回 0 才开始这一趟，于是循环天然遵守冷却，不用另写一套计时；
+   *   - 队伍保持 `exploring` 状态，不还给玩家（否则中途会被别人派走）；
+   *   - 只剩一个弟子（低于 minParty）就停 —— 再派也进不去。
+   */
+  const repeatLeft = expedition.repeatLeft ?? 1;
+  // 复用上面已经算好的 survivors（伤亡之后还活着的那批）
+  if (repeatLeft > 1 && survivors.length >= def.minParty) {
+    const continued: Expedition = {
+      ...expedition,
+      progress: -def.cooldown,
+      repeatLeft: repeatLeft - 1,
+    };
+    queued = {
+      ...queued,
+      expeditions: [...queued.expeditions, continued],
+      journal: pushJournal(queued.journal, {
+        time: queued.playTime,
+        kind: 'info',
+        text: `${def.name}自动整队，还剩 ${repeatLeft - 1} 趟（等冷却中）`,
+      }),
+    };
+    // 队伍留在原地继续探索
+    queued = setDiscipleStatus(queued, survivors, 'exploring', expedition.id);
+  }
+
+  const next: GameState = queued;
 
   return {
     state: next,
@@ -613,6 +662,8 @@ export function startSurvey(
   regionId: string,
   ids: string[],
   random: RandomSource = gameRandom,
+  /** 连做几趟（本轮需求 4） */
+  repeat = 1,
 ): GameState {
   const check = canStartSurvey(state, regionId, ids);
   if (!check.ok) return state;
@@ -626,6 +677,7 @@ export function startSurvey(
     progress: 0,
     duration: getSurveyDuration(state, regionId),
     kind: 'survey',
+    repeatLeft: clampRepeat(repeat),
   };
 
   const withStatus = setDiscipleStatus(state, ids, 'exploring', expedition.id);
@@ -791,7 +843,25 @@ export function resolveSurvey(
     };
   }
 
-  const next: GameState = surveyState;
+  /*
+   * 本轮需求 4：普通探索也能循环。
+   * 它没有冷却，所以直接把进度归零、重新排上就行。
+   */
+  let queuedSurvey = surveyState;
+  const surveyRepeat = expedition.repeatLeft ?? 1;
+  if (surveyRepeat > 1) {
+    // 普通探索没有伤亡，所以"还活着的人"就是队伍里还在的人
+    const stillHere = alive;
+    if (stillHere.length > 0) {
+      queuedSurvey = {
+        ...queuedSurvey,
+        expeditions: [...queuedSurvey.expeditions, { ...expedition, progress: 0, repeatLeft: surveyRepeat - 1 }],
+      };
+      queuedSurvey = setDiscipleStatus(queuedSurvey, stillHere, 'exploring', expedition.id);
+    }
+  }
+
+  const next: GameState = queuedSurvey;
 
   return {
     state: next,

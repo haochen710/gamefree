@@ -263,20 +263,31 @@ function runSimulation(seed: number): SimResult {
   while (seconds < CONFIG.budget && iterations < 400000) {
     iterations += 1;
 
-    /* ---------------- 0. 自动合成档位（需求 4） ----------------
-       理性玩家不会一直开着：灵气是突破的硬通货，
-       所以只在「还在刷小境界层数」且灵气产量足够大时才开。 */
+    /* ---------------- 0. 自动合成（需求 4；本轮需求 2 扩到全部配方） ----------------
+       本轮起自动合成是"按目标存量补齐"，所以 AI 只需要把目标填上：
+       灵石（通货）、灵液 / 精金 / 阵枢（炼丹炼器与阵法）。
+       档位仍然只在"还在刷小境界层数、灵气产量足够大"时才开 ——
+       灵气是突破的硬通货，理性玩家不会一直开着。 */
+    const stockOf = (id: string) => state.materials[id as keyof typeof state.materials]?.toNumber() ?? 0;
     const realmNow = engine.getRealm(state);
     const wantAuto =
-      state.layer < realmNow.layerCount && engine.getProduction(state).qi.gt(1e5)
-        ? 2
-        : 0;
+      state.layer < realmNow.layerCount && engine.getProduction(state).qi.gt(1e5) ? 2 : 0;
+    const wantTargets: Record<string, number> = {
+      stoneRefine: 4000,
+      spiritEssenceRefine: 2000,
+      refinedGoldRefine: 1000,
+      arrayCoreRefine: 1500,
+    };
     if (state.autoRefineLevel !== wantAuto) {
       state = { ...state, autoRefineLevel: wantAuto, autoRefineProgress: wantAuto > 0 ? state.autoRefineProgress : 0 };
       if (wantAuto > 0 && !flags.firstAutoRefine) {
         flags.firstAutoRefine = true;
-        record('开启灵石自动合成');
+        record('开启自动合成');
       }
+    }
+    // 目标只要还没填过就填一次（填过之后玩家/AI 不再动它）
+    if (Object.keys(state.autoRefineTargets).length === 0) {
+      state = { ...state, autoRefineTargets: wantTargets };
     }
 
     /* ---------------- 0. 随机遭遇（需求 2） ----------------
@@ -760,47 +771,26 @@ function runSimulation(seed: number): SimResult {
        三种进阶资源都是中后期的硬通货（炼丹 / 炼器 / 阵法），
        而它们的原料（灵气、灵草、灵矿、灵木、灵石）在中期本来就会顶到储存上限，
        与其让产量白白溢出，不如换成进阶资源囤着。 */
+    /* ---------------- 3d. 进阶资源的里程碑（需求 4） ----------------
+       本轮起合成交给"自动合成 + 目标存量"了（见第 0 步设的 autoRefineTargets），
+       所以这里只留一件事：**记录每种进阶资源第一次到手的时间**，
+       报告里那几行"首次合成灵液 / 精金 / 阵枢"就是从这里来的。 */
     {
-      /*
-       * 合成进阶资源（需求 4）。
-       *
-       * ⚠️ 这里有一条踩过两次的线：**合成必须限量**。
-       *
-       *   - 一次迭代把三条配方全合一遍 → 灵气/灵木/灵矿/灵石的支出直接三倍，
-       *     经济被抽干，30 天只修到炼虚期、弟子掉到 18 人；
-       *   - 只合第一条付得起的（原来的 `break`）→ 阵枢永远轮不到，
-       *     宗门大阵与空间戒指整局都做不出来。
-       *
-       * 所以现在的规则是"**补最短的那一块，且只补到够用的量**"：
-       * 目标存量随境界增长（够造三座大阵 + 九枚戒指就行），
-       * 每次只合一批，并且优先合存量最少的那种。
-       */
-      const target = 800 * (state.realmIndex + 1);
-      const stock = (id: string) => state.materials[id as keyof typeof state.materials]?.toNumber() ?? 0;
-      const candidates = REFINE_RECIPES.filter((r) => r.output.item !== 'stone')
-        .filter((r) => engine.maxRefine(state, r.id) > 0)
-        .filter((r) => stock(r.output.item) < target)
-        .sort((a, b) => stock(a.output.item) - stock(b.output.item));
-
-      const pick = candidates[0];
-      if (pick) {
-        const next = engine.refine(state, pick.id, 1);
-        if (next !== state) {
-          state = next;
-          if (!seenRefine.has(pick.id)) {
-            seenRefine.add(pick.id);
-            const name =
-              pick.output.item === 'spiritEssence'
-                ? '灵液'
-                : pick.output.item === 'refinedGold'
-                  ? '精金'
-                  : '阵枢';
-            record(`首次合成${name}`);
-          }
-          continue;
-        }
+      for (const recipe of REFINE_RECIPES) {
+        if (recipe.output.item === 'stone') continue;
+        if (stockOf(recipe.output.item) <= 0) continue;
+        if (seenRefine.has(recipe.id)) continue;
+        seenRefine.add(recipe.id);
+        const name =
+          recipe.output.item === 'spiritEssence'
+            ? '灵液'
+            : recipe.output.item === 'refinedGold'
+              ? '精金'
+              : '阵枢';
+        record(`首次合成${name}`);
       }
     }
+
 
     /* ---------------- 3e. 感悟（需求 3） ----------------
        AI 的策略：

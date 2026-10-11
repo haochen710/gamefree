@@ -18,7 +18,6 @@ import RealmPanel from './components/RealmPanel';
 import SeasonPanel from './components/SeasonPanel';
 import EncounterPanel, { KarmaStrip } from './components/EncounterPanel';
 import AscendPanel from './components/AscendPanel';
-import StonePanel from './components/StonePanel';
 import SectPanel from './components/SectPanel';
 import SectHallPanel from './components/SectHallPanel';
 import DisciplePanel from './components/DisciplePanel';
@@ -126,8 +125,10 @@ function CaveTab() {
       </div>
       <div className="layout__right">
         <BuildQueuePanel collapsible />
-        {/* 需求 1：灵石合成只保留在洞府这边 */}
-        <StonePanel collapsible />
+        {/*
+          本轮需求 1：洞府里的「灵石合成」栏已删除。
+          灵石合成的入口只剩修行页的「合成 · 精炼」—— 那里现在能自动合成**全部**配方。
+        */}
         <SavePanel collapsible />
       </div>
     </main>
@@ -243,9 +244,7 @@ export default function App() {
         </div>
       </div>
 
-      <footer className="footer">
-        进度保存在你自己的浏览器里 · 数值设定见仓库中的 BALANCE.md
-      </footer>
+      {/* 本轮需求 3：底部那句「进度保存在你自己的浏览器里 · 数值设定见 BALANCE.md」已删除 */}
 
       <Notice />
       <OfflineModal />

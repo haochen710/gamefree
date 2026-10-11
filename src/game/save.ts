@@ -13,6 +13,7 @@ import {
   APTITUDE_ORDER,
   AUTO_REFINE_LEVEL_MAX,
   ARTIFACT_MAP,
+  REFINE_RECIPE_MAP,
   BLUEPRINT_MAP,
   BUILDABLES,
   BUILDABLE_MAP,
@@ -153,6 +154,8 @@ export interface SerializedGame {
   or?: Record<string, boolean>;
   /** 可携带器物的剩余次数（需求 2） */
   gc?: Record<string, number>;
+  /** 各条配方的自动合成目标存量（本轮需求 2） */
+  art?: Record<string, number>;
   /** 天工院特殊升级等级（需求 2） */
   tl?: number;
   /** 善恶值 / 待选遭遇 id / 遭遇判定计时（需求 2） */
@@ -229,6 +232,7 @@ export function serialize(state: GameState): SerializedGame {
     pv: state.personalTravel,
     au: state.autoRefineLevel,
     ap: state.autoRefineProgress,
+    art: { ...state.autoRefineTargets },
     sd: { ...state.seeds },
     pg: state.plantings,
     npi: state.nextPlantingId,
@@ -478,6 +482,18 @@ function toSeedMap(raw: unknown): Record<string, number> {
 /** 感悟阶数：只认还存在的道，并夹到 0~90 */
 /** 已开启的秘境：只认还存在的秘境 id */
 /** 可携带器物的剩余次数：只认还在库存里、而且确实可携带的器物 */
+/** 自动合成目标：只认还存在的配方 id，值夹到 0~1e9 */
+function sanitizeAutoRefineTargets(raw: unknown): Record<string, number> {
+  if (raw === null || typeof raw !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!REFINE_RECIPE_MAP[id]) continue;
+    const n = toInt(value, 0, 0, 1e9);
+    if (n > 0) out[id] = n;
+  }
+  return out;
+}
+
 function sanitizeGearCharges(raw: unknown, ownedRaw: unknown): Record<string, number> {
   const owned = (ownedRaw ?? {}) as Record<string, unknown>;
   const out: Record<string, number> = {};
@@ -800,6 +816,7 @@ export function deserialize(raw: unknown): GameState | null {
     injurySeconds: toFloat(data.inj, 0, 0, 1e9),
     personalTravel: sanitizeTravel(data.pv),
     autoRefineLevel: toInt(data.au, 0, 0, AUTO_REFINE_LEVEL_MAX),
+    autoRefineTargets: sanitizeAutoRefineTargets(data.art),
     autoRefineProgress: toFloat(data.ap, 0, 0, 1e6),
     seeds: toSeedMap(data.sd),
     plantings,

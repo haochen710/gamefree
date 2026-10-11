@@ -9,8 +9,15 @@
  * 每条配方都标出**它的下游是什么**，玩家才知道为什么要合它。
  */
 import { fmt } from '../game/decimal';
-import { ITEM_MAP, MATERIAL_IDS, MATERIAL_MAP, REFINE_RECIPES, type ItemId } from '../game/content';
-import { getRefineGate, maxRefine, refineCostMap } from '../game/engine';
+import {
+  AUTO_REFINE_RATES,
+  ITEM_MAP,
+  MATERIAL_IDS,
+  MATERIAL_MAP,
+  REFINE_RECIPES,
+  type ItemId,
+} from '../game/content';
+import { getAmount, getAutoRefineRate, getRefineGate, maxRefine, refineCostMap } from '../game/engine';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
 import Panel from './Panel';
@@ -26,6 +33,9 @@ const DOWNSTREAM: Record<string, string> = {
 export function RefinePanel({ collapsible = false }: { collapsible?: boolean } = {}) {
   const game = useGame((s) => s.game);
   const doRefine = useGame((s) => s.refine);
+  const setAutoRefine = useGame((s) => s.setAutoRefine);
+  const setAutoRefineTarget = useGame((s) => s.setAutoRefineTarget);
+  const rate = getAutoRefineRate(game);
 
   return (
     <Panel
@@ -39,12 +49,43 @@ export function RefinePanel({ collapsible = false }: { collapsible?: boolean } =
         想要就得自己合。合成是立刻完成的，不占时间。
       </p>
 
+      {/*
+        本轮需求 2：「合成栏位内所有材料都可以自动合成，可以设置需要合成到多少」。
+        所以每条配方多一个"目标存量"输入框 + 总开关：填了数就自动补到那个数，补到就停。
+      */}
+      <div className="auto-refine">
+        <div className="auto-refine__head">
+          <strong>自动合成</strong>
+          <span className="panel__hint">
+            {rate > 0 ? `${rate} 批/秒（全部配方共用）` : '未开启'}
+          </span>
+        </div>
+        <p className="panel__note">
+          填一个<strong>目标存量</strong>，系统就会按下面的速率慢慢补到那个数、补到就停手。
+          0 表示那条不管。速率是所有配方<strong>共用</strong>的 —— 否则四条一起开会把灵气抽干。
+        </p>
+        <div className="btn-row btn-row--wrap">
+          {AUTO_REFINE_RATES.map((value, level) => (
+            <button
+              key={value}
+              type="button"
+              className={game.autoRefineLevel === level ? 'btn btn--primary' : 'btn'}
+              onClick={() => setAutoRefine(level)}
+            >
+              {level === 0 ? '关闭' : `档 ${level}`}
+              {level > 0 && <span className="btn__sub">{value} 批/秒</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="refine-list">
         {REFINE_RECIPES.map((recipe) => {
           const gate = getRefineGate(recipe, game);
           const max = maxRefine(game, recipe.id);
           const cost = refineCostMap(recipe);
           const out = ITEM_MAP[recipe.output.item as ItemId];
+          const have = getAmount(game, recipe.output.item);
 
           return (
             <article key={recipe.id} className={gate ? 'refine refine--gated' : 'refine'}>
@@ -87,6 +128,26 @@ export function RefinePanel({ collapsible = false }: { collapsible?: boolean } =
                   ))
                 )}
                 <span className="refine__max">可合成 {max} 次</span>
+              </div>
+
+              {/* 需求 2：目标存量 */}
+              <div className="refine__target">
+                <label>
+                  自动合成到
+                  <input
+                    type="number"
+                    min={0}
+                    step={10}
+                    value={game.autoRefineTargets[recipe.id] ?? 0}
+                    onChange={(e) => setAutoRefineTarget(recipe.id, Number(e.target.value) || 0)}
+                  />
+                  个
+                </label>
+                <span className="refine__max">
+                  现有 {fmt(have, 0)}
+                  {(game.autoRefineTargets[recipe.id] ?? 0) > 0 &&
+                    ` / 目标 ${fmt(game.autoRefineTargets[recipe.id] ?? 0, 0)}`}
+                </span>
               </div>
             </article>
           );

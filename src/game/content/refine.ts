@@ -50,8 +50,17 @@ export const REFINE_RECIPES: RefineRecipe[] = [
     id: 'stoneRefine',
     name: '灵石合成',
     icon: '💠',
-    desc: '灵气与灵矿压成灵石。最早的一条合成线，始终是最基础的一条。',
-    cost: { qi: 5000, ore: 500 },
+    /*
+     * 本轮需求 5：「灵石合成需求资源有点多了，前期没啥用，后期更没啥用，减少资源需求」。
+     *
+     * 原来是 5000 灵气 + 500 灵矿 → 25 灵石 —— 开局要攒半天才能合一次，
+     * 中后期灵石矿的产量又把这条路挤没了，两头都用不上。
+     * 现在降到 800 + 100。`STONE_REFINE_COST` / `STONE_REFINE_OUTPUT`
+     * 直接从这个配方**推导**（见文件末尾），不再各存一份 ——
+     * 那两份副本这一轮就漂过一次：UI 按新价显示、实际合成按旧价扣。
+     */
+    desc: '灵气与灵矿压成灵石。最早的一条合成线，也是开局没矿时的应急手段。',
+    cost: { qi: 800, ore: 100 },
     output: { item: 'stone', amount: 25 },
     requiresRealm: 0,
   },
@@ -107,3 +116,14 @@ export const REFINE_RECIPE_MAP: Record<string, RefineRecipe> = REFINE_RECIPES.re
   },
   {} as Record<string, RefineRecipe>,
 );
+
+/**
+ * 灵石合成的成本与产出 —— **从配方推导**，不再各存一份。
+ *
+ * 原来 `buildables.ts` 里有一份独立的 `STONE_REFINE_COST = { qi: 5000, ore: 500 }`，
+ * 和 `REFINE_RECIPES` 里那条配方的数字是两套。本轮需求 5 降价时只改了配方，
+ * 于是界面按新价显示、实际却按旧价扣 —— 冒烟里那条"产出量符合合成比例"当场红了。
+ * 现在唯一来源就是配方本身。
+ */
+export const STONE_REFINE_COST = REFINE_RECIPE_MAP.stoneRefine.cost as { qi: number; ore: number };
+export const STONE_REFINE_OUTPUT = REFINE_RECIPE_MAP.stoneRefine.output.amount;

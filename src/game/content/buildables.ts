@@ -174,6 +174,25 @@ export type BuildableDef = GeneratorDef | StructureDef;
 /* 设施（基础资源建筑：唯一不需要钻研的一类）                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 聚灵阵对弟子修炼的加成系数（本轮需求 6）。
+ *
+ * 实际加成 = 本系数 × **√座数**（收益递减）。
+ *
+ * ⚠️ 一开始写的是线性「每座 +2%」，模拟里立刻炸了：聚灵阵是最便宜的设施
+ * （15 灵气起、成本只按 1.15 增长），AI 为了灵气盖了两百多座，
+ * 修行倍率直接被推到 **×6.72** —— 而全局修行天花板本来是设计在 ×4 出头的
+ * （正因为如此，早先把宗门大比从 ×2 压成了 +50%）。
+ * 改成开方之后：4 座 +4%、25 座 +10%、100 座 +20%、400 座 +40%，
+ * 既保住"阵越多弟子越快"，又永远不会把曲线顶穿。
+ */
+export const SPIRIT_ARRAY_CULTIVATION_BONUS = 0.02;
+
+/** 聚灵阵给的修炼加成（含收益递减） */
+export function spiritArrayCultivationBonus(count: number): number {
+  return count <= 0 ? 0 : SPIRIT_ARRAY_CULTIVATION_BONUS * Math.sqrt(count);
+}
+
 export const GENERATORS: GeneratorDef[] = [
   {
     id: 'spiritArray',
@@ -181,7 +200,14 @@ export const GENERATORS: GeneratorDef[] = [
     group: 'resource',
     name: '聚灵阵',
     icon: '☯',
-    desc: '引天地灵气入洞府，修行起步的根本。',
+    /*
+     * 本轮需求 6：「弟子修炼受宗门聚灵阵影响，宗门聚灵阵等级越高，加成越大」。
+     *
+     * 聚灵阵本来就是"宗门灵气的根"，所以把**座数**当成它的等级：
+     * 每多一座，弟子修炼再快一点（见 SPIRIT_ARRAY_CULTIVATION_BONUS）。
+     * 于是"多盖聚灵阵"同时有两份收益（灵气 + 修行），开局就值得投。
+     */
+    desc: `引天地灵气入洞府，修行起步的根本。越多弟子修炼越快（加成 = 2% × √座数，收益递减）。`,
     produces: 'qi',
     baseOutput: 0.6,
     baseCost: { qi: 15 },
@@ -635,6 +661,37 @@ export const STRUCTURES: StructureDef[] = [
     max: 5,
   },
 
+    /* ---------------- 修行加成（本轮需求 6：初期就能建） ---------------- */
+    {
+      id: 'quietRoom',
+      kind: 'structure',
+      group: 'hall',
+      name: '静室',
+      icon: '🛖',
+      desc: '供弟子闭门静修的小屋。弟子修炼速度 +3%/座 —— 开局就能盖，是最便宜的修行加成。',
+      cultivationBonus: 0.03,
+      baseCost: { qi: 600, wood: 150 },
+      costGrowth: 1.22,
+      unlock: { qi: 300 },
+      max: 12,
+    },
+    {
+      id: 'daoStone',
+      kind: 'structure',
+      group: 'hall',
+      name: '悟道石',
+      icon: '🪨',
+      desc: '立于庭中的一方古石，弟子坐其下易入定。弟子修炼速度 +6%/座，需筑基期。',
+      cultivationBonus: 0.06,
+      baseCost: { qi: 12000, wood: 2500, stone: 1200 },
+      costGrowth: 1.28,
+      unlock: { stone: 800 },
+      requiresRealm: 1,
+      // 不写 requiresSectLevel：宗门本身要金丹期才存在，而这座建筑声明的是
+      // 筑基期 —— 写 1 品就变成"要求一个此刻还达不到的门槛"了
+      max: 8,
+    },
+
   /* ---------------- 宗门奇珍（技术 / 图纸） ---------------- */
   {
     id: 'sectHall',
@@ -653,7 +710,8 @@ export const STRUCTURES: StructureDef[] = [
      * 原来写的是 2 品，而那个品阶本身要 化神期 ——
      * 与这栋建筑自己声明的「需元婴期」互相打架。
      */
-    requiresSectLevel: 1,
+      // 不写 requiresSectLevel：宗门本身要金丹期才存在，而这座建筑声明的是
+      // 筑基期 —— 写 1 品就变成"要求一个此刻还达不到的门槛"了
     max: 10,
   },
   {
@@ -673,7 +731,8 @@ export const STRUCTURES: StructureDef[] = [
      * 原来写的是 3 品，而那个品阶本身要 炼虚期 ——
      * 与这栋建筑自己声明的「需元婴期」互相打架。
      */
-    requiresSectLevel: 1,
+      // 不写 requiresSectLevel：宗门本身要金丹期才存在，而这座建筑声明的是
+      // 筑基期 —— 写 1 品就变成"要求一个此刻还达不到的门槛"了
     max: 5,
   },
   {
@@ -1039,20 +1098,23 @@ export const BUILDABLE_MAP: Record<string, BuildableDef> = BUILDABLES.reduce(
 /* 灵石合成（需求 4 / 6）                                               */
 /* ------------------------------------------------------------------ */
 
-/**
- * 灵气 + 灵矿 合成灵石。
- * 给玩家一条"不建灵石矿也能拿到灵石"的路子，同时也让灵矿在中期有消耗出口。
+/*
+ * STONE_REFINE_COST / STONE_REFINE_OUTPUT 已经搬到 
+efine.ts，
+ * 并从那条配方**推导**出来 —— 这里不再各存一份数字。
+ * （两份副本本轮漂过一次：UI 按新价显示、实际按旧价扣。）
  */
-export const STONE_REFINE_COST = { qi: 5000, ore: 500 } as const;
-export const STONE_REFINE_OUTPUT = 25;
 
 /**
- * 自动合成（需求 4）：玩家可自选档位，逐帧把灵气与灵矿换成灵石。
+ * 自动合成（需求 4）的**全局**速率档位。
  *
- * 值 = 每秒完成几次手动合成。0 档即关闭。
- * 之所以给三档而不是单纯的开/关：自动合成的消耗极大（最快档每秒烧掉
- * 4000 灵气），而灵气是突破的硬性资源，只有一个开/关很容易一夜之间把
- * 攒了半天的灵气全烧光。给档位，玩家就能按当前目标自己权衡。
+ * 值 = 每秒完成几批合成，**所有配方共用这个速率**（本轮需求 2 从"只管灵石"
+ * 扩到"管全部配方"）。0 档即关闭。
+ *
+ * 为什么不给每个配方各配一份速率：那等于把"能同时烧多少资源"乘以配方数 ——
+ * 四条配方各自 0.8 批/秒就是 3.2 批/秒，灵气会被瞬间抽干。
+ * 现在改成"一个总闸门 + 每条配方设目标存量"：玩家说的是"我要 2000 灵液"，
+ * 系统按总速率慢慢补到那个数就停。
  */
 export const AUTO_REFINE_RATES = [0, 0.05, 0.2, 0.8] as const;
 export const AUTO_REFINE_LEVEL_MAX = AUTO_REFINE_RATES.length - 1;

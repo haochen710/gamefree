@@ -71,6 +71,13 @@ export interface Expedition {
    * 两种情况共用同一个队伍队列与计时，所以"派谁出去"始终是同一个取舍。
    */
   kind: 'realm' | 'survey';
+    /**
+     * 还要连做几次（本轮需求 4：弟子探索可以设置循环多次探索，上限 30）。
+     *
+     * 1 或未设 = 只做这一趟。完成一趟后若还剩次数，会在原地**等冷却**再出发 ——
+     * 所以 progress 允许是负数（负的那段就是在等冷却）。
+     */
+    repeatLeft?: number;
 }
 
 export interface Sect {
@@ -264,8 +271,13 @@ export interface GameState {
   personalTravel: PersonalTravel | null;
 
   /* ---- 自动合成（需求 4） ---- */
-  /** 自动合成档位，0 表示关闭；见 AUTO_REFINE_RATES */
+  /** 自动合成的**全局**速率档位，0 表示关闭；见 AUTO_REFINE_RATES */
   autoRefineLevel: number;
+  /**
+   * 各条合成配方的**目标存量**（本轮需求 2）：键是配方 id，值是「我要攒到多少」。
+   * 0 或缺省 = 那条不参与自动合成。
+   */
+  autoRefineTargets: Record<string, number>;
   /** 自动合成的凑整进度，攒够 1 次就合成一批 */
   autoRefineProgress: number;
 
@@ -439,6 +451,7 @@ export function createInitialState(now = Date.now()): GameState {
     injurySeconds: 0,
     personalTravel: null,
     autoRefineLevel: 0,
+    autoRefineTargets: {},
     autoRefineProgress: 0,
     seeds: {},
     plantings: [],

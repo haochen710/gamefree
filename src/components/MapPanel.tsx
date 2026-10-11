@@ -53,6 +53,8 @@ import {
   autoSelectParty,
   autoSelectSurveyParty,
   canStartExpedition,
+  MAX_EXPEDITION_REPEAT,
+  clampRepeat,
   canStartSurvey,
   canSurveyRegion,
   getExpeditionProgress,
@@ -80,6 +82,8 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
   const openRealm = useGame((s) => s.openRealm);
   const [selected, setSelected] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
+  // 本轮需求 4：循环探索次数（1~30）
+  const [repeat, setRepeat] = useState(1);
 
   const idle = getIdleDisciples(state).filter((d) => d.realmIndex >= def.minRealm);
   const cooldown = getRealmCooldown(state, def.id);
@@ -195,6 +199,30 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
         </div>
       )}
 
+      {/* 本轮需求 4：可以设置循环探索（上限 30 次） */}
+      <div className="repeat-row">
+        <label>
+          循环
+          <input
+            type="number"
+            min={1}
+            max={MAX_EXPEDITION_REPEAT}
+            step={1}
+            value={repeat}
+            onChange={(e) => setRepeat(clampRepeat(Number(e.target.value) || 1))}
+          />
+          次
+        </label>
+        <span className="panel__hint">
+          做完一趟会<b>原地等冷却</b>再出发，不用回来重派；上限 {MAX_EXPEDITION_REPEAT} 次
+        </span>
+        {repeat !== 1 && (
+          <button type="button" className="btn btn--tiny" onClick={() => setRepeat(1)}>
+            只做一趟
+          </button>
+        )}
+      </div>
+
       <div className="btn-row">
         <button type="button" className="btn" onClick={() => setPicking((v) => !v)}>
           {picking ? '收起名单' : '选择弟子'}
@@ -212,7 +240,7 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
           className="btn btn--primary"
           disabled={!check.ok}
           onClick={() => {
-            startExpedition(def.id, selected);
+            startExpedition(def.id, selected, repeat);
             setSelected([]);
             setPicking(false);
           }}
@@ -319,6 +347,8 @@ function SurveyCard({ region, state }: { region: MapRegionDef; state: GameState 
   const startSoloSurvey = useGame((s) => s.startSoloSurvey);
   const [selected, setSelected] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
+  // 本轮需求 4：循环探索次数（1~30）
+  const [repeat, setRepeat] = useState(1);
 
   const { min, max } = getSurveyPartyRange();
   const check = canStartSurvey(state, region.id, selected);
@@ -394,6 +424,28 @@ function SurveyCard({ region, state }: { region: MapRegionDef; state: GameState 
         </div>
       )}
 
+      {/* 本轮需求 4：普通探索也能循环（它没有冷却，做完直接接上） */}
+      <div className="repeat-row">
+        <label>
+          循环
+          <input
+            type="number"
+            min={1}
+            max={MAX_EXPEDITION_REPEAT}
+            step={1}
+            value={repeat}
+            onChange={(e) => setRepeat(clampRepeat(Number(e.target.value) || 1))}
+          />
+          次
+        </label>
+        <span className="panel__hint">上限 {MAX_EXPEDITION_REPEAT} 次</span>
+        {repeat !== 1 && (
+          <button type="button" className="btn btn--tiny" onClick={() => setRepeat(1)}>
+            只做一趟
+          </button>
+        )}
+      </div>
+
       <div className="btn-row">
         <button type="button" className="btn" onClick={() => setPicking((v) => !v)}>
           {picking ? '收起名单' : '选择弟子'}
@@ -411,7 +463,7 @@ function SurveyCard({ region, state }: { region: MapRegionDef; state: GameState 
           className="btn btn--primary"
           disabled={!check.ok}
           onClick={() => {
-            startSurvey(region.id, selected);
+            startSurvey(region.id, selected, repeat);
             setSelected([]);
             setPicking(false);
           }}

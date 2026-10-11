@@ -208,9 +208,22 @@ export function discipleCapBySect(level: number): number {
  */
 export const MAX_EXPEDITION_SLOTS = 9;
 
+/**
+ * 某个宗门品阶能同时开几支探索队伍。
+ *
+ * 本轮需求 7：「宗门初始有 3 个派遣队伍，一个太少了，导致有的弟子一直无法去探索，
+ * 修炼没有进境」。
+ *
+ * 原来是 `max(1, level)` —— 一品宗门只能同时派一队，而后期的弟子动辄三四十人，
+ * 排一次队要等十几轮，**没轮到的弟子修为原地踏步**。现在起点就是 3，
+ * 每升一品多一队，到七品满 9 队。
+ */
 export function expeditionSlots(level: number): number {
-  return Math.max(1, Math.min(MAX_EXPEDITION_SLOTS, level));
+  return Math.max(MIN_EXPEDITION_SLOTS, Math.min(MAX_EXPEDITION_SLOTS, level + (MIN_EXPEDITION_SLOTS - 1)));
 }
+
+/** 起步队伍数（需求 7） */
+export const MIN_EXPEDITION_SLOTS = 3;
 
 /* ------------------------------------------------------------------ */
 /* 招收弟子                                                            */
