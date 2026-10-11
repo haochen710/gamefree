@@ -237,6 +237,15 @@ export function tickDisciples(state: GameState, dt: number): GameState {
 
   for (const disciple of state.sect.disciples) {
     const age = disciple.age + years;
+    /*
+     * ⚠️ 年龄一变，这次推进就必然产生了新状态。
+     *
+     * 这一行是补上来的 bug 修复：`changed` 原先只在"突破 / 修为有变 / 死亡"时置位，
+     * 于是**修为没有变化的弟子根本不会变老** —— 卡在境界上限、或者进度刚好
+     * 四舍五入到同一个值的弟子，年龄会永远停在那里。
+     * 加了纪年（需求 1）之后这个洞更明显：时间在走，人却不老。
+     */
+    changed = true;
 
     /* --- 修为推进：可能一次跨越多个境界（离线很久时） --- */
     const realmCap = getDiscipleRealmCap(state, disciple);

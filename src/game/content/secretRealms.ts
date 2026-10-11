@@ -116,8 +116,15 @@ export const PARTY_YIELD_PER_EXTRA = 0.4;
 export const PILL_DROP_CHANCE = 0.15;
 /** 一次探索最多带回几种种子 */
 export const SEED_ROLLS = 1;
-/** 图纸只会从「元婴期以上」的秘境里掉出来 */
-export const MIN_REALM_FOR_BLUEPRINT = 3;
+/**
+ * 图纸只会从「5 档及以上」的秘境里掉出来。
+ *
+ * ⚠️ 早先这里是按 `minRealm >= 3` 判的，但需求 5 把 minRealm 的语义改成了
+ * 「所属大区域的解锁境界」（同一个大区里所有秘境都一样），
+ * 它就不再能当"深浅"的代理了。所以改按**档次**判 ——
+ * 而 blueprintChance 本来就是逐档配的（1~4 档为 0）。
+ */
+export const MIN_TIER_FOR_BLUEPRINT = 5;
 
 /* ------------------------------------------------------------------ */
 /* 普通探索（需求 1：小区域还没发现秘境时唯一能做的事）                  */
@@ -425,8 +432,16 @@ function buildRealm(
     duration: Math.round(stat.duration * (1 + 0.15 * rank)),
     minParty: stat.minParty,
     maxParty: stat.maxParty,
-    // 弟子门槛比区域门槛松一级：刚能抵达的区域不至于立刻无人可派
-    minRealm: Math.max(0, region.requiresRealm - 1),
+    /*
+     * 弟子境界门槛（需求 5）：「大区秘境所需最低等级为解锁等级」。
+     *
+     * 所以取的是**所属大区域的解锁境界**，而不是这个小区域自己的门槛：
+     * 只要大区域开了（掌门能飞过去），弟子就该能进去；
+     * 至于这一片里靠后的几个小区域更难，那是**战力**（requiredPower）的事，
+     * 不该再用境界卡一道 —— 否则就会出现"掌门化神了，弟子却还要元婴"
+     * 这种把玩家挡在门外的怪规定。
+     */
+    minRealm: Math.max(0, MAJOR_REGION_MAP[region.majorId]?.requiresRealm ?? 0),
     cooldown: Math.round(stat.cooldown * (1 + 0.2 * rank)),
     baseCasualty: Math.min(0.35, stat.casualty + rank * 0.01),
     loot: buildLoot(tier, profile, amountScale, specialty),

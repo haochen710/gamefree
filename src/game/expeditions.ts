@@ -74,6 +74,7 @@ import {
 } from './engine';
 import { getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
 import { getEnvironmentMaterialBonus, getWeatherEffects } from './season';
+import { getKarmaExploreBonus } from './encounter';
 import { addSeeds } from './planting';
 import type { Disciple, Expedition, GameState } from './state';
 
@@ -260,6 +261,8 @@ export function resolveExpedition(
   const artifacts = getArtifactBonuses(state);
   const weather = getWeatherEffects(state);
   const yieldMultiplier =
+    // 善行值加成（需求 2）：善行越高，探索产出越好
+    (1 + getKarmaExploreBonus(state)) *
     state.buffs.yieldMultiplier *
     (1 + artifacts.expeditionYield + getStructureBonus(state, 'expeditionYieldBonus') + (weather.expeditionYield ?? 0));
 
@@ -600,6 +603,8 @@ export function resolveSurvey(
 
   const weather = getWeatherEffects(state);
   const yieldMultiplier =
+    // 善行值加成（需求 2）：普通探索同样吃善行加成
+    (1 + getKarmaExploreBonus(state)) *
     state.buffs.yieldMultiplier *
     (1 + getStructureBonus(state, 'expeditionYieldBonus') + (weather.expeditionYield ?? 0)) *
     SURVEY_YIELD_MULT;

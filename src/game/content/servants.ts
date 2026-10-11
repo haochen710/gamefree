@@ -83,10 +83,15 @@ export const SERVANT_BONUS_PER_HEAD = 0.04;
  * 用灵气而不是灵石 —— 灵石要到灵田之后才拿得到，
  * 而仆人恰恰是给「还没有宗门、还没有灵石矿」的前期准备的。
  * 所以也算是给他们找了个说法：修士用灵气供养凡人仆役。
+ *
+ * 需求 4：「招收仆人所需的灵气固定为 300」。
+ * 原先是 80 × 1.2ⁿ 的等比递增（第 10 个 495 灵气、第 30 个 1.9 万），
+ * 于是"招仆人"到中后期变成一件要精算的事 —— 可仆役本来就是替玩家
+ * 腾出手来的辅助系统，不该再占一层决策。现在固定 300，
+ * 唯一的限制只剩居所容量与上限。
  */
-export const SERVANT_BASE_COST = 80;
-export const SERVANT_COST_GROWTH = 1.20;
+export const SERVANT_COST = 300;
 
-export function servantCost(currentServants: number): number {
-  return Math.ceil(SERVANT_BASE_COST * Math.pow(SERVANT_COST_GROWTH, currentServants));
+export function servantCost(_currentServants: number): number {
+  return SERVANT_COST;
 }

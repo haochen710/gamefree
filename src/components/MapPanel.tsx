@@ -23,6 +23,7 @@ import {
   MATERIAL_MAP,
   REALMS,
   SECRET_REALMS,
+  SECRET_REALM_MAP,
   TRAVEL_REGIONS,
   TRAVEL_REGION_MAP,
   majorOf,
@@ -59,7 +60,7 @@ import {
   getUndiscoveredCount,
   getIdleDisciples,
 } from '../game/expeditions';
-import { canStartTravel, getTravelRemaining } from '../game/travel';
+import { canStartSoloRealm, canStartTravel, getTravelRemaining } from '../game/travel';
 import { getPartyPower } from '../game/disciples';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
@@ -70,6 +71,7 @@ import type { GameState } from '../game/state';
 
 function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
   const startExpedition = useGame((s) => s.startExpedition);
+  const startSoloRealm = useGame((s) => s.startSoloRealm);
   const [selected, setSelected] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
 
@@ -77,6 +79,8 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
   const cooldown = getRealmCooldown(state, def.id);
   const gate = getRealmGate(state, def);
   const check = canStartExpedition(state, def.id, selected);
+  // 需求 5：掌门独自前往的资格（和派队伍走同一套冷却与发现校验）
+  const soloCheck = canStartSoloRealm(state, def.id);
   const partyPower = getPartyPower(state, selected);
   const ratio = def.requiredPower > 0 ? partyPower / def.requiredPower : 3;
   const sizeFactor = getPartySizeFactor(def, selected.length);
@@ -205,6 +209,17 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
         >
           派遣
           {!check.ok && check.reason && <span className="btn__sub">{check.reason}</span>}
+        </button>
+        {/* 需求 5：掌门也可以自己去 —— 慢、总量少，但更容易挑出稀有材料 */}
+        <button
+          type="button"
+          className="btn"
+          disabled={!soloCheck.ok}
+          onClick={() => startSoloRealm(def.id)}
+          title="掌门亲往：时长 ×1.4、总量 ×0.45，但稀有材料权重 ×4"
+        >
+          掌门亲往
+          {!soloCheck.ok && soloCheck.reason && <span className="btn__sub">{soloCheck.reason}</span>}
         </button>
       </div>
     </article>
@@ -512,7 +527,9 @@ export function MapPanel() {
   const cancelTravel = useGame((s) => s.cancelTravel);
   const range = getExplorationRange(game);
   const travel = game.personalTravel;
-  const travelDef = travel ? TRAVEL_REGION_MAP[travel.regionId] : null;
+  // 需求 5：掌门出门可能是游历，也可能是独自探秘境
+  const travelDef = travel && travel.kind === 'travel' ? TRAVEL_REGION_MAP[travel.regionId] : null;
+  const soloDef = travel && travel.kind === 'realm' ? SECRET_REALM_MAP[travel.regionId] : null;
   const undiscovered = getUndiscoveredCount(game);
   const compassBonus = getDiscoveryBonusFromArtifacts(game);
   const pityLeft = getDiscoveryPityRemaining(game);
@@ -559,10 +576,12 @@ export function MapPanel() {
             </span>
           </div>
 
-          {travel && travelDef && (
+          {travel && (travelDef || soloDef) && (
             <div className="running">
               <div className="running__head">
-                <span>🧭 掌门游历 {travelDef.name}</span>
+                <span>
+                  {soloDef ? `🧘 掌门独自探索 ${soloDef.name}` : `🧭 掌门游历 ${travelDef?.name ?? ''}`}
+                </span>
                 <span className="running__time">
                   剩余{' '}
                   {getTravelRemaining(travel) > 90
@@ -578,7 +597,7 @@ export function MapPanel() {
               </div>
               <div className="btn-row">
                 <button type="button" className="btn btn--danger" onClick={cancelTravel}>
-                  中止游历
+                  {soloDef ? '中止探索' : '中止游历'}
                 </button>
               </div>
             </div>

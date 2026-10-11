@@ -15,7 +15,6 @@
  * 刻意**不卖**稀有材料与稀有种子：那是探索的价值所在。
  */
 import { BLUEPRINTS } from './techs';
-import { GAME_DAYS_PER_SECOND } from './realms';
 import { BASE_MATERIAL_IDS } from './resources';
 import { SHOP_SEEDS, shopSeedPrice } from './planting';
 
@@ -50,17 +49,18 @@ export const SHOP_OFFER_COUNT = 5;
 /**
  * 商行刷新间隔。
  *
- * 需求写的是「每个游戏时间一个月刷新一次」，但本作
- * 1 真实秒 = 30 游戏天，一个游戏月只有 **1 真实秒** —— 照字面实现，
- * 商行就变成一台每秒重摇的老虎机，玩家只会一直刷新。
- * 所以换算成游戏时间是 60 个月（5 游戏年），约合 60 真实秒。
- * 想改回字面意思就把这个数字改成 1。
+ * 需求写的是「每个游戏时间一个月刷新一次」，但这条**不能**真的挂到日历上：
+ *   1. 早先 1 真实秒 = 30 游戏天，一个游戏月只有 1 真实秒 ——
+ *      照字面实现，商行就成了一台每秒重摇的老虎机；
+ *   2. 需求 1 把日历改成「一年 = 现实 8 分钟」之后，一个游戏月约 39 真实秒，
+ *      而原先那句"60 个游戏月"会算出 **39 分钟** —— 货架 39 分钟才换一次，
+ *      玩家早就忘了它卖什么。
+ *
+ * 所以商行刷新**直接按真实秒定义**：就是 60 秒一次。
+ * 它的节奏是给坐在屏幕前的人看的，不该跟着世界观日历走。
  */
-export const SHOP_REFRESH_GAME_MONTHS = 60;
+export const SHOP_REFRESH_SECONDS = 60;
 export const GAME_DAYS_PER_MONTH = 30;
-
-export const SHOP_REFRESH_SECONDS =
-  (SHOP_REFRESH_GAME_MONTHS * GAME_DAYS_PER_MONTH) / GAME_DAYS_PER_SECOND;
 
 /** 灵石换资源的汇率（基准，实际按境界倍率放大） */
 export const SHOP_GOODS: ShopGoodDef[] = [

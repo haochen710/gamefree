@@ -204,10 +204,16 @@ export const REALMS: RealmDef[] = [
 
 export const FINAL_REALM_INDEX = REALMS.length - 1;
 
-/** 达到该境界（化神期）后可开宗立派，也可飞升 */
+/** 飞升所需的最低境界（化神期）。开宗与飞升已经拆成两个常量，见下 */
 export const ASCENSION_MIN_REALM = 4;
-/** 开宗立派所需的最低境界 */
-export const SECT_MIN_REALM = 4;
+/**
+ * 开宗立派所需的最低境界。
+ *
+ * 需求 3：「金丹就可创建宗门」。原先这里是 4（化神），
+ * 与 ASCENSION_MIN_REALM 共用一个值 —— 降到金丹之后必须拆开，
+ * 否则金丹期就能飞升了。
+ */
+export const SECT_MIN_REALM = 2;
 
 /* ------------------------------------------------------------------ */
 /* 突破成功率                                                          */
@@ -296,11 +302,39 @@ export const MEDITATE_SECONDS = 1.5;
 /* ------------------------------------------------------------------ */
 
 /**
- * 1 真实秒 = 30 游戏天（约 1 真实分钟 = 5 游戏年）。
+ * 纪年（需求 1）：**一年 = 现实 8 分钟，一季 = 现实 2 分钟**。
  *
- * 这个比例决定了「五百年」要挂多久：
- * 天灵根弟子修到化神期正好 500 游戏年 ≈ 1.7 小时真实时间。
- * 想让弟子成长更快/更慢，改这一个数就行。
+ * 所以游戏内日历的速度是 `365 / 480` 游戏天每秒（约 0.76 天/秒）——
+ * 比起早先的 30 天/秒慢了约 39 倍。这一条是需求明文规定的，
+ * 它同时决定了三件事，改之前要想清楚：
+ *
+ *   1. **季节**：一季 = 480 / 4 = 120 真实秒（见 seasons.ts 的 SEASON_SECONDS）。
+ *      上一轮因为"一个游戏年只有 12 秒"而不敢把季节挂到日历上，现在可以了。
+ *   2. **弟子寿元**：`lifespan` 是以**游戏年**计的（炼气 300 年、渡劫 10 万年），
+ *      所以日历一慢，寿元对应的真实时间也慢了 39 倍 ——
+ *      炼气弟子从"活 1 小时"变成"活 40 小时"，化神以上在 30 天模拟里基本不会老死。
+ *      这是"年"这个单位被拉长的必然结果，不是 bug。
+ *   3. ⚠️ **商行刷新与大比间隔不能跟着日历走**：它们的节奏是给真人看的，
+ *      跟着日历一慢就会变成"40 分钟刷新一次货架"，所以那两个改成直接按真实秒定义。
  */
-export const GAME_DAYS_PER_SECOND = 30;
+export const SECONDS_PER_GAME_YEAR = 8 * 60;
 export const GAME_DAYS_PER_YEAR = 365;
+export const GAME_DAYS_PER_SECOND = GAME_DAYS_PER_YEAR / SECONDS_PER_GAME_YEAR;
+
+/** 一个游戏日等于多少真实秒（纪年展示用） */
+export const SECONDS_PER_GAME_DAY = 1 / GAME_DAYS_PER_SECOND;
+
+/**
+ * 当前是第几年（从 1 开始）。
+ *
+ * 用 `playTime` 而不是单独记一个年份：年份本来就是时间的函数，
+ * 存两份必然会漂移（读档、离线结算都是坑）。
+ */
+export function gameYearOf(playTime: number): number {
+  return Math.floor(playTime / SECONDS_PER_GAME_YEAR) + 1;
+}
+
+/** 今年已经过了多少（0~1），界面画"年度进度"用 */
+export function yearProgressOf(playTime: number): number {
+  return (playTime % SECONDS_PER_GAME_YEAR) / SECONDS_PER_GAME_YEAR;
+}

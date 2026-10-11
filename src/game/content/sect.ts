@@ -128,7 +128,10 @@ export const SECT_LEVELS: SectLevelDef[] = [
   {
     level: 1,
     name: '一品宗门',
-    requiresRealm: 4,
+    // 需求 3：「金丹就可创建宗门」。注意这里**只管开宗**，
+    // 飞升的门槛是另一个常量（ASCENSION_MIN_REALM），两者原先共用这一个值，
+    // 改成金丹之后必须拆开 —— 否则金丹期就能飞升了。
+    requiresRealm: 2,
     cost: { stone: 500 },
     desc: '草创之初，几位道友结庐而居。',
   },
@@ -195,9 +198,18 @@ export function discipleCapBySect(level: number): number {
   return level * 6;
 }
 
-/** 宗门等级 → 可同时进行的秘境探索数量 */
+/**
+ * 宗门等级 → 可同时进行的秘境探索数量（需求 3）。
+ *
+ * 需求原文：「宗门等级越高，能够派遣探索秘境的队伍越多，最多9个」。
+ * 所以直接**一品 = 1 队、九品 = 9 队**，一一对应 ——
+ * 比原来那个 `1 + floor(level / 3)`（九品也只有 4 队）直观得多，
+ * 也让"升宗门品阶"第一次真正值钱：每一品都多一支队伍。
+ */
+export const MAX_EXPEDITION_SLOTS = 9;
+
 export function expeditionSlots(level: number): number {
-  return 1 + Math.floor(level / 3);
+  return Math.max(1, Math.min(MAX_EXPEDITION_SLOTS, level));
 }
 
 /* ------------------------------------------------------------------ */

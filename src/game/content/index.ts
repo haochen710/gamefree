@@ -28,6 +28,7 @@ export * from './map';
 export * from './travel';
 export * from './secretRealms';
 export * from './sectActivity';
+  export * from './encounters';
 export * from './seasons';
 export * from './realms';
 export * from './recipes';

@@ -17,6 +17,7 @@ import {
   BUILDABLE_MAP,
   BUILD_QUEUE_MAX_SLOTS,
   QUEUE_UPGRADES,
+  ENCOUNTER_MAP,
   DISCOVERY_PITY_FAILURES,
   MAP_REGION_MAP,
   FINAL_REALM_INDEX,
@@ -49,6 +50,8 @@ import {
 } from './content';
 import { ARENA_INTERVAL_SECONDS } from './sectActivity';
 import { getSurveyDuration } from './expeditions';
+import { SOLO_REALM_DURATION_MULT } from './travel';
+import { ENCOUNTER_INTERVAL, KARMA_MAX, KARMA_MIN } from './encounter';
 import { applyTick } from './tick';
 import { refreshUnlocks } from './engine';
 import {
@@ -142,6 +145,10 @@ export interface SerializedGame {
   bq?: unknown;
   /** 天工院特殊升级等级（需求 2） */
   tl?: number;
+  /** 善恶值 / 待选遭遇 id / 遭遇判定计时（需求 2） */
+  ka?: number;
+  pe?: string | null;
+  et?: number;
   /** arenaEnabled / arenaTimer / arenaBuffSeconds：宗门大比（需求 4） */
   ae?: boolean;
   arn?: number;
@@ -215,6 +222,10 @@ export function serialize(state: GameState): SerializedGame {
     df: state.discoveryFailures,
     bq: [...state.buildQueue],
     tl: state.tiangongLevel,
+    // 善恶值与随机遭遇（需求 2）：ka 善恶值 / pe 待选遭遇 / et 遭遇判定计时
+    ka: state.karma,
+    pe: state.pendingEncounter,
+    et: state.encounterTimer,
     ae: state.arenaEnabled,
     arn: state.arenaTimer,
     arb: state.arenaBuffSeconds,
@@ -442,13 +453,22 @@ function toSeedMap(raw: unknown): Record<string, number> {
 function sanitizeTravel(raw: unknown): PersonalTravel | null {
   if (raw === null || typeof raw !== 'object') return null;
   const t = raw as Partial<PersonalTravel>;
-  if (typeof t.regionId !== 'string' || !TRAVEL_REGION_MAP[t.regionId]) return null;
+  if (typeof t.regionId !== 'string') return null;
 
-  const def = TRAVEL_REGION_MAP[t.regionId];
+  /*
+   * 需求 5 之后掌门出门有两种：游历目的地（travel）与独自探秘境（realm）。
+   * 旧存档没有 kind 字段，一律当作游历；两种都要校验目标还在不在。
+   */
+  const kind: PersonalTravel['kind'] = t.kind === 'realm' ? 'realm' : 'travel';
+  const def = kind === 'realm' ? SECRET_REALM_MAP[t.regionId] : TRAVEL_REGION_MAP[t.regionId];
+  if (!def) return null;
+
+  const fallback = kind === 'realm' ? Math.round(def.duration * SOLO_REALM_DURATION_MULT) : def.duration;
   return {
+    kind,
     regionId: t.regionId,
     progress: toFloat(t.progress, 0, 0, 1e9),
-    duration: toFloat(t.duration, def.duration, 1, 1e9),
+    duration: toFloat(t.duration, fallback, 1, 1e9),
   };
 }
 
@@ -705,6 +725,10 @@ export function deserialize(raw: unknown): GameState | null {
     realmCooldowns: sanitizeCooldowns(data.rc),
     buildQueue: sanitizeBuildQueue(data.bq),
     tiangongLevel: toInt(data.tl, 0, 0, QUEUE_UPGRADES.length),
+    karma: toInt(data.ka, 0, KARMA_MIN, KARMA_MAX),
+    // 只认还存在的遭遇 id：旧存档若挂着一个已经删掉的遭遇，就会永远点不掉
+    pendingEncounter: typeof data.pe === 'string' && ENCOUNTER_MAP[data.pe] ? data.pe : null,
+    encounterTimer: toFloat(data.et, 0, 0, ENCOUNTER_INTERVAL),
     // 旧存档的 `dp` 是"累积保底概率"（0~0.5 的小数），与现在的"连续失败次数"
     // 语义不同，所以直接丢弃不用。丢掉最多只是少一点保底进度，不会损坏存档。
     discoveryFailures: toFloat(data.df, 0, 0, DISCOVERY_PITY_FAILURES),

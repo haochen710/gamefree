@@ -2406,5 +2406,175 @@ a {
 .queue__upgrade-head { font-size: 13px; }
 .queue__upgrade-cost { margin: 4px 0 6px; font-size: 12px; color: var(--muted); }
 
+/* ------------------------------------------------------------------ */
+/* 善恶值与随机遭遇（需求 2）                                           */
+/* ------------------------------------------------------------------ */
+
+/* 侧栏那一条 */
+.karma-strip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+}
+
+.karma-strip--good { color: #2f7d4f; }
+.karma-strip--evil { color: #a8471f; }
+.karma-strip--neutral { color: var(--muted); }
+
+.karma-strip__icon { font-size: 14px; }
+.karma-strip__name { flex: 1; }
+.karma-strip__value { font-variant-numeric: tabular-nums; }
+
+.karma-strip__badge {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #b4552a;
+  color: #fff;
+  font-size: 10px;
+}
+
+/* 善恶轴：中间是 0，向左为恶、向右为善 */
+.karma-bar {
+  position: relative;
+  height: 18px;
+  margin: 8px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+}
+
+.karma-bar__zero {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+
+.karma-bar__fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.karma-bar__fill--good { background: rgba(60, 140, 90, 0.35); }
+.karma-bar__fill--evil { background: rgba(180, 70, 40, 0.35); }
+
+.karma-bar__min,
+.karma-bar__mid,
+.karma-bar__max {
+  position: absolute;
+  top: 1px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.karma-bar__min { left: 6px; }
+.karma-bar__mid { left: 50%; transform: translateX(-50%); }
+.karma-bar__max { right: 6px; }
+
+.karma-effects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.karma-chip {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.karma-chip--good {
+  color: #26663f;
+  border-color: rgba(60, 140, 90, 0.35);
+  background: rgba(60, 140, 90, 0.1);
+}
+
+.karma-chip--evil {
+  color: #943d1c;
+  border-color: rgba(180, 70, 40, 0.35);
+  background: rgba(180, 70, 40, 0.09);
+}
+
+/* 遭遇卡片 */
+.encounter {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(196, 150, 60, 0.5);
+  border-radius: var(--radius);
+  background: rgba(196, 150, 60, 0.08);
+}
+
+.encounter__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.encounter__icon { font-size: 20px; }
+.encounter__name { font-weight: 600; }
+
+.encounter__desc {
+  margin: 5px 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.encounter__options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.encounter-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.encounter-option:not(:disabled):hover {
+  border-color: rgba(60, 140, 90, 0.5);
+  background: rgba(60, 140, 90, 0.07);
+}
+
+.encounter-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.encounter-option--evil:not(:disabled):hover {
+  border-color: rgba(180, 70, 40, 0.5);
+  background: rgba(180, 70, 40, 0.07);
+}
+
+.encounter-option__label { font-weight: 600; font-size: 13px; }
+.encounter-option__desc { font-size: 12px; color: var(--muted); }
+.encounter-option__effect { font-size: 12px; color: #7a603c; }
+.encounter-option__need { font-size: 11px; color: var(--muted); }
+.encounter-option__why { font-size: 11px; color: #a8471f; }
+
+
 
 

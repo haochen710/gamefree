@@ -10,6 +10,7 @@
 import Decimal, { D } from './decimal';
 import {
   ALCHEMY_SLOT_REQUIREMENT,
+  ASCENSION_MIN_REALM,
   ARENA_BUFF_BONUS,
   ARTIFACTS,
   AUTO_REFINE_LEVEL_MAX,
@@ -52,6 +53,7 @@ import {
   REFINING_SLOT_REQUIREMENT,
   REGION_PREVIEW_REALMS,
   RESOURCE_IDS,
+  SECT_MIN_REALM,
   SECRET_REALMS,
   SECT_LEVELS,
   SERVANT_BONUS_PER_HEAD,
@@ -77,6 +79,8 @@ import {
 } from './content';
 import { gameRandom, type RandomSource } from './random';
 import { getEnvironmentResourceBonus, getWeatherEffects, getWeatherProductionBonus } from './season';
+import { KARMA_LAYER_FAIL_INJURY, KARMA_SUCCESS_FLOOR, getKarma, getKarmaThunderPenalty } from './encounter';
+import { pushJournal } from './disciples';
 import type { GameState, ResourceMap } from './state';
 
 /** 一份消耗清单：资源与材料混用 */
@@ -1122,9 +1126,33 @@ export function canAdvanceLayer(state: GameState): boolean {
   return cost !== null && state.resources.qi.gte(cost);
 }
 
-export function advanceLayer(state: GameState): GameState {
+/**
+ * 参悟一层小境界（需求 2 起：小境界也会遭天雷）。
+ *
+ * 恶行值高的时候，参悟有一定概率**失败** —— 灵气照样消耗（这就是代价），
+ * 境界不涨，还会落下一段道伤。需求原文特意点了"小境界突破也会"，
+ * 所以这条不能只挂在大境界上。
+ */
+export function advanceLayer(state: GameState, random: RandomSource = gameRandom): GameState {
   const cost = getLayerCost(state);
   if (cost === null || state.resources.qi.lt(cost)) return state;
+
+  const penalty = getKarmaThunderPenalty(state);
+  const struck = penalty > 0 && random() < penalty;
+
+  if (struck) {
+    return {
+      ...state,
+      resources: { ...state.resources, qi: state.resources.qi.sub(cost) },
+      injurySeconds: Math.max(state.injurySeconds, KARMA_LAYER_FAIL_INJURY),
+      journal: pushJournal(state.journal, {
+        time: state.playTime,
+        kind: 'bad',
+        text: `参悟第 ${state.layer + 1} 层时天雷加身，功亏一篑（恶行值 ${Math.round(getKarma(state))}）`,
+      }),
+    };
+  }
+
   return {
     ...state,
     resources: { ...state.resources, qi: state.resources.qi.sub(cost) },
@@ -1187,11 +1215,16 @@ export function getSuccessRate(state: GameState, usePill: boolean): number {
   // 雷池等建筑也提供突破加成；天象（天雷劫云）也会临时加一点（需求 1）
   const building = getStructureBonus(state, 'breakthroughBonus');
   const weather = getWeatherEffects(state).breakthrough ?? 0;
+  /*
+   * 恶行值带来的天雷之罚（需求 2）：恶行值越高，突破时越容易挨天雷。
+   * 这里对**大境界突破**生效；小境界参悟走的是 advanceLayer，那边单独判一次。
+   * 成功率留一个下限（KARMA_SUCCESS_FLOOR），否者恶行线会变成死路。
+   */
+  const thunder = getKarmaThunderPenalty(state);
 
-  return Math.min(
-    realm.baseSuccess + pity + state.globalBreakthroughBonus + pill + building + weather,
-    BREAKTHROUGH_MAX_SUCCESS,
-  );
+  const raw =
+    realm.baseSuccess + pity + state.globalBreakthroughBonus + pill + building + weather - thunder;
+  return Math.max(KARMA_SUCCESS_FLOOR, Math.min(raw, BREAKTHROUGH_MAX_SUCCESS));
 }
 
 export interface BreakthroughResult {
@@ -1317,7 +1350,7 @@ export function upgradeSect(state: GameState): GameState {
 
 /** 开宗立派（需求 3 的入口） */
 export function foundSect(state: GameState): GameState {
-  if (state.sect.founded || state.realmIndex < SECT_LEVELS[0].requiresRealm) return state;
+  if (state.sect.founded || state.realmIndex < SECT_MIN_REALM) return state;
   const cost = toCostMap(SECT_LEVELS[0].cost);
   if (!canAfford(state, cost)) return state;
 
@@ -1330,11 +1363,11 @@ export function foundSect(state: GameState): GameState {
 /* ------------------------------------------------------------------ */
 
 export function canAscend(state: GameState): boolean {
-  return state.realmIndex >= SECT_LEVELS[0].requiresRealm && getDaoYunGain(state).gt(0);
+  return state.realmIndex >= ASCENSION_MIN_REALM && getDaoYunGain(state).gt(0);
 }
 
 export function getDaoYunGain(state: GameState): Decimal {
-  if (state.realmIndex < SECT_LEVELS[0].requiresRealm) return D(0);
+  if (state.realmIndex < ASCENSION_MIN_REALM) return D(0);
   return state.totalQi.div(DAO_YUN_DIVISOR).pow(DAO_YUN_EXPONENT).floor();
 }
 

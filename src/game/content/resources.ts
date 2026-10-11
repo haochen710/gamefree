@@ -275,6 +275,11 @@ export function isResourceId(id: ItemId): id is ResourceId {
 
 const RARE_MATERIAL_SET = new Set<string>(RARE_MATERIAL_IDS);
 
+/** 这个物品是不是「稀有材料」（月华露及以上那几种）。掌门独自探秘境时专挑这些 */
+export function isRareMaterial(id: ItemId): boolean {
+  return RARE_MATERIAL_SET.has(id);
+}
+
 /**
  * 这个物品是不是「**基础材料**」（材料里除稀有材料之外的那几种）。
  *

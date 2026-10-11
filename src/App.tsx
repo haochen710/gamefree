@@ -14,6 +14,7 @@ import BuildQueuePanel from './components/BuildQueuePanel';
 import ResearchPanel from './components/ResearchPanel';
 import RealmPanel from './components/RealmPanel';
 import SeasonPanel, { SeasonStrip } from './components/SeasonPanel';
+import EncounterPanel, { KarmaStrip } from './components/EncounterPanel';
 import AscendPanel from './components/AscendPanel';
 import StonePanel from './components/StonePanel';
 import SectPanel from './components/SectPanel';
@@ -81,6 +82,8 @@ function CultivationTab() {
         <ServantPanel />
       </div>
       <div className="layout__right">
+        {/* 需求 2：开宗前的随机遭遇与善恶值，放在修行页最上面 */}
+        <EncounterPanel />
         <RealmPanel />
         <SeasonPanel />
         <StonePanel />
@@ -197,6 +200,8 @@ export default function App() {
           <ResourceBar />
           {/* 季节会改变所有资源产出，所以放在资源栏下面常驻可见（需求 1） */}
           <SeasonStrip />
+          {/* 善恶值与"有遭遇待选"的提示（需求 2） */}
+          <KarmaStrip />
         </aside>
 
         <div className="shell__main">

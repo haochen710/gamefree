@@ -9,7 +9,7 @@
  * 让玩家能提前规划，而不是被随机数牵着走。
  */
 import { fmtDuration } from '../game/decimal';
-import { SEASONS, WEATHERS, WEATHER_TONE_LABEL, type SeasonDef } from '../game/content';
+import { SEASONS, WEATHERS, WEATHER_TONE_LABEL, gameYearOf, type SeasonDef } from '../game/content';
 import {
   describeSeason,
   describeWeather,
@@ -35,7 +35,7 @@ export function SeasonPanel() {
     <section className="panel">
       <div className="panel__head">
         <h2>
-          {season.icon} {season.name}季
+          {season.icon} 第 {gameYearOf(game.playTime)} 年 · {season.name}季
         </h2>
         <span className="panel__hint">
           距换季 {fmtDuration(seasonLeft)}
@@ -225,7 +225,7 @@ export function SeasonStrip() {
     <div className="season-strip">
       <div className="season-strip__row">
         <span className="season-strip__icon">{season.icon}</span>
-        <span className="season-strip__name">{season.name}季</span>
+        <span className="season-strip__name">第 {gameYearOf(game.playTime)} 年 · {season.name}季</span>
         <span className="season-strip__time">{fmtDuration(getSeasonRemaining(game))}</span>
       </div>
       {weather && (

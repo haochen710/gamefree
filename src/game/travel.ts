@@ -28,7 +28,10 @@ import {
   TRAVEL_REGIONS,
   YIELD_VARIANCE_MAX,
   YIELD_VARIANCE_MIN,
+  LOOT_ROLLS,
+  SECRET_REALM_MAP,
   isBasicMaterial,
+  isRareMaterial,
   type ItemId,
   type MaterialId,
   type TravelRegionDef,
@@ -38,14 +41,18 @@ import {
   canReachRegion,
   discoverRealm,
   getDiscoveryChance,
+  getRealmCooldown,
   getStructureBonus,
   getUndiscoveredCandidates,
   isDiscoveryGuaranteed,
+  isRealmAvailable,
+  isRealmDiscovered,
   isRegionVisible,
   recordDiscoveryFailure,
 } from './engine';
 import { pushJournal } from './disciples';
 import { getEnvironmentMaterialBonus } from './season';
+import { getKarmaExploreBonus } from './encounter';
 import { addSeeds } from './planting';
 import { gameRandom, weightedDraw, type RandomSource } from './random';
 import type { GameState, PersonalTravel } from './state';
@@ -103,7 +110,7 @@ export function startTravel(state: GameState, regionId: string): GameState {
   const def = TRAVEL_REGION_MAP[regionId];
   return {
     ...state,
-    personalTravel: { regionId, progress: 0, duration: def.duration },
+    personalTravel: { kind: 'travel', regionId, progress: 0, duration: def.duration },
     journal: pushJournal(state.journal, {
       time: state.playTime,
       kind: 'info',
@@ -111,6 +118,134 @@ export function startTravel(state: GameState, regionId: string): GameState {
     }),
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* 掌门独自探秘境（需求 5）                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 需求原文：「秘境可由玩家独自前往，玩家独自前往更容易获取稀有材料」。
+ *
+ * 和派弟子的区别有两点，都是刻意做的：
+ *   1. **慢**：一个人要自己开路、自己护法，时长是派队伍的 1.4 倍；
+ *   2. **专挑稀有的**：总产量只有队伍的 45%（一个人背不动），
+ *      但稀有材料的权重 ×4 —— 想要星辰砂、太阴玄晶这类东西，
+ *      亲自跑一趟比派弟子划算。
+ *
+ * 掌门亲自出门同样会**让洞府产量下降**（和游历共用同一套惩罚），
+ * 所以这不是"免费的第二支队伍"，而是拿家中产量换稀有材料。
+ */
+export const SOLO_REALM_DURATION_MULT = 1.4;
+export const SOLO_REALM_YIELD_MULT = 0.45;
+export const SOLO_REALM_RARE_WEIGHT_MULT = 4;
+
+export function getSoloRealmDuration(_state: GameState, realmId: string): number {
+  const def = SECRET_REALM_MAP[realmId];
+  if (!def) return 0;
+  return Math.round(def.duration * SOLO_REALM_DURATION_MULT);
+}
+
+export function canStartSoloRealm(state: GameState, realmId: string): TravelCheck {
+  const def = SECRET_REALM_MAP[realmId];
+  if (!def) return { ok: false, reason: '秘境不存在' };
+  if (state.personalTravel) return { ok: false, reason: '掌门正在外' };
+  if (!isRealmDiscovered(state, def)) return { ok: false, reason: '尚未发现此秘境' };
+  if (!isRealmAvailable(state, def)) {
+    const cooldown = getRealmCooldown(state, def.id);
+    if (cooldown > 0) return { ok: false, reason: `冷却中，还需 ${Math.ceil(cooldown)} 秒` };
+    return { ok: false, reason: '此地暂时去不了' };
+  }
+  return { ok: true, reason: null };
+}
+
+export function startSoloRealm(state: GameState, realmId: string): GameState {
+  if (!canStartSoloRealm(state, realmId).ok) return state;
+  const def = SECRET_REALM_MAP[realmId];
+  return {
+    ...state,
+    personalTravel: {
+      kind: 'realm',
+      regionId: realmId,
+      progress: 0,
+      duration: getSoloRealmDuration(state, realmId),
+    },
+    journal: pushJournal(state.journal, {
+      time: state.playTime,
+      kind: 'info',
+      text: `掌门独自前往${def.name}，洞府无人监管，产量下降`,
+    }),
+  };
+}
+
+/**
+ * 掌门独自探秘境的结算。
+ *
+ * 掉落规则和派弟子**共用同一张表**（`def.loot`），只做两件事：
+ *   - 稀有材料的权重 ×4（"更容易获取稀有材料"）；
+ *   - 总产量 ×0.45（一个人带不了多少东西）。
+ */
+export function resolveSoloRealm(
+  state: GameState,
+  travel: PersonalTravel,
+  random: RandomSource = gameRandom,
+): { state: GameState; outcome: SoloRealmOutcome | null } {
+  const def = SECRET_REALM_MAP[travel.regionId];
+  if (!def) return { state: { ...state, personalTravel: null }, outcome: null };
+
+  const entries = def.loot.map((entry) => ({
+    ...entry,
+    weight:
+      entry.weight *
+      (isRareMaterial(entry.item) ? SOLO_REALM_RARE_WEIGHT_MULT : 1),
+    amount: Math.max(1, Math.round(entry.amount * SOLO_REALM_YIELD_MULT)),
+  }));
+
+  const rolls = Math.max(2, Math.round(LOOT_ROLLS * 0.7));
+  const picked = weightedDraw(entries, rolls, random);
+
+  let working = state;
+  const gains: TravelGain[] = [];
+  for (const entry of picked) {
+    // 季节对基础材料仍然生效
+    const seasonal = isBasicMaterial(entry.item) ? 1 + getEnvironmentMaterialBonus(working, entry.item) : 1;
+    const variance = YIELD_VARIANCE_MIN + random() * (YIELD_VARIANCE_MAX - YIELD_VARIANCE_MIN);
+    const amount = Math.max(1, Math.floor(entry.amount * Math.max(0, seasonal) * variance * (1 + getKarmaExploreBonus(working))));
+    working = addItem(working, entry.item, D(amount));
+    const existing = gains.find((g) => g.id === entry.item);
+    if (existing) existing.amount += amount;
+    else {
+      gains.push({
+        id: entry.item,
+        amount,
+        name: ITEM_MAP[entry.item as ItemId]?.name ?? entry.item,
+        icon: ITEM_MAP[entry.item as ItemId]?.icon ?? '❓',
+      });
+    }
+  }
+
+  let journal = working.journal;
+  journal = pushJournal(journal, {
+    time: working.playTime,
+    kind: 'good',
+    text: `掌门自${def.name}归来：${gains.map((g) => `${g.icon}${g.name}×${g.amount}`).join(' ') || '一无所获'}`,
+  });
+
+  // 亲自去过就算探过：同样进冷却
+  const next: GameState = {
+    ...working,
+    personalTravel: null,
+    realmCooldowns: { ...working.realmCooldowns, [def.id]: def.cooldown },
+    journal,
+  };
+
+  return { state: next, outcome: { realmName: def.name, gains } };
+}
+
+export interface SoloRealmOutcome {
+  realmName: string;
+  gains: TravelGain[];
+}
+
 
 export function cancelTravel(state: GameState): GameState {
   const travel = state.personalTravel;
@@ -287,10 +422,13 @@ export function tickTravel(state: GameState, dt: number, random: RandomSource = 
   if (!travel || dt <= 0) return state;
 
   const progress = travel.progress + dt;
-  if (progress < travel.duration) {
-    return { ...state, personalTravel: { ...travel, progress } };
-  }
-  return resolveTravel({ ...state, personalTravel: { ...travel, progress } }, random).state;
+  const running = { ...state, personalTravel: { ...travel, progress } };
+  if (progress < travel.duration) return running;
+
+  // 需求 5：掌门独自探秘境走同一条时间线，只是结算不同
+  return travel.kind === 'realm'
+    ? resolveSoloRealm(running, running.personalTravel as PersonalTravel, random).state
+    : resolveTravel(running, random).state;
 }
 
 /** 界面上显示「还有多久回来」 */

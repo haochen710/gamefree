@@ -99,6 +99,18 @@ export const JOURNAL_LIMIT = 40;
 
 /** 掌门亲自出门游历（需求 1）。同一时间只能进行一趟 */
 export interface PersonalTravel {
+  /**
+   * 掌门这次出门是干什么的（需求 5）。
+   *
+   * - `travel`：去游历目的地（见 travel.ts 的 TRAVEL_REGIONS）；
+   * - `realm` ：**独自前往一处已发现的秘境** ——
+   *   人少带不了多少东西，但**更容易挑出稀有材料**。
+   *
+   * 两者共用同一个"掌门不在家"的槽位与产量惩罚，
+   * 所以"要不要亲自出去"始终是同一个取舍。
+   */
+  kind: 'travel' | 'realm';
+  /** kind === 'travel' 时是游历目的地 id，kind === 'realm' 时是秘境 id */
   regionId: string;
   /** 已积累的进度（秒） */
   progress: number;
@@ -177,6 +189,18 @@ export interface GameState {
   buildQueue: string[];
   /** 天工院的特殊升级等级（0~3），每级 +1 个建造名额（需求 2） */
   tiangongLevel: number;
+
+  /**
+   * 善恶值（需求 2）：正 = 善行值，负 = 恶行值，范围 -100~100。
+   *
+   * 用**一条轴**而不是两个计数器：「又善又恶」没有意义，
+   * 而且两个计数器必须时时保证一正一负，反而更容易写错。
+   */
+  karma: number;
+  /** 当前待玩家选择的随机遭遇 id（需求 2）；没有则 null */
+  pendingEncounter: string | null;
+  /** 距离下一次遭遇判定的累计秒数（需求 2） */
+  encounterTimer: number;
 
   /** 丹药库存 */
   pills: ItemCountMap;
@@ -353,6 +377,9 @@ export function createInitialState(now = Date.now()): GameState {
     realmCooldowns: {},
     buildQueue: [],
     tiangongLevel: 0,
+    karma: 0,
+    pendingEncounter: null,
+    encounterTimer: 0,
     discoveryFailures: 0,
     pills: {},
     artifacts: {},

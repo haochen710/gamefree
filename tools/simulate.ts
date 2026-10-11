@@ -47,6 +47,7 @@ import * as crafting from '../src/game/crafting';
 import * as research from '../src/game/research';
 import * as planting from '../src/game/planting';
 import * as shop from '../src/game/shop';
+import * as encounter from '../src/game/encounter';
 import * as travel from '../src/game/travel';
 import * as sectActivity from '../src/game/sectActivity';
 import { applyTick } from '../src/game/tick';
@@ -105,6 +106,8 @@ interface SimResult {
   realmTimes: Map<string, number>;
   milestones: Milestone[];
   finalState: GameState;
+  /** 路上遇到的随机遭遇次数（需求 2） */
+  encountersSeen: number;
 }
 
 /* -------------------------- 估值辅助 ------------------------------ */
@@ -223,6 +226,7 @@ function runSimulation(seed: number): SimResult {
   let seenStorage = false;
   let seenQueue = false;
   let seenSurvey = false;
+  let encountersSeen = 0;
   let seenServant = false;
 
   const milestones: Milestone[] = [];
@@ -262,6 +266,36 @@ function runSimulation(seed: number): SimResult {
       if (wantAuto > 0 && !flags.firstAutoRefine) {
         flags.firstAutoRefine = true;
         record('开启灵石自动合成');
+      }
+    }
+
+    /* ---------------- 0. 随机遭遇（需求 2） ----------------
+       开宗前会遇到商队与各色 NPC，每一个都得做选择。
+       这里让**一半种子走行善路线、一半走作恶路线** —— 需求 2 的两条后果
+       （善行加探索产出、恶行招天雷）都要被真的跑到，否则模拟器测不到它们。
+       作恶路线还能顺带验证"抢劫解锁之后经济会不会失衡"。 */
+    if (state.pendingEncounter) {
+      const def = encounter.getPendingEncounter(state);
+      if (def) {
+        const usable = def.options
+          .map((o, i) => ({ o, i }))
+          .filter(({ o }) => encounter.canChooseOption(state, o).ok);
+        const evilRun = seed % 2 === 0;
+        const pick =
+          usable.find(({ o }) => (evilRun ? o.effect.successChance !== undefined : o.effect.karma > 0)) ??
+          usable[0];
+        if (pick) {
+          const before = state.karma;
+          const res = encounter.chooseEncounterOption(state, pick.i, makeRandom(seed + state.playTime));
+          if (res.state !== state) {
+            state = res.state;
+            encountersSeen += 1;
+            if (Math.sign(state.karma) !== Math.sign(before) && Math.abs(state.karma) >= 30) {
+              record(`善恶值到 ${Math.round(state.karma)}（${encounter.getKarmaLabel(state).name}）`);
+            }
+            continue;
+          }
+        }
       }
     }
 
@@ -789,7 +823,7 @@ function runSimulation(seed: number): SimResult {
     }
   }
 
-  return { seed, seconds, iterations, deadlock, realmTimes, milestones, finalState: state };
+  return { seed, seconds, iterations, deadlock, realmTimes, milestones, finalState: state, encountersSeen };
 }
 
 /* ------------------------------------------------------------------ */
@@ -817,6 +851,7 @@ function printDetail(result: SimResult): void {
 
   console.log('\n【模拟结束时的状态】');
   const state = result.finalState;
+  const encountersSeen = result.encountersSeen;
   const production = engine.getProduction(state);
   const caps = engine.getStorageCaps(state);
 
@@ -882,6 +917,15 @@ function printDetail(result: SimResult): void {
     (def) => def.group === 'hall' && engine.getBuildingCount(state, def.id) > 0,
   ).map((def) => `${def.name}×${engine.getBuildingCount(state, def.id)}`);
   console.log(`  宗门建筑：${hallBuilt.length === 0 ? '无' : hallBuilt.join('，')}`);
+  {
+    const karmaLabel = encounter.getKarmaLabel(state);
+    console.log(
+      `  善恶值（需求 2）：${Math.round(state.karma)}（${karmaLabel.icon}${karmaLabel.name}）` +
+        ` · 路上遭遇 ${encountersSeen} 次` +
+        ` · 天雷之罚 −${(encounter.getKarmaThunderPenalty(state) * 100).toFixed(0)}%` +
+        ` · 善行加成 +${(encounter.getKarmaExploreBonus(state) * 100).toFixed(0)}%`,
+    );
+  }
   {
     const queueNames = state.buildQueue.map((id) => BUILDABLE_MAP[id]?.name ?? id);
     console.log(

@@ -19,6 +19,7 @@ import * as research from './research';
 import * as planting from './planting';
 import * as shop from './shop';
 import * as travel from './travel';
+import * as encounter from './encounter';
 import * as sectActivity from './sectActivity';
 import { applyTick } from './tick';
 import { createAscendedState, createInitialState, type GameState } from './state';
@@ -94,6 +95,10 @@ export interface GameStore {
 
   /* 秘境 */
   startExpedition(realmId: string, ids: string[]): void;
+  /** 掌门独自前往已发现的秘境（需求 5） */
+  startSoloRealm(realmId: string): void;
+  /** 选择随机遭遇里的某个选项（需求 2） */
+  chooseEncounter(optionIndex: number): void;
   /** 普通探索（需求 1）：小区域还没发现秘境时只能这么做 */
   startSurvey(regionId: string, ids: string[]): void;
 
@@ -504,6 +509,33 @@ export const useGame = create<GameStore>()((set, get) => ({
   },
 
   /* ------------------------------------------------------------ 秘境 */
+
+  /** 随机遭遇里选一个（需求 2） */
+  chooseEncounter: (optionIndex) => {
+    set((s) => {
+      const result = encounter.chooseEncounterOption(s.game, optionIndex);
+      if (!result.outcome) return { notice: '这个选择现在做不了' };
+      const o = result.outcome;
+      const loot = o.gains
+        .map((g) => `${g.icon}${g.name}${g.amount > 0 ? '+' : ''}${g.amount}`)
+        .join(' ');
+      return {
+        ...nextGame(s.game, result.state),
+        notice: `${o.text}${loot ? `（${loot}）` : ''}`,
+      };
+    });
+  },
+
+  startSoloRealm: (realmId) => {
+    set((s) => {
+      const check = travel.canStartSoloRealm(s.game, realmId);
+      if (!check.ok) return { notice: check.reason ?? '无法前往' };
+      return {
+        ...nextGame(s.game, travel.startSoloRealm(s.game, realmId)),
+        notice: '掌门已独自前往秘境（洞府产量下降）',
+      };
+    });
+  },
 
   startExpedition: (realmId, ids) => {
     set((s) => {

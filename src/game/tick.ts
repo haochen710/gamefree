@@ -26,6 +26,7 @@ import {
   tickMind,
   tickRealmCooldowns,
 } from './engine';
+import { tickEncounters } from './encounter';
 import { tickDisciples } from './disciples';
 import { tickExpeditions } from './expeditions';
 import { tickPlantings } from './planting';
@@ -83,6 +84,8 @@ export function applyTick(state: GameState, dt: number, random: RandomSource = g
   next = refreshUnlocks(next);
   // 建造队列（需求 2）：解锁刷新之后再推进，刚解锁的建筑当帧就能排上
   next = tickBuildQueue(next);
+  // 随机遭遇（需求 2）：开宗前与掌门在外时会遇到人
+  next = tickEncounters(next, dt, random);
   next = clampResources(next);
 
   return next;

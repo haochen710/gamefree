@@ -65,15 +65,33 @@ import {
   MATERIAL_IDS,
   MATERIAL_MAP,
   MAJOR_REGIONS,
+  MAJOR_REGION_MAP,
   MAP_REGIONS,
   MAP_REGION_MAP,
   MIND_MAX,
-  MIN_REALM_FOR_BLUEPRINT,
+  MIN_TIER_FOR_BLUEPRINT,
   PILLS,
   ARTIFACTS,
   RARE_KINDS_MIN,
   RARE_MATERIAL_IDS,
   REALMS,
+  SECONDS_PER_GAME_YEAR,
+  SEASON_SECONDS,
+  SHOP_REFRESH_SECONDS,
+  GAME_DAYS_PER_SECOND,
+  GAME_DAYS_PER_YEAR,
+  gameYearOf,
+  yearProgressOf,
+  SERVANT_COST,
+  servantCost,
+  SECT_MIN_REALM,
+  ASCENSION_MIN_REALM,
+  SECT_LEVELS,
+  expeditionSlots,
+  MAX_EXPEDITION_SLOTS,
+  isRareMaterial,
+  ENCOUNTERS,
+  optionRequiredItems,
   SECRET_REALMS,
   SECRET_REALM_MAP,
   STARTER_REALM_ID,
@@ -81,7 +99,6 @@ import {
   specialtyRealms,
   subRegionsOf,
   SEASONS,
-  SEASON_SECONDS,
   SEEDS,
   SERVANT_BONUS_PER_HEAD,
   SHOP_GOODS,
@@ -113,6 +130,26 @@ import * as shop from '../src/game/shop';
 import * as travel from '../src/game/travel';
 import * as sectActivity from '../src/game/sectActivity';
 import * as seasonModule from '../src/game/season';
+import { tickEncounters as encounterTick } from '../src/game/encounter';
+import {
+  canChooseOption,
+  canRob,
+  chooseEncounterOption,
+  ENCOUNTER_INTERVAL,
+  getEvil,
+  getKarma,
+  getKarmaExploreBonus,
+  getKarmaLabel,
+  getKarmaThunderPenalty,
+  getPendingEncounter,
+  getVirtue,
+  KARMA_EXPLORE_BONUS_MAX,
+  KARMA_MAX,
+  KARMA_ROB_THRESHOLD,
+  KARMA_SUCCESS_FLOOR,
+  KARMA_THUNDER_MAX,
+  canRollEncounter,
+} from '../src/game/encounter';
 import { applyTick } from '../src/game/tick';
 import { gameRandom } from '../src/game/random';
 import { applyOffline, deserialize, exportCode, importCode, serialize } from '../src/game/save';
@@ -382,13 +419,18 @@ section('[2c] 仆役（杂役）');
   const fired = engine.dismissServant(moved, 'herb');
   check('可以遣散仆人', engine.getServantCount(fired) === 0);
 
-  // 招收价格随人数上涨
+  // 需求 4：招收仆人所需的灵气**固定 300**（原先随人数等比递增）
   const many = grant(forceBuild(createInitialState(0), 'grotto', 5), { qi: '1e12' });
   const costAt0 = engine.getServantCost(many).toNumber();
   let grown = many;
   for (let i = 0; i < 10; i += 1) grown = engine.recruitServant(grown, 'chores');
   const costAt10 = engine.getServantCost(grown).toNumber();
-  check('招收价格随人数上涨', costAt10 > costAt0, `${costAt0} → ${costAt10}`);
+  check('招收仆人固定 300 灵气', costAt0 === 300 && costAt10 === 300, `${costAt0} → ${costAt10}`);
+  check(
+    '招收仆人不受已有人数影响',
+    SERVANT_COST === 300 && servantCost(0) === servantCost(99),
+    `${servantCost(0)} / ${servantCost(99)}`,
+  );
 
   // 居所满了就招不了
   const full: GameState = { ...many, servants: { chores: engine.getServantCapacity(many) } };
@@ -960,8 +1002,10 @@ section('[9] 弟子系统（需求 4 / 7）');
   const d0 = test.sect.disciples[0];
   check('招到的弟子有名字和资质', d0.name.length > 0 && d0.aptitude === 'mortal', `${d0.name} / ${d0.aptitude}`);
 
-  // 推进 24 小时真实时间（约 7100 游戏年）：凡品灵根会寿元耗尽
-  const aged = applyTick(test, 60 * 60 * 24, makeRandom(1));
+  // 推进到凡品灵根寿元耗尽。
+  // ⚠️ 需求 1 把日历改成"一年 = 现实 8 分钟"之后，游戏年比原先慢了约 39 倍，
+  // 所以这里推进的真实时间也要跟着放大，否则测不出老死。
+  const aged = applyTick(test, 60 * 60 * 24 * 40, makeRandom(1));
   const died = aged.sect.disciples.length === 0;
   const advanced = aged.sect.disciples[0]?.realmIndex ?? 0;
   check(
@@ -1828,9 +1872,12 @@ section('[20] 钻研与图纸（需求 6）');
   check('图纸能通过探索获得', Object.values(SECRET_REALM_MAP).some((r) => r.blueprintChance > 0));
   check('图纸能通过商行购买', SHOP_GOODS.some((g) => g.kind === 'blueprint'));
   check(
-    '低境界秘境不会掉图纸（图纸属于元婴期以上的传承）',
+    // ⚠️ 需求 5 之后不能再拿 minRealm 当"深浅"的代理了：
+    // minRealm 现在只表示大区域的解锁境界，同一个大区里所有秘境都一样。
+    // "深浅"看的是**档次**（tier），图纸也确实只从 5 档起掉。
+    '低档次秘境不会掉图纸（图纸属于元婴期以上的传承）',
     Object.values(SECRET_REALM_MAP)
-      .filter((r) => r.minRealm < MIN_REALM_FOR_BLUEPRINT)
+      .filter((r) => r.tier < MIN_TIER_FOR_BLUEPRINT)
       .every((r) => r.blueprintChance === 0),
   );
 
@@ -1868,7 +1915,7 @@ section('[21] 新字段的存档往返');
   const loaded: GameState = {
     ...base,
     autoRefineLevel: 2,
-    personalTravel: { regionId: 'mortalVillage', progress: 30, duration: 90 },
+    personalTravel: { kind: 'travel', regionId: 'mortalVillage', progress: 30, duration: 90 },
     techs: { alchemyArt: true, refiningArt: true },
     blueprints: { spiritBoatBlueprint: true },
     research: { id: 'storageArt', remaining: 12 },
@@ -2332,11 +2379,15 @@ section('[24] 地图与探索距离（需求 5）');
   }
 
   check(
-    '秘境的弟子门槛不会比所在区域高出一级以上',
-    SECRET_REALMS.every((r) => MAP_REGION_MAP[r.regionId].requiresRealm <= r.minRealm + 1),
+    // ⚠️ 需求 5 改了这条规则：minRealm 现在取的是**所属大区域的解锁境界**，
+    // 不再是"小区域门槛 - 1"。所以这条断言按新规则写。
+    '秘境的弟子门槛等于所属大区域的解锁境界',
+    SECRET_REALMS.every(
+      (r) => r.minRealm === (MAJOR_REGION_MAP[MAP_REGION_MAP[r.regionId].majorId]?.requiresRealm ?? 0),
+    ),
   );
   check(
-    '秘境所在区域的门槛不高于秘境自身的弟子门槛上限',
+    '秘境所在小区域的门槛不低于其弟子门槛',
     SECRET_REALMS.every((r) => r.minRealm <= MAP_REGION_MAP[r.regionId].requiresRealm),
   );
   check(
@@ -3243,6 +3294,322 @@ section('[30] 建造队列：3 个起步，天工院特殊升级到 7 个（需�
       check('合法的建造 id 保留', junk.buildQueue.length === 2);
       check('越界的升级等级被夹回范围', junk.tiangongLevel <= QUEUE_UPGRADES.length, `${junk.tiangongLevel}`);
     }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 31. 纪年（需求 1）                                                   */
+/* ------------------------------------------------------------------ */
+section('[31] 纪年：一年 = 现实 8 分钟，一季 = 2 分钟（需求 1）');
+{
+  check('一年 = 480 真实秒', SECONDS_PER_GAME_YEAR === 480, `${SECONDS_PER_GAME_YEAR} 秒`);
+  check('一季 = 120 真实秒', SEASON_SECONDS === 120, `${SEASON_SECONDS} 秒`);
+  check('季度由日历推导（一季 = 四分之一年）', SEASON_SECONDS === SECONDS_PER_GAME_YEAR / 4);
+  check(
+    '游戏日/秒由年长换算而来',
+    Math.abs(GAME_DAYS_PER_SECOND - GAME_DAYS_PER_YEAR / SECONDS_PER_GAME_YEAR) < 1e-9,
+    `${GAME_DAYS_PER_SECOND.toFixed(4)} 天/秒`,
+  );
+
+  check('开局是第 1 年', gameYearOf(0) === 1);
+  check('满一年进入第 2 年', gameYearOf(SECONDS_PER_GAME_YEAR) === 2, `${gameYearOf(SECONDS_PER_GAME_YEAR)}`);
+  check('一年零一秒仍是第 2 年', gameYearOf(SECONDS_PER_GAME_YEAR + 1) === 2);
+  check('第 5 年的中点是第 5 年', gameYearOf(SECONDS_PER_GAME_YEAR * 4.5) === 5);
+  check(
+    '年度进度从 0 走到一半',
+    yearProgressOf(0) === 0 && Math.abs(yearProgressOf(SECONDS_PER_GAME_YEAR / 2) - 0.5) < 1e-9,
+  );
+
+  /* ---- 季节跟着日历走 ---- */
+  {
+    const fresh = createInitialState(0);
+    const afterSeason = seasonModule.tickSeason(fresh, SEASON_SECONDS, makeRandom(1));
+    check('走满一季换一季', afterSeason.season === 1, `${afterSeason.season}`);
+    const afterYear = seasonModule.tickSeason(fresh, SECONDS_PER_GAME_YEAR, makeRandom(1));
+    check('走满一年正好转回同一季', afterYear.season === fresh.season, `${afterYear.season}`);
+  }
+
+  /* ---- 商行刷新按真实秒，不跟着日历变慢 ---- */
+  check('商行刷新固定 60 真实秒', SHOP_REFRESH_SECONDS === 60, `${SHOP_REFRESH_SECONDS} 秒`);
+
+  /* ---- 弟子寿元跟着日历走：推进一年正好长一岁 ---- */
+  {
+    let s: GameState = grant(createInitialState(0), { qi: '1e9', stone: '1e6' });
+    s = forceBuild(s, 'thatchHut', 5);
+    s = { ...s, sect: { ...s.sect, founded: true } };
+    s = disciples.recruitDisciple(s, fixedRandom(0.01)).state;
+    check('测试用弟子招到了', s.sect.disciples.length === 1);
+    const before = s.sect.disciples[0]?.age ?? 0;
+    const oneYear = disciples.tickDisciples(s, SECONDS_PER_GAME_YEAR);
+    const after = oneYear.sect.disciples[0]?.age ?? 0;
+    check('推进一年，弟子正好长一岁', Math.abs(after - before - 1) < 0.02, `${before.toFixed(2)} → ${after.toFixed(2)}`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 32. 善恶值与随机遭遇（需求 2）                                        */
+/* ------------------------------------------------------------------ */
+section('[32] 善恶值 + 开宗前的随机遭遇（需求 2）');
+{
+  const base = createInitialState(0);
+  check('开局善恶值为 0（中立）', getKarma(base) === 0 && getKarmaLabel(base).name === '中立');
+
+  /* ---- 一条善恶轴 ---- */
+  check('恶 40 时：恶行 40、善行 0', getEvil({ ...base, karma: -40 }) === 40 && getVirtue({ ...base, karma: -40 }) === 0);
+  check('善 40 时：善行 40、恶行 0', getVirtue({ ...base, karma: 40 }) === 40 && getEvil({ ...base, karma: 40 }) === 0);
+  check('善恶值夹在 ±100', getKarma({ ...base, karma: 999 }) === 100 && getKarma({ ...base, karma: -999 }) === -100);
+  check(
+    '大恶 / 大善的标签',
+    getKarmaLabel({ ...base, karma: -80 }).name === '大恶' && getKarmaLabel({ ...base, karma: 80 }).name === '大善',
+  );
+
+  /* ---- 恶行 → 天雷之罚 ---- */
+  check('中立时没有天雷之罚', getKarmaThunderPenalty(base) === 0);
+  check(
+    '恶行值越高，天雷之罚越重',
+    getKarmaThunderPenalty({ ...base, karma: -100 }) > getKarmaThunderPenalty({ ...base, karma: -50 }),
+  );
+  check(
+    '天雷之罚封顶在 KARMA_THUNDER_MAX',
+    Math.abs(getKarmaThunderPenalty({ ...base, karma: -100 }) - KARMA_THUNDER_MAX) < 1e-9,
+  );
+  check(
+    '大恶之人的突破成功率被拉低',
+    engine.getSuccessRate({ ...base, karma: -100 }, true) < engine.getSuccessRate(base, true),
+    `${engine.getSuccessRate(base, true).toFixed(3)} → ${engine.getSuccessRate({ ...base, karma: -100 }, true).toFixed(3)}`,
+  );
+  check(
+    '但不会压到 0（恶行线仍然走得通）',
+    engine.getSuccessRate({ ...base, karma: -100 }, false) >= KARMA_SUCCESS_FLOOR - 1e-9,
+    `${engine.getSuccessRate({ ...base, karma: -100 }, false).toFixed(3)}`,
+  );
+
+  /* ---- 小境界参悟也会挨天雷（需求明文点了这一条）---- */
+  {
+    const s: GameState = grant(createInitialState(0), { qi: '1e12' });
+    const evil: GameState = { ...s, karma: -100 };
+    const struck = engine.advanceLayer(evil, fixedRandom(0));
+    check('大恶之人参悟小境界会失败', struck.layer === evil.layer, `层数 ${struck.layer}`);
+    check('失败会落下道伤', struck.injurySeconds > 0, `${struck.injurySeconds} 秒`);
+    check('失败照样扣灵气', struck.resources.qi.lt(evil.resources.qi));
+    check('失败写进了记事', struck.journal.length > evil.journal.length);
+
+    check('运气好时仍能参悟成功', engine.advanceLayer(evil, fixedRandom(0.999)).layer === evil.layer + 1);
+    check('中立之人参悟不会失败', engine.advanceLayer(s, fixedRandom(0)).layer === s.layer + 1);
+  }
+
+  /* ---- 善行 → 探索加成 ---- */
+  check('中立时没有探索加成', getKarmaExploreBonus(base) === 0);
+  check(
+    '善行值越高，探索加成越多',
+    getKarmaExploreBonus({ ...base, karma: 100 }) > getKarmaExploreBonus({ ...base, karma: 50 }),
+  );
+  check(
+    '探索加成封顶在 KARMA_EXPLORE_BONUS_MAX',
+    Math.abs(getKarmaExploreBonus({ ...base, karma: 100 }) - KARMA_EXPLORE_BONUS_MAX) < 1e-9,
+  );
+
+  /* ---- 抢劫门槛 ---- */
+  check('恶行值不到位时抢不了', !canRob({ ...base, karma: -10 }));
+  check('恶行值到位后解锁抢劫', canRob({ ...base, karma: KARMA_ROB_THRESHOLD }) && canRob({ ...base, karma: -60 }));
+
+  /* ---- 遭遇表本身 ---- */
+  check('遭遇表至少 8 条', ENCOUNTERS.length >= 8, `${ENCOUNTERS.length} 条`);
+  check('遭遇 id 唯一', new Set(ENCOUNTERS.map((e) => e.id)).size === ENCOUNTERS.length);
+  check(
+    '每个遭遇都至少有一个「什么都不用付」的选项',
+    ENCOUNTERS.every((e) =>
+      e.options.some(
+        (o) =>
+          o.requiresKarmaAtMost === undefined &&
+          o.requiresKarmaAtLeast === undefined &&
+          Object.keys(optionRequiredItems(o)).length === 0,
+      ),
+    ),
+  );
+  check(
+    '抢劫类选项都要求恶行值',
+    ENCOUNTERS.flatMap((e) => e.options)
+      .filter((o) => o.effect.successChance !== undefined)
+      .every((o) => (o.requiresKarmaAtMost ?? 0) <= KARMA_ROB_THRESHOLD),
+  );
+  check(
+    '抢劫的成功率一律不高（需求：「几率不大」）',
+    ENCOUNTERS.flatMap((e) => e.options)
+      .filter((o) => o.effect.successChance !== undefined)
+      .every((o) => (o.effect.successChance ?? 1) <= 0.6),
+  );
+
+  /* ---- 触发条件 ---- */
+  check('开宗前会触发遭遇判定', canRollEncounter(base));
+  check('开宗后不再触发（安居山中）', !canRollEncounter({ ...base, sect: { ...base.sect, founded: true } }));
+  check(
+    '开宗后掌门在外仍会遇到人',
+    canRollEncounter({
+      ...base,
+      sect: { ...base.sect, founded: true },
+      personalTravel: { kind: 'travel', regionId: 'mortalVillage', progress: 0, duration: 90 },
+    }),
+  );
+  check('已有待选遭遇时不再触发新的', !canRollEncounter({ ...base, pendingEncounter: 'caravan' }));
+
+  /* ---- 走时间轴真的会撞上人 ---- */
+  {
+    let rolled: GameState = base;
+    for (let i = 0; i < 20 && !rolled.pendingEncounter; i += 1) {
+      rolled = encounterTick(rolled, ENCOUNTER_INTERVAL, fixedRandom(0.01));
+    }
+    check('推进足够时间会遇到人', rolled.pendingEncounter !== null, rolled.pendingEncounter ?? '');
+    check('遇到的是一条真实存在的遭遇', getPendingEncounter(rolled) !== null);
+  }
+
+  /* ---- 选择与结算 ---- */
+  {
+    const pending: GameState = { ...base, pendingEncounter: 'caravan' };
+    const def = getPendingEncounter(pending);
+    const idx = def?.options.findIndex((o) => o.label === '让路同行') ?? -1;
+    check('能找到「让路同行」这个选项', idx >= 0);
+
+    const before = getKarma(pending);
+    const out = chooseEncounterOption(pending, idx);
+    check('选择会清掉待选遭遇', out.state.pendingEncounter === null);
+    check('选择会改变善恶值', getKarma(out.state) > before, `${before} → ${getKarma(out.state)}`);
+    check('选择会给出物品', (out.outcome?.gains.length ?? 0) > 0);
+    check('选择写进了记事', out.state.journal.length > pending.journal.length);
+  }
+
+  /* ---- 抢劫：成功 / 失败 ---- */
+  {
+    const robber: GameState = { ...base, karma: -60, pendingEncounter: 'caravan' };
+    const def = getPendingEncounter(robber)!;
+    const robIndex = def.options.findIndex((o) => o.effect.successChance !== undefined);
+    check('恶行值到位后抢劫选项可选', robIndex >= 0 && canChooseOption(robber, def.options[robIndex]).ok);
+
+    const win = chooseEncounterOption(robber, robIndex, fixedRandom(0));
+    check('抢劫成功拿到东西', (win.outcome?.gains.length ?? 0) > 0 && win.outcome?.success === true);
+    check('抢劫成功也是恶行', getKarma(win.state) < getKarma(robber));
+
+    const lose = chooseEncounterOption(robber, robIndex, fixedRandom(0.999));
+    check('抢劫失败什么也拿不到', lose.outcome?.success === false);
+    check('抢劫失败要吃道伤', lose.state.injurySeconds > 0, `${lose.state.injurySeconds} 秒`);
+    check('抢劫失败照样算恶行', getKarma(lose.state) < getKarma(robber), `${getKarma(robber)} → ${getKarma(lose.state)}`);
+
+    const good: GameState = { ...base, karma: 20, pendingEncounter: 'caravan' };
+    check('善人抢不了', !canChooseOption(good, def.options[robIndex]).ok);
+    check('抢不了时选择无效', chooseEncounterOption(good, robIndex).outcome === null);
+  }
+
+  /* ---- 存档往返 ---- */
+  {
+    const saved: GameState = {
+      ...createInitialState(0),
+      karma: -55,
+      pendingEncounter: 'blackRobe',
+      encounterTimer: 33,
+    };
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(saved))));
+    check('善恶值与遭遇能存档还原', round !== null);
+    if (round) {
+      check('善恶值保留', round.karma === -55);
+      check('待选遭遇保留', round.pendingEncounter === 'blackRobe');
+      check('遭遇计时保留', Math.abs(round.encounterTimer - 33) < 1e-9);
+    }
+
+    const junk = deserialize({ v: 4, at: 0, ka: 9999, pe: 'notAnEncounter', et: 1e9 });
+    check('越界的善恶值被夹回范围', !!junk && junk.karma === KARMA_MAX);
+    check('不存在的遭遇 id 被丢弃', !!junk && junk.pendingEncounter === null);
+    if (junk) check('越界的遭遇计时被夹回一个周期', junk.encounterTimer <= ENCOUNTER_INTERVAL);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 33. 队伍数 / 开宗门槛 / 仆人 / 掌门亲往（需求 3、4、5）                */
+/* ------------------------------------------------------------------ */
+section('[33] 队伍上限 9 · 金丹开宗 · 仆人固定 300 · 掌门亲往（需求 3、4、5）');
+{
+  /* ---- 需求 3：宗门等级越高，队伍越多，最多 9 ---- */
+  check('一品宗门 1 支队伍', expeditionSlots(1) === 1, `${expeditionSlots(1)}`);
+  check('九品宗门 9 支队伍', expeditionSlots(9) === 9, `${expeditionSlots(9)}`);
+  check('最多 9 支，不会再涨', MAX_EXPEDITION_SLOTS === 9 && expeditionSlots(99) === 9);
+  check(
+    '队伍数随品阶单调不减',
+    Array.from({ length: 9 }, (_, i) => expeditionSlots(i + 1)).every((v, i, arr) => i === 0 || v >= arr[i - 1]),
+  );
+  {
+    const lv9: GameState = {
+      ...createInitialState(0),
+      sect: { ...createInitialState(0).sect, founded: true, level: 9 },
+    };
+    check('九品宗门真的能同时派 9 支', expeditions.getMaxExpeditions(lv9) === 9, `${expeditions.getMaxExpeditions(lv9)}`);
+  }
+
+  /* ---- 需求 3：金丹就能开宗，但飞升仍是化神 ---- */
+  check('开宗门槛是金丹期（下标 2）', SECT_MIN_REALM === 2, `下标 ${SECT_MIN_REALM}`);
+  check('SECT_LEVELS[0] 也同步到金丹', SECT_LEVELS[0].requiresRealm === 2);
+  check('飞升门槛没有被一起拉低', ASCENSION_MIN_REALM === 4, `下标 ${ASCENSION_MIN_REALM}`);
+  {
+    const rich: GameState = { ...grant(createInitialState(0), { stone: '1e6' }), realmIndex: 2 };
+    check('金丹期可以开宗', engine.foundSect(rich).sect.founded);
+    check('筑基期还开不了宗', !engine.foundSect({ ...rich, realmIndex: 1 }).sect.founded);
+    check('金丹期还不能飞升', !engine.canAscend(rich));
+  }
+
+  /* ---- 需求 4：仆人固定 300 灵气 ---- */
+  check('招收仆人固定 300', SERVANT_COST === 300);
+  check('成本不随人数变化', servantCost(0) === 300 && servantCost(50) === 300);
+
+  /* ---- 需求 5：大区按境界解锁；弟子门槛 = 大区解锁等级 ---- */
+  check('东部群山的解锁境界是 0（初始可探索）', MAJOR_REGION_MAP.eastMountains.requiresRealm === 0);
+  check(
+    '其它大区的解锁境界都高于东部群山',
+    MAJOR_REGIONS.filter((m) => m.id !== 'eastMountains').every((m) => m.requiresRealm > 0),
+  );
+  check(
+    '每个大区里的秘境弟子门槛都等于该大区解锁等级',
+    SECRET_REALMS.every((r) => r.minRealm === MAJOR_REGION_MAP[MAP_REGION_MAP[r.regionId].majorId].requiresRealm),
+  );
+
+  /* ---- 需求 5：掌门独自前往秘境 ---- */
+  {
+    let s: GameState = grant(createInitialState(0), { stone: '1e9', qi: '1e9' });
+    s = forceBuild(s, 'thatchHut', 5);
+    s = { ...s, sect: { ...s.sect, founded: true } };
+    const realmId = STARTER_REALM_ID;
+    const def = SECRET_REALM_MAP[realmId];
+
+    check('已发现的秘境掌门可以去', travel.canStartSoloRealm(s, realmId).ok);
+    check('没发现的秘境去不了', !travel.canStartSoloRealm(s, 'boundlessSea_15_r0').ok);
+
+    const solo = travel.startSoloRealm(s, realmId);
+    check('出发后掌门在外（kind = realm）', solo.personalTravel?.kind === 'realm');
+    check(
+      '独自前往要更久（×1.4）',
+      (solo.personalTravel?.duration ?? 0) === Math.round(def.duration * 1.4),
+      `${solo.personalTravel?.duration} vs ${def.duration}`,
+    );
+    check('掌门在外时不能再出发', !travel.canStartSoloRealm(solo, realmId).ok);
+
+    const run = travel.resolveSoloRealm(solo, solo.personalTravel as NonNullable<typeof solo.personalTravel>, makeRandom(11));
+    check('独自前往会带回东西', (run.outcome?.gains.length ?? 0) > 0);
+    check('回归后掌门回到洞府', run.state.personalTravel === null);
+    check('亲自去过也要进冷却', (run.state.realmCooldowns[realmId] ?? 0) > 0);
+    check('独自前往不消耗弟子', run.state.sect.disciples.length === solo.sect.disciples.length);
+
+    // 稀有材料的占比应当明显高于派队伍（派队伍的池子里基础材料权重占大头）
+    let rare = 0;
+    let total = 0;
+    for (let i = 0; i < 40; i += 1) {
+      const out = travel.resolveSoloRealm(solo, solo.personalTravel as NonNullable<typeof solo.personalTravel>, makeRandom(500 + i));
+      for (const g of out.outcome?.gains ?? []) {
+        total += 1;
+        if (isRareMaterial(g.id)) rare += 1;
+      }
+    }
+    check(
+      '独自前往更容易拿到稀有材料（稀有占比 > 30%）',
+      total > 0 && rare / total > 0.3,
+      `${((rare / total) * 100).toFixed(0)}%（${rare}/${total}）`,
+    );
   }
 }
 
