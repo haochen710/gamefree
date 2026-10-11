@@ -351,7 +351,12 @@ export const STRUCTURES: StructureDef[] = [
     costGrowth: 1.35,
     unlock: { stone: 5000 },
     requiresTech: 'caveHeavenArt',
-    requiresSectLevel: 4,
+    /*
+     * 宗门门槛夹到「化神期最多能有几品宗门」= 2 品（本轮需求 3）。
+     * 原来写的是 4 品，而那个品阶本身要 炼虚期 ——
+     * 与这栋建筑自己声明的「需化神期」互相打架。
+     */
+    requiresSectLevel: 2,
   },
   {
     id: 'immortalResidence',
@@ -365,7 +370,12 @@ export const STRUCTURES: StructureDef[] = [
     costGrowth: 1.4,
     unlock: { starSand: 1000 },
     requiresTech: 'caveHeavenArt',
-    requiresSectLevel: 5,
+    /*
+     * 宗门门槛夹到「化神期最多能有几品宗门」= 2 品（本轮需求 3）。
+     * 原来写的是 5 品，而那个品阶本身要 合体期 ——
+     * 与这栋建筑自己声明的「需化神期」互相打架。
+     */
+    requiresSectLevel: 2,
     max: 5,
   },
 
@@ -460,7 +470,12 @@ export const STRUCTURES: StructureDef[] = [
     costGrowth: 1.32,
     unlock: { starSand: 10 },
     requiresTech: 'gardenArt',
-    requiresSectLevel: 3,
+    /*
+     * 宗门门槛夹到「化神期最多能有几品宗门」= 2 品（本轮需求 3）。
+     * 原来写的是 3 品，而那个品阶本身要 炼虚期 ——
+     * 与这栋建筑自己声明的「需化神期」互相打架。
+     */
+    requiresSectLevel: 2,
     max: 10,
   },
   {
@@ -476,7 +491,12 @@ export const STRUCTURES: StructureDef[] = [
     unlock: { immortalJade: 100 },
     requiresBlueprint: 'spiritFieldBlueprint',
     requiresRealm: 5,
-    requiresSectLevel: 5,
+    /*
+     * 宗门门槛夹到「炼虚期最多能有几品宗门」= 4 品（本轮需求 3）。
+     * 原来写的是 5 品，而那个品阶本身要 合体期 ——
+     * 与这栋建筑自己声明的「需炼虚期」互相打架。
+     */
+    requiresSectLevel: 4,
     max: 5,
   },
 
@@ -507,7 +527,12 @@ export const STRUCTURES: StructureDef[] = [
     costGrowth: 1.4,
     unlock: { lunarCrystal: 100 },
     requiresTech: 'tradeDeep',
-    requiresSectLevel: 4,
+    /*
+     * 宗门门槛夹到「化神期最多能有几品宗门」= 2 品（本轮需求 3）。
+     * 原来写的是 4 品，而那个品阶本身要 炼虚期 ——
+     * 与这栋建筑自己声明的「需化神期」互相打架。
+     */
+    requiresSectLevel: 2,
     max: 3,
   },
 
@@ -601,7 +626,12 @@ export const STRUCTURES: StructureDef[] = [
     unlock: { lunarCrystal: 20 },
     requiresTech: 'towerArt',
     requiresBuilding: 'masterHall',
-    requiresSectLevel: 4,
+    /*
+     * 宗门门槛夹到「化神期最多能有几品宗门」= 2 品（本轮需求 3）。
+     * 原来写的是 4 品，而那个品阶本身要 炼虚期 ——
+     * 与这栋建筑自己声明的「需化神期」互相打架。
+     */
+    requiresSectLevel: 2,
     max: 5,
   },
 
@@ -618,7 +648,12 @@ export const STRUCTURES: StructureDef[] = [
     costGrowth: 1.3,
     unlock: { stone: 5000 },
     requiresTech: 'preachingArt',
-    requiresSectLevel: 2,
+    /*
+     * 宗门门槛夹到「元婴期最多能有几品宗门」= 1 品（本轮需求 3）。
+     * 原来写的是 2 品，而那个品阶本身要 化神期 ——
+     * 与这栋建筑自己声明的「需元婴期」互相打架。
+     */
+    requiresSectLevel: 1,
     max: 10,
   },
   {
@@ -633,7 +668,12 @@ export const STRUCTURES: StructureDef[] = [
     costGrowth: 1.34,
     unlock: { lunarCrystal: 10 },
     requiresTech: 'insightArt',
-    requiresSectLevel: 3,
+    /*
+     * 宗门门槛夹到「元婴期最多能有几品宗门」= 1 品（本轮需求 3）。
+     * 原来写的是 3 品，而那个品阶本身要 炼虚期 ——
+     * 与这栋建筑自己声明的「需元婴期」互相打架。
+     */
+    requiresSectLevel: 1,
     max: 5,
   },
   {

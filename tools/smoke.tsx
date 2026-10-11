@@ -598,12 +598,26 @@ section('[3] 建筑与价格');
   check('解锁状态能存档还原', restoredUnlock !== null && engine.isUnlocked(woodGrove, restoredUnlock));
 
   // 宗门等级门槛是实时判断，不吃永久解锁
-  const grotto = BUILDABLE_MAP.grotto;
-  const unlockedGrotto = engine.refreshUnlocks(grant(createInitialState(0), { stone: '1e6', qi: '1e7', herb: '1e4' }));
+  /*
+   * ⚠️ 这里原本测的是洞天（`requiresSectLevel: 4`）。本轮需求 3 把建筑表的
+   * 宗门门槛按"自身境界最多能有几品宗门"夹了一次，洞天降到 2 品 ——
+   * 而可见性规则是「**门槛提前一级显示**」（`sectLevel + 1 < need`），
+   * 初始 1 品 + 1 = 2，于是洞天从"看不见"变成"看得见但灰着"（那正是设计意图）。
+   * 所以改用还留在 4 品的灵田阵来验"门槛高到一定程度就还看不见"。
+   */
+  const gated = BUILDABLE_MAP.spiritFieldArray;
+  const unlockedGated = engine.refreshUnlocks(
+    grant(createInitialState(0), { stone: '1e6', qi: '1e7', herb: '1e4' }),
+  );
   check(
-    '宗门等级不足时洞天仍不可见',
-    !engine.isUnlocked(grotto, unlockedGrotto),
-    `需 ${grotto.requiresSectLevel} 品宗门`,
+    '宗门等级差得多时建筑仍不可见',
+    !engine.isUnlocked(gated, unlockedGated),
+    `需 ${gated.requiresSectLevel} 品宗门`,
+  );
+  check(
+    '只差一级时提前可见（刻意的预览规则）',
+    engine.isUnlocked(BUILDABLE_MAP.grotto, unlockedGated),
+    `洞天需 ${BUILDABLE_MAP.grotto.requiresSectLevel} 品宗门，初始 1 品`,
   );
 }
 
@@ -4754,6 +4768,44 @@ section('[42] 顺序体检：前置不能比产物更晚（需求 3）');
     }
   }
   check('进阶资源的门槛不晚于第一次用到它', gateTooLate.length === 0, gateTooLate.join('、'));
+
+  /* ---- ⑦ 建筑表的宗门门槛同样不能晚于建筑自身的境界（同族问题） ---- */
+  {
+    const techR = new Map(TECHS.map((t) => [t.id, t.requiresRealm]));
+    const badBuildings: string[] = [];
+    for (const def of STRUCTURES) {
+      if (!def.requiresSectLevel) continue;
+      const own =
+        def.requiresRealm ??
+        (def.requiresTech
+          ? (techR.get(def.requiresTech) ?? 0)
+          : def.requiresBlueprint
+            ? (BLUEPRINT_MAP[def.requiresBlueprint]?.requiresRealm ?? 0)
+            : 0);
+      if ((SECT_LEVELS[def.requiresSectLevel - 1]?.requiresRealm ?? 0) > own) {
+        badBuildings.push(`${def.name}（自身需${REALMS[own].name}，却要 ${def.requiresSectLevel} 品宗门）`);
+      }
+    }
+    check(
+      '建筑的宗门门槛不会比它自己的境界更晚',
+      badBuildings.length === 0,
+      badBuildings.join('、'),
+    );
+
+    /* ---- ⑧ 富集区开启花费：判据要用**小区域**的门槛，不能用大区域的 ---- */
+    const badUnlock: string[] = [];
+    for (const realm of SECRET_REALMS) {
+      if (!realm.unlockCost) continue;
+      const region = MAP_REGION_MAP[realm.regionId];
+      const regionRealm = region?.requiresRealm ?? 0;
+      for (const item of Object.keys(realm.unlockCost)) {
+        if (at(item) > regionRealm) {
+          badUnlock.push(`${realm.name} 要的${ITEM_MAP[item as ItemId]?.name ?? item}（第 ${at(item) + 1} 境才有，而此处第 ${regionRealm + 1} 境开放）`);
+        }
+      }
+    }
+    check('富集区开启花费不会晚于该小区域的开放境界', badUnlock.length === 0, badUnlock.slice(0, 3).join('、'));
+  }
 }
 
 /* ------------------------------------------------------------------ */
