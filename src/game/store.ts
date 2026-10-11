@@ -43,6 +43,13 @@ export interface GameStore {
   /* 修行 */
   meditate(): void;
   buy(id: string, count: number | 'max'): void;
+  /* ---- 建造队列（需求 2） ---- */
+  enqueueBuild(id: string): void;
+  dequeueBuild(index: number): void;
+  moveQueueItem(index: number, delta: number): void;
+  clearBuildQueue(): void;
+  /** 天工院的特殊升级：解锁一个建造名额 */
+  upgradeQueue(): void;
   advanceLayer(): void;
   breakthrough(usePill: boolean): void;
   refineStone(times: number): void;
@@ -87,6 +94,8 @@ export interface GameStore {
 
   /* 秘境 */
   startExpedition(realmId: string, ids: string[]): void;
+  /** 普通探索（需求 1）：小区域还没发现秘境时只能这么做 */
+  startSurvey(regionId: string, ids: string[]): void;
 
   /* 丹器 */
   craftPill(id: string, count: number): void;
@@ -152,6 +161,48 @@ export const useGame = create<GameStore>()((set, get) => ({
       const amount = count === 'max' ? engine.maxAffordable(def, owned, s.game) : count;
       if (amount <= 0) return {};
       return nextGame(s.game, engine.buyBuilding(s.game, def, amount));
+    });
+  },
+
+  /* ---- 建造队列（需求 2） ---- */
+
+  enqueueBuild: (id) => {
+    set((s) => {
+      if (s.game.buildQueue.length >= engine.getQueueSlots(s.game)) {
+        return { notice: '建造队列已满，升级天工院可增加名额' };
+      }
+      const next = engine.enqueueBuild(s.game, id);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '已加入建造队列' };
+    });
+  },
+
+  dequeueBuild: (index) => {
+    set((s) => {
+      const next = engine.dequeueBuild(s.game, index);
+      return next === s.game ? {} : nextGame(s.game, next);
+    });
+  },
+
+  moveQueueItem: (index, delta) => {
+    set((s) => {
+      const next = engine.moveQueueItem(s.game, index, delta);
+      return next === s.game ? {} : nextGame(s.game, next);
+    });
+  },
+
+  clearBuildQueue: () => {
+    set((s) => {
+      const next = engine.clearQueue(s.game);
+      return next === s.game ? {} : nextGame(s.game, next);
+    });
+  },
+
+  upgradeQueue: () => {
+    set((s) => {
+      const check = engine.canUpgradeQueue(s.game);
+      if (!check.ok) return { notice: check.reason ?? '无法升级' };
+      return { ...nextGame(s.game, engine.upgradeQueue(s.game)), notice: '天工院扩建完成，建造名额 +1' };
     });
   },
 
@@ -461,6 +512,18 @@ export const useGame = create<GameStore>()((set, get) => ({
       return {
         ...nextGame(s.game, expeditions.startExpedition(s.game, realmId, ids)),
         notice: '已派遣弟子前往探索',
+      };
+    });
+  },
+
+  /* 普通探索（需求 1）：还没发现秘境的小区域只能这么探 */
+  startSurvey: (regionId, ids) => {
+    set((s) => {
+      const check = expeditions.canStartSurvey(s.game, regionId, ids);
+      if (!check.ok) return { notice: check.reason ?? '无法派遣' };
+      return {
+        ...nextGame(s.game, expeditions.startSurvey(s.game, regionId, ids)),
+        notice: '已派遣弟子在附近做普通探索',
       };
     });
   },

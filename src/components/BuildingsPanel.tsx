@@ -34,6 +34,7 @@ import {
   isUnlocked,
   maxAffordable,
 } from '../game/engine';
+import { getQueueSlots } from '../game/engine';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
 import CostList from './CostList';
@@ -123,6 +124,9 @@ function GateTags({ def, state }: { def: BuildableDef; state: GameState }) {
 
 function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
   const buy = useGame((s) => s.buy);
+  const enqueueBuild = useGame((s) => s.enqueueBuild);
+  const queue = useGame((s) => s.game.buildQueue);
+  const queueSlots = useGame((s) => getQueueSlots(s.game));
 
   const owned = getBuildingCount(state, def.id);
   const maxCount = getMaxCount(def);
@@ -178,6 +182,16 @@ function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
           </button>
           <button type="button" className="btn" disabled={maxN <= 0} onClick={() => buy(def.id, 'max')}>
             最大 {maxN > 0 ? `(${fmt(maxN, 0)})` : ''}
+          </button>
+          {/* 需求 2：也可以排进建造队列，资源一到就自动盖 */}
+          <button
+            type="button"
+            className="btn"
+            disabled={gate !== null || queue.length >= queueSlots}
+            onClick={() => enqueueBuild(def.id)}
+            title="加入建造队列后，资源够了会自动开工"
+          >
+            排队
           </button>
         </div>
       </div>

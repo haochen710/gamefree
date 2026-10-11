@@ -22,6 +22,10 @@ import {
   BREAKTHROUGH_PILL_BONUS,
   BUILDABLES,
   BUILDABLE_MAP,
+  BUILD_QUEUE_BASE_SLOTS,
+  BUILD_QUEUE_BUILDING,
+  BUILD_QUEUE_MAX_SLOTS,
+  QUEUE_UPGRADES,
   DAO_YUN_BONUS,
   DAO_YUN_DIVISOR,
   DAO_YUN_EXPONENT,
@@ -65,6 +69,7 @@ import {
   type GeneratorDef,
   type ItemId,
   type MapRegionDef,
+  type QueueUpgradeDef,
   type RealmDef,
   type ResourceId,
   type SecretRealmDef,
@@ -263,6 +268,7 @@ export type StructureBonusKey =
   | 'casualtyReduction'
   | 'insightBonus'
   | 'breakthroughBonus'
+  | 'queueSlots'
   | 'productionBonus';
 
 export function getStructureBonus(state: GameState, key: StructureBonusKey): number {
@@ -395,10 +401,25 @@ export function getDiscoveredRealms(state: GameState): SecretRealmDef[] {
 /**
  * 当前还可能被发现的秘境。
  *
- * 三个条件：还没发现、所在区域已抵达、弟子境界门槛够得着（这里只看区域，
- * 门派境界以下的部分由 minRealm 在派遣时单独把关）。
+ * 条件：还没发现、所在区域已抵达、发现权重 > 0。
+ *
+ * ⚠️ 这里**故意不按区域收窄**，尽管看起来那样更"合理"。
+ *
+ * 试过一版：只在同一个小区域群内发现，想开新的大区域就必须先在那里做普通探索。
+ * 逻辑上更贴合「每个小区域在未发现秘境时只能普通探索」，但实测**经济被拖垮** ——
+ * 高端秘境的发现被推迟，玄铁、星辰砂这些关键材料跟不上，器物落后，
+ * 弟子战力不足 → 伤亡上升 → 修为上不去 → 寿元短 → 人口崩盘
+ * （30 天模拟结束时弟子 0 人，而全局候选池那一版是 40 人）。
+ *
+ * 需求要的是「**那个小区域里**没发现秘境时只能普通探索」——
+ * 这是"当地能做什么"的规则，在 `canSurveyRegion` / `canStartExpedition` 里执行，
+ * 并不要求"发现"也必须发生在当地。所以保持全局候选池：
+ * 弟子在远方听说了秘境，也是修行界常有的事。
+ *
+ * `nearRegionId` 仍然保留，用于日志与将来可能的加权，不影响候选集。
  */
-export function getUndiscoveredCandidates(state: GameState): SecretRealmDef[] {
+export function getUndiscoveredCandidates(state: GameState, nearRegionId?: string): SecretRealmDef[] {
+  void nearRegionId;
   return SECRET_REALMS.filter(
     (def) => !isRealmDiscovered(state, def) && isRealmInRange(state, def) && def.discoveryWeight > 0,
   );
@@ -899,6 +920,121 @@ export function buyBuilding(state: GameState, def: BuildableDef, count: number):
     ...paid,
     buildings: { ...paid.buildings, [def.id]: owned + actual },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* 建造队列（需求 2）                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 当前有几个建造队列名额（3~7）。
+ *
+ *   基础 3 个
+ *   + 天工院本身 1 个（它唯一）
+ *   + 天工院的特殊升级，每级 1 个（最多 3 级）
+ * = 最多 7 个，正好对上需求里的「最多允许7个建筑排队，初始只有3个排队名额」。
+ */
+export function getQueueSlots(state: GameState): number {
+  const fromBuildings = getStructureBonus(state, 'queueSlots');
+  const fromUpgrades = Math.min(QUEUE_UPGRADES.length, Math.max(0, state.tiangongLevel));
+  return Math.min(BUILD_QUEUE_MAX_SLOTS, BUILD_QUEUE_BASE_SLOTS + fromBuildings + fromUpgrades);
+}
+
+/** 天工院是否已经建好（升级的前提） */
+export function hasQueueBuilding(state: GameState): boolean {
+  return getBuildingCount(state, BUILD_QUEUE_BUILDING) > 0;
+}
+
+/** 把升级表里的数字花费转成 canAfford / payCost 认的 Decimal 形式 */
+function queueUpgradeCost(upgrade: QueueUpgradeDef): Partial<Record<ItemId, Decimal>> {
+  const cost: Partial<Record<ItemId, Decimal>> = {};
+  for (const [item, amount] of Object.entries(upgrade.cost)) {
+    cost[item as ItemId] = D(amount as number);
+  }
+  return cost;
+}
+
+/** 下一级特殊升级的花费；已经满级返回 null */
+export function getQueueUpgrade(state: GameState): QueueUpgradeDef | null {
+  return QUEUE_UPGRADES[state.tiangongLevel] ?? null;
+}
+
+/** 能不能升级天工院 */
+export function canUpgradeQueue(state: GameState): { ok: boolean; reason: string | null } {
+  if (!hasQueueBuilding(state)) {
+    return { ok: false, reason: `需先建${BUILDABLE_MAP[BUILD_QUEUE_BUILDING]?.name ?? '天工院'}` };
+  }
+  const upgrade = getQueueUpgrade(state);
+  if (!upgrade) return { ok: false, reason: '已开到最多名额' };
+  if (getQueueSlots(state) >= BUILD_QUEUE_MAX_SLOTS) return { ok: false, reason: '已开到最多名额' };
+  if (!canAfford(state, queueUpgradeCost(upgrade))) return { ok: false, reason: '资源不足' };
+  return { ok: true, reason: null };
+}
+
+/** 特殊升级天工院，解锁一个建造名额 */
+export function upgradeQueue(state: GameState): GameState {
+  const check = canUpgradeQueue(state);
+  if (!check.ok) return state;
+  const upgrade = getQueueUpgrade(state);
+  if (!upgrade) return state;
+  return {
+    ...payCost(state, queueUpgradeCost(upgrade)),
+    tiangongLevel: state.tiangongLevel + 1,
+  };
+}
+
+/** 把一个可建造物排进队列 */
+export function enqueueBuild(state: GameState, id: string): GameState {
+  if (!BUILDABLE_MAP[id]) return state;
+  if (state.buildQueue.length >= getQueueSlots(state)) return state;
+  return { ...state, buildQueue: [...state.buildQueue, id] };
+}
+
+export function dequeueBuild(state: GameState, index: number): GameState {
+  if (index < 0 || index >= state.buildQueue.length) return state;
+  return { ...state, buildQueue: state.buildQueue.filter((_, i) => i !== index) };
+}
+
+/** 在队列里上移 / 下移一项（delta 为 -1 / +1） */
+export function moveQueueItem(state: GameState, index: number, delta: number): GameState {
+  const target = index + delta;
+  if (index < 0 || index >= state.buildQueue.length) return state;
+  if (target < 0 || target >= state.buildQueue.length) return state;
+  const queue = [...state.buildQueue];
+  [queue[index], queue[target]] = [queue[target], queue[index]];
+  return { ...state, buildQueue: queue };
+}
+
+export function clearQueue(state: GameState): GameState {
+  return state.buildQueue.length === 0 ? state : { ...state, buildQueue: [] };
+}
+
+/**
+ * 推进建造队列：队首只要**门槛过了、资源也够**，就立刻建一座并出队。
+ *
+ * 这个语义是刻意的：队列不是"定时开工"，而是**把玩家想盖的东西排好队**，
+ * 资源一到就自动盖 —— 挂机 / 离线回来时收益最大。
+ * 门槛没到或资源不够时会原地等着，不消耗也不跳过，
+ * 因为"为什么没盖"这件事必须可预期，玩家才知道该攒什么。
+ *
+ * 一次 tick 只推进一座：连建会让"刚花掉资源"和"刚入账的资源"在同一帧里
+ * 互相看不见，反而更难预测。
+ */
+export function tickBuildQueue(state: GameState): GameState {
+  if (state.buildQueue.length === 0) return state;
+
+  const id = state.buildQueue[0];
+  const def = BUILDABLE_MAP[id];
+  if (!def) return { ...state, buildQueue: state.buildQueue.slice(1) };
+  if (getBuildGate(def, state) !== null) return state;
+
+  const owned = getBuildingCount(state, def.id);
+  if (def.max !== undefined && owned >= def.max) return { ...state, buildQueue: state.buildQueue.slice(1) };
+  if (maxAffordable(def, owned, state) <= 0) return state;
+
+  const next = buyBuilding(state, def, 1);
+  if (next === state) return state;
+  return { ...next, buildQueue: next.buildQueue.slice(1) };
 }
 
 /* ------------------------------------------------------------------ */

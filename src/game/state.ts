@@ -60,6 +60,16 @@ export interface Expedition {
   progress: number;
   /** 完成所需的进度 */
   duration: number;
+  /**
+   * 这次出去是干什么的（需求 1）。
+   *
+   * - `realm`：探索一处**已发现的秘境**，掉落好但有冷却；
+   * - `survey`：在小区域里做**普通探索** —— 只有还没发现秘境的小区域能做，
+   *   必定带回基础材料、有概率带稀有材料与发现新秘境，没有冷却。
+   *
+   * 两种情况共用同一个队伍队列与计时，所以"派谁出去"始终是同一个取舍。
+   */
+  kind: 'realm' | 'survey';
 }
 
 export interface Sect {
@@ -157,6 +167,16 @@ export interface GameState {
    * 它**不参与**发现概率的计算 —— 概率只由寻宝宝盘提升。
    */
   discoveryFailures: number;
+
+  /**
+   * 建造队列（需求 2）。
+   *
+   * 里面存的是可建造物的 id，按顺序自动建造：队首一旦满足门槛且资源够，
+   * 就立刻建起来并出队。名额上限见 `engine.getQueueSlots`（3~7）。
+   */
+  buildQueue: string[];
+  /** 天工院的特殊升级等级（0~3），每级 +1 个建造名额（需求 2） */
+  tiangongLevel: number;
 
   /** 丹药库存 */
   pills: ItemCountMap;
@@ -331,6 +351,8 @@ export function createInitialState(now = Date.now()): GameState {
     unlockedBuildings: createEmptyUnlocked(),
     discoveredRealms: createEmptyDiscoveredRealms(),
     realmCooldowns: {},
+    buildQueue: [],
+    tiangongLevel: 0,
     discoveryFailures: 0,
     pills: {},
     artifacts: {},

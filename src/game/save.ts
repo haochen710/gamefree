@@ -14,7 +14,11 @@ import {
   AUTO_REFINE_LEVEL_MAX,
   BLUEPRINT_MAP,
   BUILDABLES,
+  BUILDABLE_MAP,
+  BUILD_QUEUE_MAX_SLOTS,
+  QUEUE_UPGRADES,
   DISCOVERY_PITY_FAILURES,
+  MAP_REGION_MAP,
   FINAL_REALM_INDEX,
   INSIGHT_MAX_ABSOLUTE,
   ITEM_MAP,
@@ -44,6 +48,7 @@ import {
   type ShopOffer,
 } from './content';
 import { ARENA_INTERVAL_SECONDS } from './sectActivity';
+import { getSurveyDuration } from './expeditions';
 import { applyTick } from './tick';
 import { refreshUnlocks } from './engine';
 import {
@@ -133,6 +138,10 @@ export interface SerializedGame {
   rc?: Record<string, number>;
   /** discoveryFailures：连续没发现新秘境的次数，用于硬保底（需求 1） */
   df?: number;
+  /** 建造队列（需求 2） */
+  bq?: unknown;
+  /** 天工院特殊升级等级（需求 2） */
+  tl?: number;
   /** arenaEnabled / arenaTimer / arenaBuffSeconds：宗门大比（需求 4） */
   ae?: boolean;
   arn?: number;
@@ -204,6 +213,8 @@ export function serialize(state: GameState): SerializedGame {
     sh: state.shop,
     rc: { ...state.realmCooldowns },
     df: state.discoveryFailures,
+    bq: [...state.buildQueue],
+    tl: state.tiangongLevel,
     ae: state.arenaEnabled,
     arn: state.arenaTimer,
     arb: state.arenaBuffSeconds,
@@ -300,22 +311,43 @@ function sanitizeDisciple(raw: unknown, index: number): Disciple | null {
   };
 }
 
+/** 建造队列：只留下还认得出来的 id，并且不超过当前名额 */
+function sanitizeBuildQueue(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((id): id is string => typeof id === 'string' && BUILDABLE_MAP[id] !== undefined)
+    .slice(0, BUILD_QUEUE_MAX_SLOTS);
+}
+
 function sanitizeExpedition(raw: unknown): Expedition | null {
   if (raw === null || typeof raw !== 'object') return null;
   const e = raw as Partial<Expedition>;
-  if (typeof e.realmId !== 'string' || !SECRET_REALM_MAP[e.realmId]) return null;
+  if (typeof e.realmId !== 'string') return null;
   if (!Array.isArray(e.discipleIds)) return null;
+
+  /*
+   * 现在有两种探索（需求 1）：
+   *   realm  —— realmId 是秘境 id
+   *   survey —— realmId 是小区域 id
+   * 所以目标是否存在要分别校验，默认时长也要分别取。
+   */
+  const kind: Expedition['kind'] = e.kind === 'survey' ? 'survey' : 'realm';
+  const def = SECRET_REALM_MAP[e.realmId];
+  const region = MAP_REGION_MAP[e.realmId];
+  if (kind === 'realm' && !def) return null;
+  if (kind === 'survey' && !region) return null;
 
   const ids = e.discipleIds.filter((id): id is string => typeof id === 'string');
   if (ids.length === 0) return null;
 
-  const def = SECRET_REALM_MAP[e.realmId];
+  const fallbackDuration = kind === 'survey' ? getSurveyDuration({} as GameState, e.realmId) : (def?.duration ?? 60);
   return {
     id: typeof e.id === 'string' ? e.id : `e_${e.realmId}_${ids[0]}`,
     realmId: e.realmId,
     discipleIds: ids,
     progress: toFloat(e.progress, 0, 0, 1e9),
-    duration: toFloat(e.duration, def.duration, 1, 1e9),
+    duration: toFloat(e.duration, fallbackDuration, 1, 1e9),
+    kind,
   };
 }
 
@@ -671,6 +703,8 @@ export function deserialize(raw: unknown): GameState | null {
     blueprints: toBoolMap(data.bpr, Object.keys(BLUEPRINT_MAP)),
     shop: sanitizeShop(data.sh),
     realmCooldowns: sanitizeCooldowns(data.rc),
+    buildQueue: sanitizeBuildQueue(data.bq),
+    tiangongLevel: toInt(data.tl, 0, 0, QUEUE_UPGRADES.length),
     // 旧存档的 `dp` 是"累积保底概率"（0~0.5 的小数），与现在的"连续失败次数"
     // 语义不同，所以直接丢弃不用。丢掉最多只是少一点保底进度，不会损坏存档。
     discoveryFailures: toFloat(data.df, 0, 0, DISCOVERY_PITY_FAILURES),

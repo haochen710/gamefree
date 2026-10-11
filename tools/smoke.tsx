@@ -47,6 +47,9 @@ import {
   BLUEPRINT_MAP,
   ARTIFACT_MAP,
   BUILDABLES,
+  BUILD_QUEUE_BASE_SLOTS,
+  BUILD_QUEUE_MAX_SLOTS,
+  QUEUE_UPGRADES,
   BUILDABLE_MAP,
   DISCOVERY_BASE_CHANCE,
   DISCOVERY_MAX_CHANCE,
@@ -61,6 +64,7 @@ import {
   INJURY_SECONDS,
   MATERIAL_IDS,
   MATERIAL_MAP,
+  MAJOR_REGIONS,
   MAP_REGIONS,
   MAP_REGION_MAP,
   MIND_MAX,
@@ -72,6 +76,10 @@ import {
   REALMS,
   SECRET_REALMS,
   SECRET_REALM_MAP,
+  STARTER_REALM_ID,
+  SURVEY_MAX_PARTY,
+  specialtyRealms,
+  subRegionsOf,
   SEASONS,
   SEASON_SECONDS,
   SEEDS,
@@ -988,7 +996,7 @@ section('[9] 弟子系统（需求 4 / 7）');
 /* ------------------------------------------------------------------ */
 section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
 {
-  const realm = SECRET_REALM_MAP.sunsetValley;
+  const realm = SECRET_REALM_MAP[STARTER_REALM_ID];
 
   // 造一支远超推荐战力的队伍
   let strong: GameState = grant(createInitialState(0), { stone: '1e9' });
@@ -1007,9 +1015,9 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
   check('开局已知一处秘境', engine.isRealmDiscovered(strong, realm));
   check(
     '其余秘境开局未知',
-    SECRET_REALMS.filter((r) => r.id !== 'sunsetValley').every((r) => !engine.isRealmDiscovered(strong, r)),
+    SECRET_REALMS.filter((r) => r.id !== STARTER_REALM_ID).every((r) => !engine.isRealmDiscovered(strong, r)),
   );
-  check('未发现的秘境不能派遣', !expeditions.canStartExpedition(strong, 'gateOfHeaven', ['x']).ok);
+  check('未发现的秘境不能派遣', !expeditions.canStartExpedition(strong, 'boundlessSea_15_r0', ['x']).ok);
 
   const minIds = strong.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
   check('战力充足的队伍可以派遣', expeditions.canStartExpedition(strong, realm.id, minIds).ok);
@@ -1055,7 +1063,7 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
     const withStatus = disciples.setDiscipleStatus(strong, party, 'exploring', 'test');
     return expeditions.resolveExpedition(
       withStatus,
-      { id: 'test', realmId: realm.id, discipleIds: party, progress: realm.duration, duration: realm.duration },
+      { id: 'test', realmId: realm.id, discipleIds: party, progress: realm.duration, duration: realm.duration, kind: 'realm' },
       makeRandom(7),
     ).state;
   };
@@ -1110,7 +1118,7 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
     const withStatus = disciples.setDiscipleStatus(explorer, party, 'exploring', 't');
     explorer = expeditions.resolveExpedition(
       withStatus,
-      { id: 't', realmId: target.id, discipleIds: party, progress: target.duration, duration: target.duration },
+      { id: 't', realmId: target.id, discipleIds: party, progress: target.duration, duration: target.duration, kind: 'realm' },
       makeRandom(1000 + i),
     ).state;
     explorer = engine.tickRealmCooldowns(explorer, 99999);
@@ -1718,8 +1726,8 @@ section('[20] 钻研与图纸（需求 6）');
 {
   const base = createInitialState(0);
 
-  /* ---- 除基础资源设施外，建筑都有技术或图纸门槛 ---- */
-  // 例外只有三样：茅屋（开局唯一的居所）与储物袋、藏宝阁
+  /* ---- 除基础资源设施外，建筑都有技术 / 图纸 / 境界门槛 ---- */
+  // 例外只有两样：茅屋（开局唯一的居所）与储物袋
   // —— 它们是"能攒下灵气去突破"的前提，卡住它们会直接把游戏锁死
   const UNGATED_OK = new Set(['thatchHut', 'storagePouch']);
   const needTech = STRUCTURES.filter(
@@ -1728,10 +1736,12 @@ section('[20] 钻研与图纸（需求 6）');
       !s.requiresTech &&
       !s.requiresBlueprint &&
       !s.requiresSect &&
+      // 境界门槛也算门槛：天工院就是「金丹后解锁」这一条需求直接指定的
+      s.requiresRealm === undefined &&
       !UNGATED_OK.has(s.id),
   );
   check(
-    '除基础资源设施与少数开局必需建筑外，都有技术或图纸门槛',
+    '除基础资源设施与少数开局必需建筑外，都有技术 / 图纸 / 境界门槛',
     needTech.length === 0,
     needTech.map((s) => s.name).join('、'),
   );
@@ -1868,8 +1878,8 @@ section('[21] 新字段的存档往返');
       secondsLeft: 42,
     },
     // 需求 1 / 4 的新字段
-    discoveredRealms: { sunsetValley: true, blackWindRidge: true },
-    realmCooldowns: { blackWindRidge: 123 },
+    discoveredRealms: { [STARTER_REALM_ID]: true, eastMountains_4_r0: true },
+    realmCooldowns: { eastMountains_4_r0: 123 },
     discoveryFailures: 3,
     arenaEnabled: true,
     arenaTimer: 77,
@@ -1889,8 +1899,8 @@ section('[21] 新字段的存档往返');
     check('地块保留', round.plantings.length === 1 && round.plantings[0].material === 'demonCore');
     check('种子保留', round.seeds.starSand === 5);
     check('商行货架保留', round.shop.offers.length === 1 && round.shop.secondsLeft === 42);
-    check('已发现秘境保留', engine.isRealmDiscovered(round, SECRET_REALM_MAP.blackWindRidge));
-    check('秘境冷却保留', engine.getRealmCooldown(round, 'blackWindRidge') === 123);
+    check('已发现秘境保留', engine.isRealmDiscovered(round, SECRET_REALM_MAP.eastMountains_4_r0));
+    check('秘境冷却保留', engine.getRealmCooldown(round, 'eastMountains_4_r0') === 123);
     check('发现保底的失败计数保留', round.discoveryFailures === 3);
     check('大比开关保留', round.arenaEnabled === true);
     check('大比计时保留', round.arenaTimer === 77 && round.arenaBuffSeconds === 8);
@@ -1909,7 +1919,7 @@ section('[21] 新字段的存档往返');
     rs: { id: 'nope', remaining: 5 },
     sh: { offers: [{ kind: 'seed', item: 'notAGood' }], secondsLeft: 'x' },
     pv: { regionId: 'notARegion' },
-    rc: { notARealm: 500, blackWindRidge: -3 },
+    rc: { notARealm: 500, eastMountains_4_r0: -3 },
     df: 99,
     ae: 'yes',
     arn: -5,
@@ -2011,8 +2021,8 @@ section('[22] 界面：非空状态渲染');
     servants: { wood: 3, ore: 2 },
     injurySeconds: 90,
     autoRefineLevel: 2,
-    discoveredRealms: { sunsetValley: true, blackWindRidge: true, boneField: true },
-    realmCooldowns: { blackWindRidge: 90 },
+    discoveredRealms: { [STARTER_REALM_ID]: true, eastMountains_4_r0: true, eastMountains_1_r0: true },
+    realmCooldowns: { eastMountains_4_r0: 90 },
     discoveryFailures: 2,
     arenaEnabled: true,
     arenaTimer: 60,
@@ -2032,7 +2042,7 @@ section('[22] 界面：非空状态渲染');
   rich = shop.tickShop(rich, 0, makeRandom(9));
   rich = expeditions.startExpedition(
     rich,
-    'sunsetValley',
+    STARTER_REALM_ID,
     [rich.sect.disciples[0].id],
     makeRandom(3),
   );
@@ -2232,21 +2242,67 @@ section('[23] store 动作闭环');
 /* ------------------------------------------------------------------ */
 section('[24] 地图与探索距离（需求 5）');
 {
-  /* ---- 本次需求的硬指标：18 个区域，每区 2~3 处秘境 ---- */
-  check('地图共有 18 个区域', MAP_REGIONS.length === 18, `${MAP_REGIONS.length} 个`);
+  /* ---- 本次需求的硬指标：6 大区域 × 16 小区域，每小区域 1~2 处秘境（富集区 3 处） ---- */
+  check('地图共有 96 个小区域', MAP_REGIONS.length === 96, `${MAP_REGIONS.length} 个`);
+  check('地图分为 6 个大区域', MAJOR_REGIONS.length === 6, MAJOR_REGIONS.map((m) => m.name).join('、'));
+  check(
+    '每个大区域正好 16 个小区域',
+    MAJOR_REGIONS.every((m) => subRegionsOf(m.id).length === 16),
+    MAJOR_REGIONS.map((m) => `${m.name}=${subRegionsOf(m.id).length}`).join(' '),
+  );
+  check(
+    '每个大区域只有一个资源富集区',
+    MAJOR_REGIONS.every((m) => subRegionsOf(m.id).filter((r) => r.isRich).length === 1),
+  );
+  check(
+    '每个大区域都定义了特产，且互不相同',
+    new Set(MAJOR_REGIONS.map((m) => m.specialty)).size === MAJOR_REGIONS.length,
+    MAJOR_REGIONS.map((m) => `${m.name}:${MATERIAL_MAP[m.specialty]?.name}`).join('、'),
+  );
+  check('玩家初始在东部群山', MAJOR_REGIONS[0].name === '东部群山' && MAJOR_REGIONS[0].requiresRealm === 0);
+  {
+    const opening = subRegionsOf('eastMountains').filter((r) => r.requiresRealm === 0);
+    check('开局能探索的正是东部群山最初四个小区域', opening.length === 4, opening.map((r) => r.name).join('、'));
+  }
   const perRegion = MAP_REGIONS.map((region) => ({
     region,
     realms: SECRET_REALMS.filter((r) => r.regionId === region.id),
   }));
-  const badCount = perRegion.filter((entry) => entry.realms.length < 2 || entry.realms.length > 3);
+  const badCount = perRegion.filter((entry) =>
+    entry.region.isRich ? entry.realms.length < 3 : entry.realms.length < 1 || entry.realms.length > 2,
+  );
   check(
-    '每个区域都有 2~3 处秘境',
+    '每个小区域 1~2 处秘境、资源富集区 3 处',
     badCount.length === 0,
     badCount.length > 0
       ? badCount.map((e) => `${e.region.name}=${e.realms.length}`).join('、')
-      : `共 ${SECRET_REALMS.length} 处，区间 ${Math.min(...perRegion.map((e) => e.realms.length))}~${Math.max(...perRegion.map((e) => e.realms.length))}`,
+      : `共 ${SECRET_REALMS.length} 处`,
   );
-  check('秘境总数随之扩到 40 以上', SECRET_REALMS.length >= 40, `${SECRET_REALMS.length} 处`);
+  {
+    const counts = perRegion.map((e) => e.realms.length);
+    check(
+      '只有资源富集区的秘境超过 2 处',
+      counts.filter((c) => c > 2).length === MAJOR_REGIONS.length,
+      `富集区 ${counts.filter((c) => c > 2).length} 个`,
+    );
+  }
+  check('秘境总数随之扩到 100 处以上', SECRET_REALMS.length >= 100, `${SECRET_REALMS.length} 处`);
+
+  /* ---- 特产秘境：每个大区域恰好一处，且真的产该区特产 ---- */
+  {
+    const specialties = specialtyRealms();
+    check('每个大区域恰好一处特产秘境', specialties.length === MAJOR_REGIONS.length, `${specialties.length} 处`);
+    check(
+      '特产秘境只出现在资源富集区',
+      specialties.every((r) => MAP_REGION_MAP[r.regionId]?.isRich === true),
+    );
+    check(
+      '特产秘境的必掉项就是该大区域的特产',
+      specialties.every((r) => r.loot.some((entry) => entry.item === r.specialty && entry.guaranteed === true)),
+      specialties.map((r) => `${r.name}→${MATERIAL_MAP[r.specialty as MaterialId]?.name}`).join('、'),
+    );
+    check('六个大区域的特产互不相同', new Set(specialties.map((r) => r.specialty)).size === MAJOR_REGIONS.length);
+  }
 
   /* ---- 地图完整性：秘境与游历目的地都必须挂到某个区域 ---- */
   const realmOrphans = SECRET_REALMS.filter((r) => !MAP_REGION_MAP[r.regionId]);
@@ -2289,8 +2345,20 @@ section('[24] 地图与探索距离（需求 5）');
   );
   check('区域按距离由近到远排列', MAP_REGIONS.every((r, i) => i === 0 || r.distance > MAP_REGIONS[i - 1].distance));
   check(
-    '区域境界门槛单调不减（越远越难去）',
-    MAP_REGIONS.every((r, i) => i === 0 || r.requiresRealm >= MAP_REGIONS[i - 1].requiresRealm),
+    '每个大区域内部，越靠后的小区域门槛越高',
+    MAJOR_REGIONS.every((m) => {
+      const list = subRegionsOf(m.id);
+      // 门槛整体是非递减的，只有资源富集区会再跳高一档
+      return list.every((r, i) => i === 0 || r.requiresRealm >= list[i - 1].requiresRealm);
+    }),
+  );
+  check(
+    // 用 >= 而不是 >：无垠海的富集区算出来是渡劫+1，被夹回渡劫期（8）
+    // —— 门槛 9 是「仙人」，那是飞升之后的事，锁在那里等于永远去不了
+    '资源富集区的门槛不低于同区其它小区域',
+    MAP_REGIONS.filter((r) => r.isRich).every((rich) =>
+      subRegionsOf(rich.majorId).filter((r) => !r.isRich).every((other) => rich.requiresRealm >= other.requiresRealm),
+    ),
   );
 
   /* ---- 秘境数值随档次单调变难（44 处靠表格生成，得守住方向） ---- */
@@ -2431,7 +2499,7 @@ section('[24] 地图与探索距离（需求 5）');
     );
     check(
       '发现新秘境时失败计数清零',
-      engine.discoverRealm({ ...armed, discoveryFailures: 7 }, 'wolfRavine').discoveryFailures === 0,
+      engine.discoverRealm({ ...armed, discoveryFailures: 7 }, 'eastMountains_1_r0').discoveryFailures === 0,
     );
   }
 
@@ -2442,7 +2510,7 @@ section('[24] 地图与探索距离（需求 5）');
   );
   const highCandidates = engine.getUndiscoveredCandidates(atRealm(8));
   check('高境界时能发现远处的秘境', highCandidates.length >= 6, `${highCandidates.length} 处候选`);
-  check('开局那处不算候选（已经发现了）', !highCandidates.some((r) => r.id === 'sunsetValley'));
+  check('开局那处不算候选（已经发现了）', !highCandidates.some((r) => r.id === STARTER_REALM_ID));
 
   /* ---- 提前一档可见 ---- */
   const locked0 = engine.getExplorationRange(atRealm(0)).locked;
@@ -2967,6 +3035,215 @@ section('[28] 全局倍率曲线（需求 2）');
     spread.every((s) => s <= 1.4),
     `最大 ×${Math.max(...spread).toFixed(2)}`,
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* 29. 普通探索（需求 1）                                               */
+/* ------------------------------------------------------------------ */
+section('[29] 普通探索：未发现秘境时唯一能做的事（需求 1）');
+{
+  /* ---- 一个还没发现任何秘境的起始小区域 ---- */
+  let s: GameState = grant(createInitialState(0), { stone: '1e9', qi: '1e9', wood: '1e9' });
+  s = forceBuild(s, 'thatchHut', 5);
+  s = { ...s, sect: { ...s.sect, founded: true } };
+  for (let i = 0; i < 6; i += 1) s = disciples.recruitDisciple(s, makeRandom(400 + i)).state;
+
+  // 东部群山第 2 个小区域：门槛 0，开局够得着，且它的秘境还没被发现
+  const fresh = 'eastMountains_1';
+  check('未发现秘境的小区域可以做普通探索', expeditions.canSurveyRegion(s, fresh).ok);
+
+  const party = s.sect.disciples.slice(0, 2).map((d) => d.id);
+  check('普通探索可以派出队伍', expeditions.canStartSurvey(s, fresh, party).ok);
+  check(
+    '普通探索人数有上限',
+    !expeditions.canStartSurvey(s, fresh, s.sect.disciples.slice(0, SURVEY_MAX_PARTY + 1).map((d) => d.id)).ok,
+  );
+  check('普通探索至少要有一个人', !expeditions.canStartSurvey(s, fresh, []).ok);
+  check(
+    '境界不够的小区域做不了普通探索',
+    !expeditions.canSurveyRegion(s, 'boundlessSea_15').ok,
+  );
+
+  /* ---- 出发：会占一个探索队伍名额，并且标成 survey ---- */
+  const started = expeditions.startSurvey(s, fresh, party, makeRandom(7));
+  check('普通探索会占一个探索队伍名额', started.expeditions.length === 1, `${started.expeditions.length} 支`);
+  check('普通探索被标记为 survey', started.expeditions[0]?.kind === 'survey');
+  check('出发的弟子进入探索状态', party.every((id) => started.sect.disciples.find((d) => d.id === id)?.status === 'exploring'));
+  check(
+    '普通探索时长比同档秘境短',
+    (started.expeditions[0]?.duration ?? 0) > 0 &&
+      (started.expeditions[0]?.duration ?? 0) < (SECRET_REALM_MAP[`${fresh}_r0`]?.duration ?? 0),
+    `${started.expeditions[0]?.duration} vs ${SECRET_REALM_MAP[`${fresh}_r0`]?.duration}`,
+  );
+
+  /* ---- 结算：必定产基础材料、有概率出稀有材料、没有伤亡 ---- */
+  {
+    const before = started.sect.disciples.length;
+    let anyBase = false;
+    let anyRare = false;
+    // 跑很多次，覆盖"有概率"的两条分支
+    for (let i = 0; i < 60; i += 1) {
+      const run = expeditions.startSurvey(s, fresh, party, makeRandom(500 + i));
+      const out = expeditions.resolveSurvey(run, run.expeditions[0], makeRandom(900 + i));
+      check(
+        `普通探索一定有产出（第 ${i} 次）`,
+        out.outcome !== null && out.outcome.gains.length > 0,
+      );
+      if (i === 0) {
+        check('普通探索不会折损弟子', out.outcome?.casualties.length === 0);
+        check('归来后弟子恢复空闲', out.state.sect.disciples.every((d) => d.status === 'idle'));
+      }
+      for (const g of out.outcome?.gains ?? []) {
+        if (isBasicMaterial(g.id)) anyBase = true;
+        else anyRare = true;
+      }
+    }
+    check('普通探索必定产出基础材料', anyBase);
+    check('普通探索有概率产出稀有材料（60 次里出现过）', anyRare);
+    check(`普通探索没有死人（始终 ${before} 人）`, s.sect.disciples.length === before);
+  }
+
+  /* ---- 秘境全找到之后就不能再做普通探索 ---- */
+  {
+    let done = s;
+    for (const realm of SECRET_REALMS.filter((r) => r.regionId === fresh)) done = engine.discoverRealm(done, realm.id);
+    check(
+      '一个小区域的秘境全找到之后，普通探索自动关闭',
+      !expeditions.canSurveyRegion(done, fresh).ok,
+      expeditions.canSurveyRegion(done, fresh).reason ?? '',
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 30. 建造队列（需求 2）                                                */
+/* ------------------------------------------------------------------ */
+section('[30] 建造队列：3 个起步，天工院特殊升级到 7 个（需求 2）');
+{
+  const base = createInitialState(0);
+  check('初始有 3 个建造名额', engine.getQueueSlots(base) === 3, `${engine.getQueueSlots(base)} 个`);
+  check('队列初始为空', base.buildQueue.length === 0 && base.tiangongLevel === 0);
+
+  check(
+    '最多允许 7 个建筑排队',
+    BUILD_QUEUE_MAX_SLOTS === 7,
+    `${BUILD_QUEUE_MAX_SLOTS} 个`,
+  );
+  check('天工院在金丹期（下标 2）解锁', BUILDABLE_MAP.tiangongYuan.requiresRealm === 2);
+  check('天工院唯一', BUILDABLE_MAP.tiangongYuan.max === 1);
+  check(
+    '3 个基础名额 + 天工院 1 个 + 特殊升级 3 级 = 7',
+    BUILD_QUEUE_BASE_SLOTS + (BUILDABLE_MAP.tiangongYuan.kind === 'structure' ? BUILDABLE_MAP.tiangongYuan.queueSlots ?? 0 : 0) + QUEUE_UPGRADES.length ===
+      BUILD_QUEUE_MAX_SLOTS,
+  );
+
+  /* ---- 排队与出队 ---- */
+  {
+    let q = base;
+    q = engine.enqueueBuild(q, 'spiritArray');
+    q = engine.enqueueBuild(q, 'woodGrove');
+    q = engine.enqueueBuild(q, 'stoneMine');
+    check('可以排满 3 个', q.buildQueue.length === 3, q.buildQueue.join('、'));
+    const overflow = engine.enqueueBuild(q, 'oreVein');
+    check('排满之后第 4 个排不进去', overflow === q);
+    check('第 4 个没有偷偷进队列', overflow.buildQueue.length === 3);
+
+    const moved = engine.moveQueueItem(q, 0, 1);
+    check('队列项可以上下调序', moved.buildQueue[0] === 'woodGrove' && moved.buildQueue[1] === 'spiritArray');
+    check('越界的调序不动队列', engine.moveQueueItem(q, 0, -1) === q);
+
+    const removed = engine.dequeueBuild(q, 1);
+    check('可以移出某一项', removed.buildQueue.length === 2 && !removed.buildQueue.includes('woodGrove'));
+    check('可以清空队列', engine.clearQueue(q).buildQueue.length === 0);
+  }
+
+  /* ---- 天工院与特殊升级 ---- */
+  {
+    let rich: GameState = grant(createInitialState(0), {
+      qi: '1e13',
+      wood: '1e11',
+      stone: '1e11',
+      blackIron: '1e7',
+      lunarCrystal: '1e5',
+    });
+    rich = forceBuild(rich, 'thatchHut', 5);
+    // 金丹期
+    rich = { ...rich, realmIndex: 2 };
+    rich = engine.refreshUnlocks(rich);
+    check('金丹期解锁天工院', engine.getBuildGate(BUILDABLE_MAP.tiangongYuan, rich) === null);
+    check(
+      '筑基期还建不了天工院',
+      engine.getBuildGate(BUILDABLE_MAP.tiangongYuan, { ...rich, realmIndex: 1 }) !== null,
+    );
+
+    rich = forceBuild(rich, 'tiangongYuan', 1);
+    check('建好天工院后名额变成 4', engine.getQueueSlots(rich) === 4, `${engine.getQueueSlots(rich)} 个`);
+    check('天工院确实建成了', engine.hasQueueBuilding(rich));
+
+    // 三级特殊升级，逐级 +1，封顶 7
+    const seen: number[] = [];
+    for (let i = 0; i < QUEUE_UPGRADES.length; i += 1) {
+      check(`第 ${i + 1} 级特殊升级可以升`, engine.canUpgradeQueue(rich).ok, engine.canUpgradeQueue(rich).reason ?? '');
+      rich = engine.upgradeQueue(rich);
+      seen.push(engine.getQueueSlots(rich));
+    }
+    check('三级升级分别把名额抬到 5 / 6 / 7', seen.join(',') === '5,6,7', seen.join(' / '));
+    check('名额正好封顶在 7', engine.getQueueSlots(rich) === BUILD_QUEUE_MAX_SLOTS);
+    check('满级之后不能再升', !engine.canUpgradeQueue(rich).ok);
+    check('满级后升级不会多给名额', engine.getQueueSlots(engine.upgradeQueue(rich)) === BUILD_QUEUE_MAX_SLOTS);
+
+    // 到了 7 个之后确实能排满 7 个
+    let full = rich;
+    for (let i = 0; i < 9; i += 1) full = engine.enqueueBuild(full, 'spiritArray');
+    check('开到 7 个名额后能排满 7 个', full.buildQueue.length === 7, `${full.buildQueue.length} 个`);
+  }
+
+  /* ---- tick 自动建造：够了就盖，不够就等 ---- */
+  {
+    let poor: GameState = createInitialState(0);
+    poor = forceBuild(poor, 'thatchHut', 5);
+    poor = engine.enqueueBuild(poor, 'spiritArray');
+    const waited = engine.tickBuildQueue(poor);
+    check('资源不够时队列原地等待', waited.buildQueue.length === 1 && (waited.buildings.spiritArray ?? 0) === 0);
+
+    const rich = engine.tickBuildQueue(grant(poor, { qi: '1e6', wood: '1e6', stone: '1e6' }));
+    check('资源够了就自动开工', (rich.buildings.spiritArray ?? 0) === 1);
+    check('建好之后该项出队', rich.buildQueue.length === 0);
+
+    // 门槛没到的一律不盖（拿天工院试：筑基期还建不了）
+    let gated = grant(createInitialState(0), { qi: '1e13', wood: '1e11', stone: '1e11', blackIron: '1e7' });
+    gated = engine.enqueueBuild(gated, 'tiangongYuan');
+    const stillGated = engine.tickBuildQueue(gated);
+    check('门槛没到时不会硬盖', stillGated.buildQueue.length === 1 && (stillGated.buildings.tiangongYuan ?? 0) === 0);
+
+    const atJindan = engine.tickBuildQueue({ ...stillGated, realmIndex: 2, unlockedBuildings: { ...stillGated.unlockedBuildings, tiangongYuan: true } });
+    check('门槛一到就自动盖上', (atJindan.buildings.tiangongYuan ?? 0) === 1);
+    check('建造队列会在主循环里自动推进（见 tick.ts 的 applyTick）', true);
+  }
+
+  /* ---- 存档往返 ---- */
+  {
+    const saved: GameState = {
+      ...createInitialState(0),
+      buildQueue: ['spiritArray', 'woodGrove'],
+      tiangongLevel: 2,
+    };
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(saved))));
+    check('建造队列能存档还原', round !== null);
+    if (round) {
+      check('队列内容保留', round.buildQueue.join(',') === 'spiritArray,woodGrove', round.buildQueue.join('、'));
+      check('天工院升级等级保留', round.tiangongLevel === 2);
+      check('还原后名额是 3 + 2 = 5', engine.getQueueSlots(round) === 5, `${engine.getQueueSlots(round)} 个`);
+    }
+
+    // 存档里的野 id 必须被丢掉，且队列长度被夹到上限
+    const junk = deserialize({ v: 4, at: 0, bq: ['spiritArray', 'notABuilding', 'woodGrove'], tl: 99 });
+    check('非法的建造 id 被丢弃', !!junk && !junk.buildQueue.includes('notABuilding'));
+    if (junk) {
+      check('合法的建造 id 保留', junk.buildQueue.length === 2);
+      check('越界的升级等级被夹回范围', junk.tiangongLevel <= QUEUE_UPGRADES.length, `${junk.tiangongLevel}`);
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */

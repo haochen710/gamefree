@@ -10,6 +10,7 @@ import ResourceBar from './components/ResourceBar';
 import ActionPanel from './components/ActionPanel';
 import ServantPanel from './components/ServantPanel';
 import BuildingsPanel from './components/BuildingsPanel';
+import BuildQueuePanel from './components/BuildQueuePanel';
 import ResearchPanel from './components/ResearchPanel';
 import RealmPanel from './components/RealmPanel';
 import SeasonPanel, { SeasonStrip } from './components/SeasonPanel';
@@ -96,6 +97,7 @@ function CaveTab() {
         <BuildingsPanel />
       </div>
       <div className="layout__right">
+        <BuildQueuePanel />
         <ResearchPanel />
         <SavePanel />
       </div>

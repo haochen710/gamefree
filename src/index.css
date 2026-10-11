@@ -2173,3 +2173,238 @@ a {
   font-weight: 500;
 }
 
+/* ------------------------------------------------------------------ */
+/* 六大区域 × 十六小区域（需求 1）                                      */
+/* ------------------------------------------------------------------ */
+
+/* 小区域网格：每个大区域一块 4×4 */
+.subgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.subregion {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 6px 6px 5px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: center;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.subregion:disabled {
+  cursor: not-allowed;
+}
+
+.subregion__icon {
+  font-size: 16px;
+  line-height: 1.1;
+}
+
+.subregion__name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.subregion__meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 到得了：正常颜色 */
+.subregion--on {
+  border-color: rgba(60, 140, 90, 0.4);
+}
+
+.subregion--on:hover {
+  background: rgba(60, 140, 90, 0.08);
+}
+
+/* 提前一个境界看得见，但还去不了 */
+.subregion--off {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+/* 更远的区域：画出来让人看见"世界有多大" */
+.subregion--far {
+  opacity: 0.28;
+  border-style: dotted;
+}
+
+.subregion--rich {
+  border-color: rgba(196, 150, 60, 0.65);
+  background: rgba(196, 150, 60, 0.09);
+}
+
+.subregion--open {
+  outline: 2px solid var(--accent, #7a603c);
+  outline-offset: -1px;
+}
+
+.subregion__badge {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: #c4963c;
+  color: #fff;
+}
+
+/* 展开后的小区域详情 */
+.subregion-detail {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.subregion-detail__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 普通探索卡片 */
+.realm-card--survey {
+  border-color: rgba(70, 110, 170, 0.4);
+  background: rgba(70, 110, 170, 0.05);
+}
+
+/* 特产秘境卡片 */
+.realm-card--specialty {
+  border-color: rgba(196, 150, 60, 0.6);
+  background: rgba(196, 150, 60, 0.07);
+}
+
+.realm-card__badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 400;
+  background: rgba(196, 150, 60, 0.18);
+  color: #8a6a1f;
+  border: 1px solid rgba(196, 150, 60, 0.45);
+}
+
+/* ------------------------------------------------------------------ */
+/* 建造队列（需求 2）                                                   */
+/* ------------------------------------------------------------------ */
+
+.queue {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.queue__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+}
+
+.queue__item--ready {
+  border-color: rgba(60, 140, 90, 0.5);
+  background: rgba(60, 140, 90, 0.07);
+}
+
+.queue__no {
+  width: 16px;
+  text-align: center;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.queue__icon { font-size: 15px; }
+.queue__name { font-weight: 600; }
+
+.queue__owned {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.queue__why {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.queue__item--ready .queue__why { color: #2f7d4f; }
+
+.queue__ops {
+  display: flex;
+  gap: 2px;
+}
+
+.btn--tiny {
+  padding: 1px 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* 名额来源 */
+.queue__slots {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.queue__slots-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.queue__sources {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.queue__src--on {
+  color: #2f7d4f;
+  font-weight: 600;
+}
+
+.queue__upgrade {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(196, 150, 60, 0.45);
+  border-radius: var(--radius);
+  background: rgba(196, 150, 60, 0.07);
+}
+
+.queue__upgrade-head { font-size: 13px; }
+.queue__upgrade-cost { margin: 4px 0 6px; font-size: 12px; color: var(--muted); }
+
+
+

@@ -221,7 +221,8 @@ export function resolveTravel(
 
   /* ---- 发现新秘境（需求 1：玩家探索也能发现） ---- */
   let discovered: TravelOutcome['discovered'] = null;
-  const candidates = getUndiscoveredCandidates(working);
+  // 掌门亲自游历：只在目的地所在的那一片找新秘境（需求 1）
+  const candidates = getUndiscoveredCandidates(working, def.regionId);
   if (candidates.length > 0) {
     // 硬保底与探索共用同一个失败计数（发现概率只有寻宝宝盘能提升）
     if (isDiscoveryGuaranteed(working) || random() < getDiscoveryChance(working)) {

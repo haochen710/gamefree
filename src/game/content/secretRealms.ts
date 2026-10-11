@@ -2,25 +2,26 @@
  * 秘境（需求 1 / 5）
  *
  * 需求原文：
- *   1.「秘境设计为弟子或者玩家探索发现，发现后固定在秘境栏，
- *      每次探索后需要隔一段时间才能再次探索。秘境探索有境界限制，
- *      并且人越多最终获取的资源越多。」
- *   5.「设计一个地图，并划分不同区域，玩家或者弟子只有等级高了，
- *      才能去更远的地域探索」
+ *   「秘境设计为弟子或者玩家探索发现，发现后固定在秘境栏，
+ *     每次探索后需要隔一段时间才能再次探索。秘境探索有境界限制，
+ *     并且人越多最终获取的资源越多。」
+ *   「每个区域1-2个秘境……只有一个小区域秘境有三个以上，为资源富集区……
+ *     资源富集区内有一个产出该大区特产的秘境。」
  *
- * 后续需求把地图扩到 **18 个区域、每区 2~3 处秘境**（共 44 处）。
+ * 现在的结构：
+ *   大区域（6）→ 小区域（96）→ 秘境（每小区域 1~2 处，资源富集区 3 处，共 150 处）
  *
  * 秘境不再是「攒够材料就自动出现」，而是**探索中发现**的：
- *   - 每处秘境挂在地图的一个区域下（见 map.ts），区域有境界门槛；
- *   - 弟子探索或掌门游历时有概率发现新秘境，发现后永久固定在秘境栏；
+ *   - 每处秘境挂在一个小区域下（见 map.ts），小区域有境界门槛；
+ *   - 小区域里**还没发现秘境时只能"普通探索"**（见 expeditions.ts 的 survey）；
+ *   - 弟子探索或掌门游历时有概率发现新秘境，发现后永久固定；
  *   - 每次探索完毕该秘境进入冷却，冷却结束才能再探；
  *   - 派遣人数在 minParty~maxParty 之间自由决定，人越多总产出越高。
  *
- * ⚠️ 44 处秘境要是逐个手写推荐战力/时长/冷却/伤亡/掉落，改平衡时没人找得全。
- * 所以这里拆成三层：
- *   REGION_ROWS(map.ts) → 区域档次 tier(1~9) → TIER_STATS / TIER_POOLS
- * 每处秘境只声明「我在哪个区域、我是什么路数（profile）」，rank 由表内顺序推出，
- * 具体数值由 buildRealm 算出来。想调平衡只改那两张表。
+ * ⚠️ 150 处秘境当然不可能逐个手写数值，三层生成：
+ *   MAP_REGIONS（在哪儿、门槛多少）→ regionTier（门槛+1 = 1~9 档）
+ *     → TIER_STATS / TIER_POOLS / PROFILE_PICKS
+ * 每处秘境只声明「在哪个小区域、第几处、什么路数」，数值由 buildRealm 算出来。
  *
  * 结算的核心公式（在 expeditions.ts 里实现）：
  *   战力比 = 队伍总战力 / 秘境推荐战力
@@ -28,9 +29,20 @@
  *   产出   = 基础 × clamp(战力比, 0.5, 3) × 人数系数 × 增益 × 随机浮动
  *   伤亡率 = 基础伤亡率 / 战力比 × (1 - 减免)
  */
-import { MAP_REGION_MAP, regionIndex, regionTier, type MapRegionDef } from './map';
+import {
+  MAJOR_REGION_MAP,
+  MAP_REGIONS,
+  RICH_SUB_INDEX,
+  regionIndex,
+  regionTier,
+  subRealmCount,
+  type MapRegionDef,
+  type RealmProfile,
+} from './map';
 import { REALMS } from './realms';
-import type { ItemId } from './resources';
+import { MATERIAL_MAP, type ItemId, type MaterialId } from './resources';
+
+export type { RealmProfile };
 
 export interface LootEntry {
   item: ItemId;
@@ -53,9 +65,9 @@ export interface SecretRealmDef {
   name: string;
   icon: string;
   desc: string;
-  /** 所在的地图区域（见 map.ts）。区域门槛是探索的第一道门 */
+  /** 所在的小区域（见 map.ts） */
   regionId: string;
-  /** 区域档次 1~9，由区域在地图上的位置推出 */
+  /** 区域档次 1~9 */
   tier: number;
   /** 推荐战力 */
   requiredPower: number;
@@ -63,28 +75,30 @@ export interface SecretRealmDef {
   duration: number;
   /** 至少派遣几名弟子 */
   minParty: number;
-  /** 最多能派遣几名弟子（人越多产出越高，见 PARTY_YIELD_PER_EXTRA） */
+  /** 最多能派遣几名弟子（人越多产出越高） */
   maxParty: number;
   /** 弟子境界下限 */
   minRealm: number;
-  /** 一次探索结束后的冷却秒数（需求 1：隔一段时间才能再探） */
+  /** 一次探索结束后的冷却秒数 */
   cooldown: number;
   /** 基础伤亡率 */
   baseCasualty: number;
   loot: LootEntry[];
-  /** 小概率直接掉成品丹药 */
   pillLoot?: PillLootEntry[];
-  /** 带回材料种子的概率（需求 5） */
   seedChance: number;
-  /** 此地最低会掉几级稀有度的种子（默认 1） */
   seedMinRarity: number;
-  /** 该秘境最多能掉出多少级的种子稀有度 */
   seedMaxRarity: number;
-  /** 掉落图纸的概率（需求 6）。0 表示此地不出图纸 */
   blueprintChance: number;
-  /** 发现难度权重：数字越大越容易被抽到（同区域内越靠后的秘境给越小的值） */
   discoveryWeight: number;
   requiresSectLevel?: number;
+  /**
+   * 是不是「特产秘境」：产出所属大区域的独有特产。
+   *
+   * 每个大区域的**资源富集区**里恰好有一处，是那种材料最稳、最多的来源。
+   */
+  specialty?: MaterialId;
+  /** 在本小区域里排第几处（0 起） */
+  rank: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -93,42 +107,40 @@ export interface SecretRealmDef {
 
 /** 每次探索从掉落表里抽取的条目数，还会随人数增加 */
 export const LOOT_ROLLS = 3;
-
-/**
- * 每多派一名弟子（超出 minParty）增加的抽取条目数，上限 LOOT_ROLLS_MAX。
- *
- * 「人越多最终获取的资源越多」有两种体现：
- *   1. 每多一人，数量系数 +40%（PARTY_YIELD_PER_EXTRA）
- *   2. 每多一人，多抽一条掉落
- * 两条叠加，所以多带人不是浪费。
- */
+/** 每多派一名弟子（超出 minParty）增加的抽取条目数，上限 LOOT_ROLLS_MAX */
 export const LOOT_ROLLS_PER_EXTRA = 1;
 export const LOOT_ROLLS_MAX = 6;
-
 /** 每多派一名弟子（超出 minParty）的总产量加成 */
 export const PARTY_YIELD_PER_EXTRA = 0.4;
-
-/**
- * 秘境掉落成品丹药的概率。
- *
- * 这是调平衡时踩过的坑：如果每次探索必掉一颗丹药，
- * 挂机几天就能囤几百颗境界丹，炼丹系统（需要提升炼丹品阶才能炼高阶丹）
- * 就完全失去意义了。所以限定成小概率掉落。
- */
+/** 秘境掉落成品丹药的概率 */
 export const PILL_DROP_CHANCE = 0.15;
-
 /** 一次探索最多带回几种种子 */
 export const SEED_ROLLS = 1;
-
-/** 图纸只会从「元婴期以上」的秘境里掉出来 —— 那里才有资格谈论上古传承 */
+/** 图纸只会从「元婴期以上」的秘境里掉出来 */
 export const MIN_REALM_FOR_BLUEPRINT = 3;
+
+/* ------------------------------------------------------------------ */
+/* 普通探索（需求 1：小区域还没发现秘境时唯一能做的事）                  */
+/* ------------------------------------------------------------------ */
+
+/** 普通探索必掉的基础材料种类（下限 / 上限） */
+export const SURVEY_BASE_KINDS_MIN = 1;
+export const SURVEY_BASE_KINDS_MAX = 2;
+/** 普通探索掉出稀有材料的概率 */
+export const SURVEY_RARE_CHANCE = 0.3;
+/** 普通探索的时长 = 该小区域秘境时长的这个比例（比正经探秘境快） */
+export const SURVEY_DURATION_RATIO = 0.55;
+/** 普通探索的基础产量倍率：它不该比探秘境更赚，否则没人去探秘境 */
+export const SURVEY_YIELD_MULT = 0.65;
+/** 普通探索最多派几个人 */
+export const SURVEY_MAX_PARTY = 4;
+/** 普通探索没有冷却 —— 它本来就是"还没找到秘境时的日常活计" */
 
 /* ------------------------------------------------------------------ */
 /* 区域档次 → 秘境数值                                                  */
 /* ------------------------------------------------------------------ */
 
 interface TierStat {
-  /** 推荐战力 = 该区域境界的弟子基础战力 × 这个倍数 */
   powerMult: number;
   duration: number;
   cooldown: number;
@@ -139,17 +151,14 @@ interface TierStat {
   blueprintChance: number;
   minParty: number;
   maxParty: number;
-  /** 需要几品宗门（0 = 不限） */
   sectLevel: number;
 }
 
 /**
- * 九档秘境数值。
+ * 九档秘境数值。档次 = 小区域的境界门槛 + 1。
  *
- * 推荐战力刻意锚定在「本区域境界的弟子基础战力 × powerMult」上，
- * 而不是写死一个绝对数字 —— 否则加了新境界、弟子战力整体上台阶之后，
- * 44 处秘境的推荐战力会全部失准。倍数从 2 缓升到 10，
- * 意思是越深处越需要靠器物、丹药、宗门建筑把弟子堆上去。
+ * 推荐战力锚定在「本区域境界的弟子基础战力 × powerMult」上，而不是写死绝对数字 ——
+ * 否则加了新境界、弟子战力整体上台阶之后，150 处秘境的推荐战力会全部失准。
  */
 const TIER_STATS: Record<number, TierStat> = {
   1: { powerMult: 2, duration: 120, cooldown: 90, casualty: 0.02, seedChance: 0.3, seedMinRarity: 1, seedMaxRarity: 2, blueprintChance: 0, minParty: 1, maxParty: 4, sectLevel: 0 },
@@ -170,11 +179,8 @@ interface PoolEntry {
 }
 
 /**
- * 每档的掉落池。
- *
- * 覆盖了全部 13 种材料：低档只出基础材料与月华露，
+ * 每档的掉落池。覆盖全部 13 种材料：低档只出基础材料与月华露，
  * 越往后越往稀有材料上走（星辰砂 → 太阴玄晶/龙血 → 九幽魂火/仙玉 → 混沌紫气/鸿蒙道果）。
- * 这样「越高品阶的丹方越需要稀有材料」在获取端也对得上。
  */
 const TIER_POOLS: Record<number, PoolEntry[]> = {
   1: [
@@ -281,9 +287,6 @@ const TIER_PILLS: Record<number, PillLootEntry[]> = {
   ],
 };
 
-/** 秘境的路数：决定它偏向产出哪一类材料（只影响权重与必掉项） */
-export type RealmProfile = 'herb' | 'ore' | 'beast' | 'ruin' | 'frost' | 'void' | 'heaven';
-
 const PROFILE_PICKS: Record<RealmProfile, ItemId[]> = {
   herb: ['herb', 'moonDew', 'coldJade'],
   ore: ['ore', 'blackIron', 'fireMarrow', 'starSand'],
@@ -294,114 +297,46 @@ const PROFILE_PICKS: Record<RealmProfile, ItemId[]> = {
   heaven: ['primordialFruit', 'immortalJade', 'chaosQi', 'dragonBlood'],
 };
 
-/* ------------------------------------------------------------------ */
-/* 44 处秘境：只声明"在哪儿、什么路数"                                   */
-/* ------------------------------------------------------------------ */
+/** 秘境名后缀：让 150 处秘境的名字读起来不重样，又能一眼看出它偏产什么 */
+const PROFILE_SUFFIX: Record<RealmProfile, string> = {
+  herb: '药圃',
+  ore: '矿窟',
+  beast: '兽巢',
+  ruin: '古殿',
+  frost: '冰窟',
+  void: '虚空裂隙',
+  heaven: '云台',
+};
 
-/** 紧凑的秘境定义表：id / 名称 / 图标 / 所属区域 / 路数 / 说明 */
-type RealmRow = [
-  id: string,
-  name: string,
-  icon: string,
-  regionId: string,
-  profile: RealmProfile,
-  desc: string,
-];
+/** 副路数：每小区域的第二处秘境换个路数，避免同一片地方掉的东西完全一样 */
+const SECONDARY_FLAVOR: RealmProfile[] = ['ore', 'beast', 'ruin', 'herb', 'frost', 'void'];
 
-const REALM_ROWS: RealmRow[] = [
-  /* ---- 近郊山野（炼气） ---- */
-  ['sunsetValley', '落霞谷', '🌄', 'nearHills', 'beast', '谷中妖兽多为炼气期，是新入门的弟子练手之处。'],
-  ['wolfRavine', '野狼涧', '🐺', 'nearHills', 'beast', '涧中狼群成患，附近凡俗村落久已不敢靠近。'],
-  ['herbSlope', '药草坡', '🌿', 'nearHills', 'herb', '向阳的缓坡上，野生灵草长势极好。'],
-
-  /* ---- 荒村古道（炼气） ---- */
-  ['ruinedVillage', '荒村遗址', '🏚', 'wildRoad', 'herb', '村人早已迁走，屋舍间的药圃却还活着。'],
-  ['stoneQuarry', '采石旧场', '🪨', 'wildRoad', 'ore', '废弃多年的采石场，石壁里还能凿出灵矿。'],
-
-  /* ---- 迷雾边陲（筑基） ---- */
-  ['blackWindRidge', '黑风岭', '🌫', 'mistyFrontier', 'beast', '常年黑风怒号，岭中隐匿筑基期妖兽。'],
-  ['mistLake', '迷雾灵湖', '🌁', 'mistyFrontier', 'herb', '湖面白雾不散，湖心岛上生着成片灵草。'],
-
-  /* ---- 断魂崖（筑基） ---- */
-  ['soulCliffRuins', '蚀骨洞', '💀', 'soulCliff', 'ruin', '崖壁上千疮百孔，尽是前人开凿的洞窟。'],
-  ['boneGarden', '白骨园', '🦴', 'soulCliff', 'ruin', '白骨堆积如林，正中却生着一株不知名的树。'],
-  ['coldSpringCave', '寒泉洞', '🧊', 'soulCliff', 'frost', '洞中寒泉彻骨，泉底沉着点点寒玉。'],
-
-  /* ---- 烈焰荒原（金丹） ---- */
-  ['emberPit', '地火谷', '🌋', 'scorchedWilds', 'ore', '地火自谷底喷涌，火光映红半边天。'],
-  ['fireMarrowCave', '地火髓窟', '🔥', 'scorchedWilds', 'ore', '深入谷底的洞窟，壁上凝着厚厚的地火髓。'],
-
-  /* ---- 万骨泽（金丹） ---- */
-  ['marshOfBones', '白骨泥沼', '🪦', 'boneMarsh', 'ruin', '淤泥之下全是断骨，走一步陷一步。'],
-  ['boneField', '万骨战场', '⚔', 'boneMarsh', 'ruin', '上古修士大战之地，怨气凝而不散，遍地残兵断刃。'],
-  ['plagueMist', '瘟瘴泽', '☠', 'boneMarsh', 'herb', '瘴气弥漫，却也因此长出了外界难寻的药草。'],
-
-  /* ---- 星陨深渊（元婴） ---- */
-  ['starfallAbyss', '坠星渊底', '☄', 'starfallDeep', 'ore', '天外星辰坠落之所，渊底遍是星辰砂。'],
-  ['meteorField', '陨星原', '🌠', 'starfallDeep', 'ore', '大大小小的陨星散落一地，捡都捡不完。'],
-
-  /* ---- 寒泉幽谷（元婴） ---- */
-  ['iceCrystalCave', '玄晶冰窟', '💠', 'iceValley', 'frost', '万载寒冰凝成的洞窟，太阴玄晶就长在冰里。'],
-  ['frozenAbyss', '万载寒渊', '❄', 'iceValley', 'frost', '渊底的水早已冻成玉，敲下一块便是寒玉。'],
-
-  /* ---- 幽冥虚空（化神） ---- */
-  ['netherSea', '幽冥血海', '🌊', 'netherVoid', 'beast', '血海翻涌，海底沉睡着上古真龙遗骸，九幽魂火在水面飘荡。'],
-  ['ghostTide', '阴潮滩', '👻', 'netherVoid', 'ruin', '潮水退去后，滩上留下许多不愿散去的影子。'],
-  ['soulAltar', '祭魂坛', '🕯', 'netherVoid', 'ruin', '不知谁人在此立坛祭魂，坛上魂火百年不熄。'],
-
-  /* ---- 血海孤岛（化神） ---- */
-  ['bloodPalace', '血宫', '🩸', 'bloodIsles', 'beast', '血海中央的宫殿，宫墙竟是用龙血浇成的。'],
-  ['dragonGrave', '真龙葬地', '🐉', 'bloodIsles', 'beast', '龙骸盘踞成山，龙骨缝隙里全是凝固的龙血。'],
-
-  /* ---- 古仙遗迹（化神） ---- */
-  ['immortalRuin', '仙宫遗迹', '🏛', 'ancientRuin', 'ruin', '殿宇半塌，仙玉嵌在残柱上，依旧温润。'],
-  ['swordTomb', '剑冢', '🗡', 'ancientRuin', 'ore', '万千断剑插在土里，剑锋上的寒光未散。'],
-  ['ancientPillGarden', '古药圃', '🪷', 'ancientRuin', 'herb', '上古丹修留下的药圃，阵纹至今仍在运转。'],
-
-  /* ---- 太虚仙径（炼虚） ---- */
-  ['voidParadise', '太虚仙境', '🌌', 'voidCorridor', 'void', '仙宫正殿悬在虚空正中，殿门一开便有仙玉滚落。'],
-  ['cloudTerrace', '云台', '🛕', 'voidCorridor', 'heaven', '仙宫最高处的一方云台，据说能听见上界的声音。'],
-
-  /* ---- 虚空回廊（炼虚） ---- */
-  ['corridorRuins', '无尽回廊', '🌀', 'starCorridor', 'void', '回廊望不到尽头，两侧是无数个同样的自己。'],
-  ['starGate', '星门', '🪐', 'starCorridor', 'void', '一道由星砂凝成的门，门后不知通向哪里。'],
-  ['mirrorRealm', '镜界', '🪞', 'starCorridor', 'void', '整片空间光滑如镜，踩上去会碎成千万片。'],
-
-  /* ---- 界外混沌（合体） ---- */
-  ['primordialRuins', '鸿蒙遗境', '🌀', 'outerChaos', 'void', '开天辟地时残留的一角，法则残缺，紫气自裂隙中溢出。'],
-  ['chaosWhirl', '混沌漩涡', '🌪', 'outerChaos', 'void', '混沌之气卷成的漩涡，靠得太近就会被撕碎。'],
-
-  /* ---- 鸿蒙残界（合体） ---- */
-  ['chaosTide', '混沌潮汐', '🌊', 'primordialRemnant', 'void', '混沌之海一涨一落，留下满地凝结的紫气。'],
-  ['originSpring', '太初灵泉', '⛲', 'primordialRemnant', 'heaven', '开天辟地时的第一眼灵泉，泉水至今未干。'],
-  ['lawFragment', '法则残片', '🔮', 'primordialRemnant', 'void', '半空中悬着几片破碎的法则，映出已被抹去的世界。'],
-
-  /* ---- 星海尽头（大乘） ---- */
-  ['starSeaRuins', '虚无之涯', '✨', 'starSeaEnd', 'void', '星海到此断绝，脚下是彻底的空，连光都留不住。'],
-  ['starRaftWreck', '星槎遗骸', '🛶', 'starSeaEnd', 'void', '一艘横渡星海的古舟残骸，舱中仙玉成堆。'],
-
-  /* ---- 上界云台（大乘） ---- */
-  ['gateOfHeaven', '上界之门', '🚪', 'heavenTerrace', 'heaven', '传说中的仙门。门后即是上界，多少修士有去无回。'],
-  ['heavenPalace', '云台仙阙', '🏯', 'heavenTerrace', 'heaven', '云台之上的宫阙，梁柱皆由道果化成的木料所筑。'],
-  ['immortalBanquet', '仙宴遗址', '🍑', 'heavenTerrace', 'herb', '仙人宴饮过的地方，席上的道果竟还留着一枚。'],
-
-  /* ---- 九霄雷渊（渡劫） ---- */
-  ['thunderAbyssPit', '雷渊绝底', '⚡', 'thunderAbyss', 'heaven', '渊底积着化不开的雷浆，每一滴都是一道劫雷。'],
-  ['tribulationPeak', '渡劫峰', '⛰', 'thunderAbyss', 'heaven', '峰顶寸草不生，只有一道道被雷劈出的焦痕。'],
-];
+/** 六个大区域的特产秘境名（手写，因为它们是每条线最值钱的那一处） */
+const SPECIALTY_REALM_NAME: Record<string, string> = {
+  eastMountains: '万灵祖脉',
+  southFrontier: '龙骸血池',
+  westDesert: '坠星渊底',
+  northReach: '太阴寒宫',
+  centralState: '玉京仙库',
+  boundlessSea: '归墟紫渊',
+};
 
 /* ------------------------------------------------------------------ */
 /* 构建                                                                */
 /* ------------------------------------------------------------------ */
 
-/** 开局就已知的秘境：宗门草创时的第一处试炼地 */
-export const STARTER_REALM_ID = 'sunsetValley';
+/** 开局就已知的秘境：东部群山第一处，宗门草创时的试炼地 */
+export const STARTER_REALM_ID = 'eastMountains_0_r0';
 
-function buildLoot(tier: number, profile: RealmProfile, amountScale: number): LootEntry[] {
+function buildLoot(
+  tier: number,
+  profile: RealmProfile,
+  amountScale: number,
+  specialty: MaterialId | null,
+): LootEntry[] {
   const pool = TIER_POOLS[tier];
   const picks = PROFILE_PICKS[profile];
 
-  // 本路数偏好的材料里，取第一个出现在本档池子里的作为"招牌"，必掉
   const signature = Math.max(
     0,
     pool.findIndex((entry) => picks.includes(entry.item)),
@@ -421,37 +356,69 @@ function buildLoot(tier: number, profile: RealmProfile, amountScale: number): Lo
     loot.push({
       item: entry.item,
       amount: Math.max(1, Math.round(entry.amount * amountScale)),
-      // 偏好材料权重 ×2.5：同一档次的秘境因为路数不同，产出倾向明显不同
       weight: entry.weight * (picks.includes(entry.item) ? 2.5 : 1),
     });
   });
 
+  /*
+   * 特产秘境：该大区域的特产**必定掉落**，而且量远大于别处。
+   *
+   * 这是"每个大区域一种特产"这条需求的落点 —— 想要大量龙血，
+   * 就得去南疆的资源富集区，而不是随便哪个秘境里碰运气。
+   */
+  if (specialty) {
+    const sameItem = loot.find((entry) => entry.item === specialty);
+    if (sameItem) {
+      sameItem.guaranteed = true;
+      sameItem.amount = Math.max(sameItem.amount, Math.round(sameItem.amount * 3));
+    } else {
+      const base = TIER_POOLS[tier].find((e) => e.item === specialty)?.amount ?? 10;
+      loot.unshift({
+        item: specialty,
+        amount: Math.max(1, Math.round(base * amountScale * 3)),
+        weight: 1,
+        guaranteed: true,
+      });
+    }
+  }
+
   return loot;
 }
 
-function buildRealm(row: RealmRow, rank: number): SecretRealmDef {
-  const [id, name, icon, regionId, profile, desc] = row;
-  const region: MapRegionDef = MAP_REGION_MAP[regionId] ?? MAP_REGION_MAP.nearHills;
+function buildRealm(
+  region: MapRegionDef,
+  rank: number,
+  profile: RealmProfile,
+  specialty: MaterialId | null,
+): SecretRealmDef {
   const tier = regionTier(region.id);
   const stat = TIER_STATS[tier];
-  const indexInMap = Math.max(0, regionIndex(region.id));
+  const globalIndex = Math.max(0, regionIndex(region.id));
+  const major = MAJOR_REGION_MAP[region.majorId];
 
-  // 同档次的两个区域之间、以及同区域内的第 2/3 处，都要拉开差距
   const powerScale = 1 + 0.6 * rank;
-  const amountScale = (1 + 0.35 * (indexInMap % 2)) * (1 + 0.15 * rank);
+  // 全局序号越靠后产量越高：同一档次里也有远近之分
+  const amountScale = (1 + 0.004 * globalIndex) * (1 + 0.15 * rank);
 
   const basePower = REALMS[Math.min(region.requiresRealm, REALMS.length - 1)].power;
   const requiredPower = Math.max(1, Math.round(basePower * stat.powerMult * powerScale));
 
   const rankWeightFactor = [1, 0.8, 0.6][rank] ?? 0.5;
   const discoveryWeight =
-    id === STARTER_REALM_ID ? 0 : Math.max(1, Math.round((12 - tier) * rankWeightFactor));
+    rank === 0 && region.id === 'eastMountains_0' ? 0 : Math.max(1, Math.round((12 - tier) * rankWeightFactor));
+
+  const isSpecialty = specialty !== null;
+  const name = isSpecialty
+    ? SPECIALTY_REALM_NAME[region.majorId] ?? `${region.name}·特产秘境`
+    : `${region.name}·${PROFILE_SUFFIX[profile]}`;
 
   return {
-    id,
+    id: `${region.id}_r${rank}`,
     name,
-    icon,
-    desc,
+    icon: isSpecialty ? '💎' : region.icon,
+    desc: isSpecialty
+      ? `${region.name}深处的那一处，是${major?.name ?? ''}唯一稳定产出${MATERIAL_MAP[specialty as MaterialId]?.name ?? ''}的地方。`
+      : `${region.name}里的一处${PROFILE_SUFFIX[profile]}。`,
     regionId: region.id,
     tier,
     requiredPower,
@@ -462,7 +429,7 @@ function buildRealm(row: RealmRow, rank: number): SecretRealmDef {
     minRealm: Math.max(0, region.requiresRealm - 1),
     cooldown: Math.round(stat.cooldown * (1 + 0.2 * rank)),
     baseCasualty: Math.min(0.35, stat.casualty + rank * 0.01),
-    loot: buildLoot(tier, profile, amountScale),
+    loot: buildLoot(tier, profile, amountScale, specialty),
     pillLoot: TIER_PILLS[tier],
     seedChance: stat.seedChance,
     seedMinRarity: stat.seedMinRarity,
@@ -470,14 +437,28 @@ function buildRealm(row: RealmRow, rank: number): SecretRealmDef {
     blueprintChance: stat.blueprintChance,
     discoveryWeight,
     requiresSectLevel: stat.sectLevel > 0 ? stat.sectLevel : undefined,
+    specialty: specialty ?? undefined,
+    rank,
   };
 }
 
-export const SECRET_REALMS: SecretRealmDef[] = REALM_ROWS.map((row, index) => {
-  const regionId = row[3];
-  // rank = 本区域内的第几处（内容表里按区域顺序排列，数一数就行）
-  const rank = REALM_ROWS.slice(0, index).filter((prev) => prev[3] === regionId).length;
-  return buildRealm(row, rank);
+export const SECRET_REALMS: SecretRealmDef[] = MAP_REGIONS.flatMap((region) => {
+  const count = subRealmCount(region.index);
+  const major = MAJOR_REGION_MAP[region.majorId];
+  const primaryFlavor: RealmProfile = major?.flavor ?? 'herb';
+  // 副路数要**避开**主路数，否则同一小区域里两处秘境会撞名（都叫「XX·药圃」）
+  const others = SECONDARY_FLAVOR.filter((f) => f !== primaryFlavor);
+
+  return Array.from({ length: count }, (_, rank) => {
+    // 资源富集区的第一处是特产秘境，其余按主/副路数交替
+    const specialty =
+      region.index >= RICH_SUB_INDEX && rank === 0 ? (major?.specialty ?? null) : null;
+    const profile: RealmProfile =
+      rank === 0
+        ? primaryFlavor
+        : others[((major?.index ?? 0) * 3 + region.index + rank) % others.length];
+    return buildRealm(region, rank, profile, specialty);
+  });
 });
 
 export const SECRET_REALM_MAP: Record<string, SecretRealmDef> = SECRET_REALMS.reduce(
@@ -488,7 +469,7 @@ export const SECRET_REALM_MAP: Record<string, SecretRealmDef> = SECRET_REALMS.re
   {} as Record<string, SecretRealmDef>,
 );
 
-/** 预先按区域分好组，界面按区域渲染时不用每次 filter */
+/** 预先按小区域分好组，界面按区域渲染时不用每次 filter */
 const REALMS_BY_REGION: Record<string, SecretRealmDef[]> = SECRET_REALMS.reduce(
   (acc, realm) => {
     (acc[realm.regionId] = acc[realm.regionId] ?? []).push(realm);
@@ -500,6 +481,47 @@ const REALMS_BY_REGION: Record<string, SecretRealmDef[]> = SECRET_REALMS.reduce(
 export function realmsOfRegion(regionId: string): SecretRealmDef[] {
   return REALMS_BY_REGION[regionId] ?? [];
 }
+
+/** 该小区域一共几处秘境（含已发现与未发现） */
+export function realmCountOfRegion(regionId: string): number {
+  return realmsOfRegion(regionId).length;
+}
+
+/** 该大区域的六处特产秘境 */
+export function specialtyRealms(): SecretRealmDef[] {
+  return SECRET_REALMS.filter((r) => r.specialty);
+}
+
+/* ------------------------------------------------------------------ */
+/* 普通探索的掉落（需求 1）                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 普通探索的产出：**必定**给基础材料，**有概率**给稀有材料。
+ *
+ * 它和探秘境的区别不只是"有没有秘境"，还有两点刻意设计：
+ *   1. 产出比同档秘境低（`SURVEY_YIELD_MULT`），否则没人愿意费劲找秘境；
+ *   2. 但它是**稳定**的 —— 秘境有冷却，普通探索没有，
+ *      所以"秘境都在冷却里"的时候它正好补上这段空窗。
+ */
+export function getSurveyLoot(tier: number): { base: PoolEntry[]; rare: PoolEntry[] } {
+  const pool = TIER_POOLS[Math.min(9, Math.max(1, tier))];
+  const base: PoolEntry[] = [];
+  const rare: PoolEntry[] = [];
+  for (const entry of pool) {
+    if (RARE_ITEM_SET.has(entry.item)) rare.push(entry);
+    else base.push(entry);
+  }
+  // 灵气/材料池里没有的东西就用灵草兜底，保证"必定产出基础材料"永远成立
+  if (base.length === 0) base.push({ item: 'herb', amount: 200, weight: 1 });
+  return { base, rare };
+}
+
+const RARE_ITEM_SET = new Set<string>(
+  Object.values(MATERIAL_MAP)
+    .filter((m) => m.category === 'rare')
+    .map((m) => m.id),
+);
 
 /* ------------------------------------------------------------------ */
 /* 发现机制（需求 1）                                                   */
@@ -517,23 +539,17 @@ export const DISCOVERY_BASE_CHANCE = 0.15;
  * 连续失败多少次之后，下一次必然发现。
  *
  * ⚠️ 这里刻意把保底做成「硬保底」而不是「累积概率」：
- * - 累积概率会直接写进 `getDiscoveryChance()`，于是"发现概率"就不止
- *   寻宝宝盘一个来源了，几种建筑堆在一起谁也看不出区别；
- * - 硬保底是**另一条独立机制**：概率公式里没有它，它只在连续失败太多次时
- *   兜一次底。所以「发现概率只能靠寻宝宝盘提升」这句话是真的。
+ * 累积概率会直接写进 `getDiscoveryChance()`，于是"发现概率"就不止
+ * 寻宝宝盘一个来源了；硬保底是**另一条独立机制**，只在连续失败太多次时兜底。
  *
- * 没有保底是不行的：秘境是稀有材料的唯一来源，运气差的玩家可能永远开不出
- * 下一处，而他又没有足够的材料去做宝盘 —— 那就是死锁。
+ * 没有保底是不行的：小区域在没发现秘境之前只能普通探索，
+ * 而秘境是稀有材料的稳定来源 —— 运气差的玩家会一直卡在门外。
  */
 export const DISCOVERY_PITY_FAILURES = 10;
 
 /**
- * 发现概率总上限。
- *
- * 满配（十几座寻宝宝盘）时会被这里砍住 —— 保留 25% 的运气成分，
- * 免得"发现"退化成"按顺序解锁"。注意它**不再是**若干建筑的公共天花板：
- * 现在只有寻宝宝盘一条路能往上加，所以这个上限是给宝盘准备的终点，
- * 而不是让几种建筑挤在一起失去区分度。
+ * 发现概率总上限，保留 25% 的运气成分，免得"发现"退化成"按顺序解锁"。
+ * 现在只有寻宝宝盘一条路能往上加，所以这个上限是给宝盘准备的终点。
  */
 export const DISCOVERY_MAX_CHANCE = 0.75;
 

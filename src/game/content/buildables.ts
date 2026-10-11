@@ -23,6 +23,7 @@ export type BuildGroupId =
   | 'workshop'
   | 'farm'
   | 'trade'
+  | 'build'
   | 'hall'
   | 'sect';
 
@@ -39,6 +40,7 @@ export const BUILD_GROUPS: BuildGroupDef[] = [
   { id: 'workshop', title: '丹器工坊', hint: '决定炼丹炼器的品阶上限，需先钻研' },
   { id: 'farm', title: '灵植药圃', hint: '种植材料种子的地块，需先钻研灵植之术' },
   { id: 'trade', title: '坊市商行', hint: '定期刷新货物，可用灵石换取物资与图纸' },
+  { id: 'build', title: '营造', hint: '决定建造队列的名额（需求 2）' },
   { id: 'hall', title: '宗门建筑', hint: '掌门大殿与山门无需钻研，其余皆需（需求 4）' },
   { id: 'sect', title: '宗门奇珍', hint: '需要技术或图纸才能建造的稀有建筑' },
 ];
@@ -146,6 +148,8 @@ export interface StructureDef extends BuildableBase {
   sectEvent?: SectEventKind;
   /** 是否解锁「大比」（需求 4，只有比武台） */
   arena?: boolean;
+  /** 提供多少建造队列名额（需求 2，只有天工院） */
+  queueSlots?: number;
 }
 
 export type BuildableDef = GeneratorDef | StructureDef;
@@ -819,6 +823,76 @@ export const STORAGE_BUILDINGS: StructureDef[] = STORAGE_TIERS.map((tier) => ({
 }));
 
 STRUCTURES.push(...STORAGE_BUILDINGS);
+
+/* ------------------------------------------------------------------ */
+/* 建造队列（需求 2）                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 需求原文：
+ *   「增加建筑建造排队机制，最多允许7个建筑排队。初始只有3个排队名额，
+ *     金丹后解锁建筑相关建筑（你起个名字），该建筑唯一，需要特殊升级解锁排队名额」
+ *
+ * 做法：
+ *   - 基础 3 个名额；
+ *   - 「天工院」（唯一，金丹期解锁）本身 +1；
+ *   - 天工院还有 3 次**特殊升级**，每次 +1 —— 3 + 1 + 3 = 7，正好到顶。
+ */
+export const BUILD_QUEUE_BASE_SLOTS = 3;
+export const BUILD_QUEUE_MAX_SLOTS = 7;
+/** 决定队列名额的那座唯一建筑 */
+export const BUILD_QUEUE_BUILDING = 'tiangongYuan';
+
+export interface QueueUpgradeDef {
+  name: string;
+  desc: string;
+  cost: Partial<Record<ItemId, number>>;
+  /** 这一级加几个名额 */
+  slots: number;
+}
+
+/**
+ * 天工院的特殊升级。每一级多开一个建造位。
+ *
+ * 价格跨了三个数量级，好让"开满 7 个名额"是贯穿中后期的一条小目标线，
+ * 而不是金丹期一次性买断。
+ */
+export const QUEUE_UPGRADES: QueueUpgradeDef[] = [
+  {
+    name: '扩建料场',
+    desc: '堆料的地方大了，能同时起两处工。',
+    cost: { qi: 5e6, wood: 2e5, stone: 1e5 },
+    slots: 1,
+  },
+  {
+    name: '增设工坊',
+    desc: '多开一间工坊，匠人各领一摊。',
+    cost: { qi: 5e8, wood: 1e7, stone: 5e6, blackIron: 3000 },
+    slots: 1,
+  },
+  {
+    name: '请动仙匠',
+    desc: '从北境请来一位能役使冰魄的仙匠，工事快得不像话。',
+    cost: { qi: 5e10, wood: 1e9, stone: 5e8, blackIron: 2e5, lunarCrystal: 500 },
+    slots: 1,
+  },
+];
+
+STRUCTURES.push({
+  id: BUILD_QUEUE_BUILDING,
+  kind: 'structure',
+  group: 'build',
+  name: '天工院',
+  icon: '🏗',
+  desc: '掌营造之事的院子。能让工匠一次接几处工，自己 +1 个建造队列名额（可再特殊升级，最多 +3）。',
+  baseCost: { qi: 2e6, wood: 5e4, stone: 3e4, blackIron: 200 },
+  costGrowth: 1,
+  unlock: {},
+  // 需求原文：「金丹后解锁建筑相关建筑」
+  requiresRealm: 2,
+  max: 1,
+  queueSlots: 1,
+});
 
 export const BUILDABLES: BuildableDef[] = [...GENERATORS, ...STRUCTURES];
 

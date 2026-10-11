@@ -1,26 +1,35 @@
 /**
- * 修仙界地图 + 探索（需求 1 / 5）
+ * 修仙界地图 + 探索（需求 1）
  *
- * 这一页承担三件事：
- *   1. **地图**：画出各界区域，只有境界够了才到得了更远的地方（需求 5）；
- *   2. **秘境**：已发现的固定在对应区域里，带冷却与人数选择（需求 1）；
- *   3. **游历**：掌门可去的目的地也挂在地图上，不再另开一页。
+ * 结构是三层，界面也照着三层来：
+ *   大区域（6 个，一块面板）→ 小区域（每个大区域 16 个，4×4 网格）
+ *     → 小区域里的事：普通探索 / 已发现的秘境 / 掌门游历目的地
  *
- * 「发现后固定在秘境栏」是需求原文，所以未发现的秘境只给一个
- * 「未探明」的暗示和当前发现概率 —— 玩家知道自己还没找全，但不知道是什么。
+ * 关键规则（需求原文）：
+ *   - 「玩家初始地址在东部群山，初始只能探索附近四个小区域」——
+ *     所以网格里的格子按境界门槛灰掉，够不着就点不开；
+ *   - 「每个区域1-2个秘境……只有一个小区域秘境有三个以上，为资源富集区」——
+ *     格子上直接标出"已发现/总数"，富集区另有标记；
+ *   - 「每个小区域在未发现秘境时只能普通探索」——
+ *     所以还没发现秘境的小区域里，显示的是「普通探索」卡片而不是秘境卡片。
  */
 import { useState } from 'react';
 import { fmt, fmtDuration } from '../game/decimal';
 import {
   APTITUDE_MAP,
   ITEM_MAP,
+  MAJOR_REGIONS,
   MAP_REGIONS,
+  MATERIAL_MAP,
   REALMS,
-  TRAVEL_REGIONS,
-  realmsOfRegion,
   SECRET_REALMS,
+  TRAVEL_REGIONS,
   TRAVEL_REGION_MAP,
+  majorOf,
+  realmsOfRegion,
+  subRegionsOf,
   type ItemId,
+  type MajorRegionDef,
   type MapRegionDef,
   type SecretRealmDef,
   type TravelRegionDef,
@@ -38,11 +47,15 @@ import {
 } from '../game/engine';
 import {
   autoSelectParty,
+  autoSelectSurveyParty,
   canStartExpedition,
+  canStartSurvey,
   getExpeditionProgress,
   getLootRolls,
   getMaxExpeditions,
   getPartySizeFactor,
+  getSurveyDuration,
+  getSurveyPartyRange,
   getUndiscoveredCount,
   getIdleDisciples,
 } from '../game/expeditions';
@@ -50,40 +63,6 @@ import { canStartTravel, getTravelRemaining } from '../game/travel';
 import { getPartyPower } from '../game/disciples';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
-
-/* ------------------------------------------------------------------ */
-/* 地图总览                                                            */
-/* ------------------------------------------------------------------ */
-
-function MapNode({ region, state }: { region: MapRegionDef; state: GameState }) {
-  const reachable = canReachRegion(state, region);
-  const preview = isRegionVisible(state, region);
-  // 远处的区域也画出来（暗掉、不显示秘境进度）——
-  // 18 个区域若只显示能去的 4 个，地图就完全没有"世界很大"的感觉了
-  const all = realmsOfRegion(region.id);
-  const found = all.filter((r) => state.discoveredRealms[r.id] === true).length;
-
-  const tone = reachable ? 'map-node--on' : preview ? 'map-node--off' : 'map-node--far';
-
-  return (
-    <div
-      className={`map-node ${tone}`}
-      style={{ left: `${region.x}%`, top: `${region.y}%` }}
-      title={region.desc}
-    >
-      <span className="map-node__icon">{region.icon}</span>
-      <span className="map-node__name">{region.name}</span>
-      <span className="map-node__meta">
-        {region.distance} 里
-        {reachable
-          ? ` · 秘境 ${found}/${all.length}`
-          : preview
-            ? ` · 需${REALMS[region.requiresRealm].name}`
-            : ` · ${REALMS[region.requiresRealm].name}`}
-      </span>
-    </div>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /* 秘境卡片                                                            */
@@ -114,11 +93,23 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
     .join(' ');
 
   return (
-    <article className={gate === null ? 'realm-card' : 'realm-card realm-card--gated'}>
+    <article
+      className={
+        (gate === null ? 'realm-card' : 'realm-card realm-card--gated') +
+        (def.specialty ? ' realm-card--specialty' : '')
+      }
+    >
       <div className="realm-card__head">
         <span className="realm-card__icon">{def.icon}</span>
         <div>
-          <div className="realm-card__name">{def.name}</div>
+          <div className="realm-card__name">
+            {def.name}
+            {def.specialty && (
+              <span className="realm-card__badge">
+                特产 · {MATERIAL_MAP[def.specialty]?.name ?? def.specialty}
+              </span>
+            )}
+          </div>
           <div className="realm-card__desc">{def.desc}</div>
         </div>
       </div>
@@ -141,9 +132,7 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
       ) : (
         <div
           className={
-            ratio >= 1
-              ? 'realm-card__power realm-card__power--good'
-              : 'realm-card__power realm-card__power--warn'
+            ratio >= 1 ? 'realm-card__power realm-card__power--good' : 'realm-card__power realm-card__power--warn'
           }
         >
           当前队伍战力 {fmt(Math.round(partyPower))} / {fmt(def.requiredPower)}
@@ -255,12 +244,7 @@ function TravelCard({ def, state }: { def: TravelRegionDef; state: GameState }) 
       <div className="realm-card__loot">可能带回：{lootText || '—'}</div>
 
       <div className="btn-row">
-        <button
-          type="button"
-          className="btn btn--primary"
-          disabled={!check.ok}
-          onClick={() => startTravel(def.id)}
-        >
+        <button type="button" className="btn btn--primary" disabled={!check.ok} onClick={() => startTravel(def.id)}>
           启程前往
           {!check.ok && check.reason && <span className="btn__sub">{check.reason}</span>}
         </button>
@@ -270,62 +254,257 @@ function TravelCard({ def, state }: { def: TravelRegionDef; state: GameState }) 
 }
 
 /* ------------------------------------------------------------------ */
-/* 区域小节                                                            */
+/* 普通探索卡片（需求 1）                                               */
 /* ------------------------------------------------------------------ */
 
-function RegionSection({ region, state }: { region: MapRegionDef; state: GameState }) {
-  const reachable = canReachRegion(state, region);
-  // 「本区域有哪些秘境 / 游历目的地」的唯一事实来源是它们自己的 regionId，
-  // 区域本身不再存一份副本（两处各存一份必然会漂移）
+/**
+ * 小区域**还没发现秘境**时唯一能做的事。
+ *
+ * 需求原文：「普通探索有概率发现秘境和稀有材料，必定产出基础材料，但是数量随机。」
+ * 所以卡片上把这三件事都写明白，玩家才知道这一步值不值得走。
+ */
+function SurveyCard({ region, state }: { region: MapRegionDef; state: GameState }) {
+  const startSurvey = useGame((s) => s.startSurvey);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [picking, setPicking] = useState(false);
+
+  const { min, max } = getSurveyPartyRange();
+  const check = canStartSurvey(state, region.id, selected);
+  const idle = getIdleDisciples(state);
+  const minRealm = Math.max(0, region.requiresRealm - 1);
+  const eligible = idle.filter((d) => d.realmIndex >= minRealm);
   const all = realmsOfRegion(region.id);
-  const realms = all.filter((r) => state.discoveredRealms[r.id] === true);
-  const hidden = all.length - realms.length;
+  const hidden = all.filter((r) => state.discoveredRealms[r.id] !== true).length;
 
-  const travelTargets = TRAVEL_REGIONS.filter((t) => t.regionId === region.id);
+  const toggle = (id: string) => {
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : prev.length >= max ? prev : [...prev, id]));
+  };
 
+  return (
+    <article className="realm-card realm-card--survey">
+      <div className="realm-card__head">
+        <span className="realm-card__icon">🔍</span>
+        <div>
+          <div className="realm-card__name">普通探索 · {region.name}</div>
+          <div className="realm-card__desc">
+            此地还有 <strong>{hidden}</strong> 处秘境没找到，只能先做普通探索：
+            必定带回基础材料（数量随机），有 30% 概率带回稀有材料，也有机会发现新秘境。
+            <strong> 没有冷却，也不会折损弟子。</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="realm-card__stats">
+        <span>人数 {min}~{max}</span>
+        <span>{REALMS[minRealm].name}以上</span>
+        <span>约 {Math.round(getSurveyDuration(state, region.id) / 60)} 分钟</span>
+        <span>无冷却</span>
+        <span>无伤亡</span>
+      </div>
+
+      {selected.length > 0 && (
+        <div className="chip-row">
+          {selected.map((id) => {
+            const d = state.sect.disciples.find((x) => x.id === id);
+            if (!d) return null;
+            return (
+              <button key={id} type="button" className="chip" onClick={() => toggle(id)}>
+                {d.name}
+                <span className="chip__sub" style={{ color: APTITUDE_MAP[d.aptitude].color }}>
+                  {REALMS[d.realmIndex].name}
+                </span>
+                ×
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {picking && (
+        <div className="picker">
+          {eligible.length === 0 && <p className="panel__note">没有符合条件的空闲弟子。</p>}
+          {eligible.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              className={selected.includes(d.id) ? 'picker__item picker__item--on' : 'picker__item'}
+              onClick={() => toggle(d.id)}
+            >
+              <span className="picker__name">{d.name}</span>
+              <span className="picker__apt" style={{ color: APTITUDE_MAP[d.aptitude].color }}>
+                {APTITUDE_MAP[d.aptitude].name}
+              </span>
+              <span className="picker__realm">{REALMS[d.realmIndex].name}</span>
+              <span className="picker__power">心得 {Math.round(d.insight)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="btn-row">
+        <button type="button" className="btn" onClick={() => setPicking((v) => !v)}>
+          {picking ? '收起名单' : '选择弟子'}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={eligible.length === 0}
+          onClick={() => setSelected(autoSelectSurveyParty(state, region.id))}
+        >
+          推荐两人
+        </button>
+        <button
+          type="button"
+          className="btn btn--primary"
+          disabled={!check.ok}
+          onClick={() => {
+            startSurvey(region.id, selected);
+            setSelected([]);
+            setPicking(false);
+          }}
+        >
+          出发
+          {!check.ok && check.reason && <span className="btn__sub">{check.reason}</span>}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 小区域格子 + 大区域面板                                              */
+/* ------------------------------------------------------------------ */
+
+function SubRegionCell({
+  region,
+  state,
+  expanded,
+  onToggle,
+}: {
+  region: MapRegionDef;
+  state: GameState;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const reachable = canReachRegion(state, region);
   const visible = reachable || isRegionVisible(state, region);
-  if (!visible) return null;
+  const all = realmsOfRegion(region.id);
+  const found = all.filter((r) => state.discoveredRealms[r.id] === true).length;
+  const full = found >= all.length;
+
+  const classes = [
+    'subregion',
+    reachable ? 'subregion--on' : visible ? 'subregion--off' : 'subregion--far',
+    region.isRich ? 'subregion--rich' : '',
+    expanded ? 'subregion--open' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <button
+      type="button"
+      className={classes}
+      disabled={!reachable}
+      onClick={onToggle}
+      title={region.desc}
+    >
+      <span className="subregion__icon">{region.icon}</span>
+      <span className="subregion__name">{region.name}</span>
+      <span className="subregion__meta">
+        {reachable
+          ? full
+            ? `秘境 ${found}/${all.length} ✓`
+            : `秘境 ${found}/${all.length}`
+          : `需${REALMS[region.requiresRealm].name}`}
+      </span>
+      {region.isRich && <span className="subregion__badge">富集</span>}
+    </button>
+  );
+}
+
+function SubRegionDetail({ region, state }: { region: MapRegionDef; state: GameState }) {
+  const all = realmsOfRegion(region.id);
+  const discovered = all.filter((r) => state.discoveredRealms[r.id] === true);
+  const hidden = all.length - discovered.length;
+  const travelTargets = TRAVEL_REGIONS.filter((t) => t.regionId === region.id);
+  const canSurvey = canStartSurvey(state, region.id, []).ok || hidden > 0;
+
+  return (
+    <div className="subregion-detail">
+      <div className="subregion-detail__head">
+        <strong>
+          {region.icon} {region.name}
+        </strong>
+        <span className="panel__hint">
+          {region.distance} 里 · 秘境 {discovered.length}/{all.length} · 需{REALMS[region.requiresRealm].name}
+        </span>
+      </div>
+      <p className="panel__note">{region.desc}</p>
+
+      {/* 还有没发现的秘境 → 显示普通探索（需求：未发现秘境时只能普通探索） */}
+      {hidden > 0 && canSurvey && <SurveyCard region={region} state={state} />}
+
+      {discovered.map((def) => (
+        <RealmCard key={def.id} def={def} state={state} />
+      ))}
+
+      {travelTargets.map((def) => (
+        <TravelCard key={def.id} def={def} state={state} />
+      ))}
+
+      {discovered.length === 0 && travelTargets.length === 0 && hidden === 0 && (
+        <p className="panel__note">此地没有可做的事。</p>
+      )}
+    </div>
+  );
+}
+
+function MajorRegionSection({ major, state }: { major: MajorRegionDef; state: GameState }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const subs = subRegionsOf(major.id);
+  const reachable = subs.filter((r) => canReachRegion(state, r));
+  const realms = subs.flatMap((r) => realmsOfRegion(r.id));
+  const found = realms.filter((r) => state.discoveredRealms[r.id] === true).length;
+  const specialty = MATERIAL_MAP[major.specialty];
+
+  // 一个能到的都没有，并且连预览都看不到，就整块不显示
+  if (!subs.some((r) => canReachRegion(state, r) || isRegionVisible(state, r))) return null;
+
+  const open = subs.find((r) => r.id === openId) ?? null;
 
   return (
     <section className="panel">
       <div className="panel__head">
         <h2>
-          {region.icon} {region.name}
+          {major.icon} {major.name}
         </h2>
         <span className="panel__hint">
-          {region.distance} 里 ·{' '}
-          {reachable ? `秘境 ${realms.length}/${all.length}` : `需${REALMS[region.requiresRealm].name}`}
+          特产 {specialty?.icon}
+          {specialty?.name} · 已探明 {reachable.length}/{subs.length} 小区域 · 秘境 {found}/{realms.length}
         </span>
       </div>
+      <p className="panel__note">{major.desc}</p>
 
-      {!reachable ? (
-        <p className="panel__note panel__note--warn">
-          探索距离不足。修至<strong>{REALMS[region.requiresRealm].name}</strong>后可飞行至此。
-        </p>
-      ) : (
-        <>
-          {hidden > 0 && (
-            <p className="panel__note">
-              此地尚有 <strong>{hidden}</strong> 处秘境未被发现 ——
-              派弟子探索或掌门亲自游历都有机会找到（当前发现概率{' '}
-              {(getDiscoveryChance(state) * 100).toFixed(1)}%，
-              {getDiscoveryBonusFromArtifacts(state) > 0 ? '含寻宝宝盘加成' : '只有寻宝宝盘能提高它'}）。
-            </p>
-          )}
-          {realms.map((def) => (
-            <RealmCard key={def.id} def={def} state={state} />
-          ))}
-          {travelTargets.map((def) => (
-            <TravelCard key={def.id} def={def} state={state} />
-          ))}
-        </>
-      )}
+      <div className="subgrid">
+        {subs.map((region) => (
+          <SubRegionCell
+            key={region.id}
+            region={region}
+            state={state}
+            expanded={openId === region.id}
+            onToggle={() => setOpenId(openId === region.id ? null : region.id)}
+          />
+        ))}
+      </div>
+
+      {open && <SubRegionDetail region={open} state={state} />}
     </section>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* 进行中                                                              */
+/* 主面板                                                              */
 /* ------------------------------------------------------------------ */
 
 export function MapPanel() {
@@ -344,14 +523,16 @@ export function MapPanel() {
         <div className="panel__head">
           <h2>修仙界地图</h2>
           <span className="panel__hint">
-            探索距离 {fmt(range.distance, 0)} 里 · 可达 {range.reachable.length}/{MAP_REGIONS.length} 区 · 已发现{' '}
-            {SECRET_REALMS.length - undiscovered}/{SECRET_REALMS.length} 秘境
+            探索距离 {fmt(range.distance, 0)} 里 · 可达 {range.reachable.length}/{MAP_REGIONS.length} 小区域 ·
+            已发现 {SECRET_REALMS.length - undiscovered}/{SECRET_REALMS.length} 秘境
           </span>
         </div>
         <p className="panel__note">
-          境界越高、越能飞行，探索距离就越远。十八个区域由近及远排开，
-          每区各有两三处秘境 —— 已发现的秘境会<strong>永久固定</strong>在对应区域里，
-          但每次探索后都要等冷却结束才能再探。
+          天下分为<strong>六大区域</strong>，每个大区域又有<strong>十六个小区域</strong>。
+          你的洞府在<strong>东部群山</strong>，一开始只走得动附近四个小区域 ——
+          境界越高越能飞，才谈得上去更远的地方。
+          每个小区域只有<strong>一处资源富集区</strong>：它门槛更高、秘境更多，
+          还有一处专产该大区域特产的秘境。
         </p>
 
         {/* 发现机制要讲清楚：概率只有一个来源（寻宝宝盘），保底是另一条独立机制 */}
@@ -367,12 +548,6 @@ export function MapPanel() {
             )}
           </p>
         )}
-
-        <div className="map">
-          {MAP_REGIONS.map((region) => (
-            <MapNode key={region.id} region={region} state={game} />
-          ))}
-        </div>
       </section>
 
       {(game.expeditions.length > 0 || travel) && (
@@ -410,7 +585,9 @@ export function MapPanel() {
           )}
 
           {game.expeditions.map((expedition) => {
+            const isSurvey = expedition.kind === 'survey';
             const def = getDiscoveredRealms(game).find((r) => r.id === expedition.realmId);
+            const region = isSurvey ? majorOf(expedition.realmId) : null;
             const names = expedition.discipleIds
               .map((id) => game.sect.disciples.find((d) => d.id === id)?.name ?? '？')
               .join('、');
@@ -419,9 +596,10 @@ export function MapPanel() {
               <div key={expedition.id} className="running">
                 <div className="running__head">
                   <span>
-                    {def?.icon} {def?.name ?? expedition.realmId}（{expedition.discipleIds.length} 人）
+                    {isSurvey ? '🔍' : def?.icon} {isSurvey ? `${region?.name ?? ''}普通探索` : def?.name ?? expedition.realmId}
+                    （{expedition.discipleIds.length} 人）
                   </span>
-                  <span className="running__time">剩余 {Math.round(remainSeconds)} 秒</span>
+                  <span className="running__time">剩余 {fmtDuration(remainSeconds)}</span>
                 </div>
                 <div className="bar">
                   <div
@@ -438,16 +616,17 @@ export function MapPanel() {
 
       <section className="panel">
         <div className="panel__head">
-          <h2>地图区域</h2>
+          <h2>六大区域</h2>
           <span className="panel__hint">未发现秘境 {undiscovered} 处</span>
         </div>
         <p className="panel__note">
-          已发现 <strong>{getDiscoveredRealms(game).length}</strong> 处秘境，共 {MAP_REGIONS.length} 个区域。
+          已发现 <strong>{getDiscoveredRealms(game).length}</strong> 处秘境，共 {SECRET_REALMS.length} 处、
+          六个大区域各十六个小区域。点开一个小区域就能看到它里面有什么。
         </p>
       </section>
 
-      {MAP_REGIONS.map((region) => (
-        <RegionSection key={region.id} region={region} state={game} />
+      {MAJOR_REGIONS.map((major) => (
+        <MajorRegionSection key={major.id} major={major} state={game} />
       ))}
     </>
   );

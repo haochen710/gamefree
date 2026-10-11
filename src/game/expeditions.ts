@@ -39,10 +39,21 @@ import {
   SECRET_REALM_MAP,
   SEED_MAP,
   SEED_ROLLS,
+  SURVEY_BASE_KINDS_MAX,
+  SURVEY_BASE_KINDS_MIN,
+  SURVEY_DURATION_RATIO,
+  SURVEY_MAX_PARTY,
+  SURVEY_RARE_CHANCE,
+  SURVEY_YIELD_MULT,
   YIELD_VARIANCE_MAX,
   YIELD_VARIANCE_MIN,
+  MAP_REGION_MAP,
   expeditionSlots,
+  getSurveyLoot,
   isBasicMaterial,
+  realmCountOfRegion,
+  realmsOfRegion,
+  regionTier,
   type ItemId,
   type LootEntry,
   type MaterialId,
@@ -166,6 +177,7 @@ export function startExpedition(
     discipleIds: [...ids],
     progress: 0,
     duration: def.duration,
+    kind: 'realm',
   };
 
   const withStatus = setDiscipleStatus(state, ids, 'exploring', expedition.id);
@@ -331,7 +343,8 @@ export function resolveExpedition(
 
   /* ---- 1d. 发现新秘境（需求 1） ---- */
   let discovered: ExpeditionOutcome['discovered'] = null;
-  const candidates = getUndiscoveredCandidates(working);
+  // 只在附近发现（需求 1）：探秘境同样倾向于发现同一片地方的新秘境
+  const candidates = getUndiscoveredCandidates(working, def.regionId);
   if (candidates.length > 0) {
     // 硬保底：连续失败够多次就必然发现一次（它不在概率公式里，见 engine）
     if (isDiscoveryGuaranteed(working) || random() < getDiscoveryChance(working)) {
@@ -455,6 +468,255 @@ export function resolveExpedition(
 }
 
 /* ------------------------------------------------------------------ */
+/* 普通探索（需求 1：小区域还没发现秘境时唯一能做的事）                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 一个小区域现在能不能做普通探索。
+ *
+ * 规则来自需求原文：「每个小区域在未发现秘境时只能普通探索」。
+ * 所以条件是 **该小区域还有没被发现的秘境** —— 全都发现之后就只剩探秘境了。
+ */
+export function canSurveyRegion(state: GameState, regionId: string): StartCheck {
+  const region = MAP_REGION_MAP[regionId];
+  if (!region) return { ok: false, reason: '此处不存在' };
+  if (!state.sect.founded) return { ok: false, reason: '尚未开宗立派' };
+  if (state.realmIndex < region.requiresRealm) return { ok: false, reason: '境界不足，走不到那里' };
+  const total = realmCountOfRegion(regionId);
+  const found = realmsOfRegion(regionId).filter((r) => isRealmDiscovered(state, r)).length;
+  if (total > 0 && found >= total) {
+    return { ok: false, reason: '此地秘境已全部寻得，直接探秘境即可' };
+  }
+  if (state.expeditions.length >= getMaxExpeditions(state)) {
+    return { ok: false, reason: '探索队伍已满，提升宗门品阶可增加队伍' };
+  }
+  return { ok: true, reason: null };
+}
+
+/** 普通探索的时长（比正经探秘境快一些，因为它就在近处转） */
+export function getSurveyDuration(_state: GameState, regionId: string): number {
+  const region = MAP_REGION_MAP[regionId];
+  if (!region) return 0;
+  const tier = regionTier(regionId);
+  const base = 120 * 1.6 ** (tier - 1);
+  return Math.round(base * SURVEY_DURATION_RATIO);
+}
+
+/** 普通探索能派几个人：比探秘境宽松（就是去附近看看，不用整队） */
+export function getSurveyPartyRange(): { min: number; max: number } {
+  return { min: 1, max: SURVEY_MAX_PARTY };
+}
+
+export function canStartSurvey(state: GameState, regionId: string, ids: string[]): StartCheck {
+  const region = canSurveyRegion(state, regionId);
+  if (!region.ok) return region;
+
+  const { min, max } = getSurveyPartyRange();
+  if (ids.length < min) return { ok: false, reason: `至少需派遣 ${min} 名弟子` };
+  if (ids.length > max) return { ok: false, reason: `普通探索最多派 ${max} 名弟子` };
+  if (new Set(ids).size !== ids.length) return { ok: false, reason: '同一名弟子不能重复派遣' };
+
+  const def = MAP_REGION_MAP[regionId];
+  const minRealm = Math.max(0, (def?.requiresRealm ?? 0) - 1);
+  const byId = new Map(state.sect.disciples.map((d) => [d.id, d]));
+  for (const id of ids) {
+    const d = byId.get(id);
+    if (!d) return { ok: false, reason: '弟子不存在' };
+    if (d.status !== 'idle') return { ok: false, reason: `${d.name} 正在探索中` };
+    if (d.realmIndex < minRealm) return { ok: false, reason: `需${REALMS[minRealm].name}以上弟子` };
+  }
+  return { ok: true, reason: null };
+}
+
+/** 自动挑一队空闲弟子去做普通探索 */
+export function autoSelectSurveyParty(state: GameState, _regionId: string, size = 2): string[] {
+  return getIdleDisciples(state)
+    .sort((a, b) => REALMS[b.realmIndex].power - REALMS[a.realmIndex].power)
+    .slice(0, Math.max(1, Math.min(size, SURVEY_MAX_PARTY)))
+    .map((d) => d.id);
+}
+
+export function startSurvey(
+  state: GameState,
+  regionId: string,
+  ids: string[],
+  random: RandomSource = gameRandom,
+): GameState {
+  const check = canStartSurvey(state, regionId, ids);
+  if (!check.ok) return state;
+  const region = MAP_REGION_MAP[regionId];
+  if (!region) return state;
+
+  const expedition: Expedition = {
+    id: randomId('s', random),
+    realmId: regionId,
+    discipleIds: [...ids],
+    progress: 0,
+    duration: getSurveyDuration(state, regionId),
+    kind: 'survey',
+  };
+
+  const withStatus = setDiscipleStatus(state, ids, 'exploring', expedition.id);
+  const names = ids
+    .map((id) => state.sect.disciples.find((d) => d.id === id)?.name ?? '?')
+    .join('、');
+
+  return {
+    ...withStatus,
+    expeditions: [...withStatus.expeditions, expedition],
+    journal: pushJournal(withStatus.journal, {
+      time: withStatus.playTime,
+      kind: 'info',
+      text: `${names} 在${region.name}一带普通探索（${ids.length} 人）`,
+    }),
+  };
+}
+
+/**
+ * 普通探索的结算。
+ *
+ * 需求原文：「普通探索有概率发现秘境和稀有材料，必定产出基础材料，但是数量随机。」
+ * 所以三件事：
+ *   1. **必定**给基础材料（1~2 种，数量随机）；
+ *   2. 有概率给稀有材料；
+ *   3. 有概率发现新秘境（用和探秘境同一套发现概率与硬保底）。
+ *
+ * ⚠️ 刻意**没有伤亡**：普通探索就是"在附近转转"，
+ * 不该成为弟子的绞肉机。秘境那边的伤亡已经足够制造紧张感了，
+ * 而且我这一轮已经亲眼见过两次"伤亡正反馈把宗门清空"，不想再加第三个来源。
+ */
+export function resolveSurvey(
+  state: GameState,
+  expedition: Expedition,
+  random: RandomSource = gameRandom,
+): { state: GameState; outcome: ExpeditionOutcome | null } {
+  const region = MAP_REGION_MAP[expedition.realmId];
+  const drop = () => state.expeditions.filter((e) => e.id !== expedition.id);
+  if (!region) return { state: { ...state, expeditions: drop() }, outcome: null };
+
+  const alive = expedition.discipleIds.filter((id) => state.sect.disciples.some((d) => d.id === id));
+  const partySize = Math.max(1, alive.length);
+  const tier = regionTier(region.id);
+
+  const weather = getWeatherEffects(state);
+  const yieldMultiplier =
+    state.buffs.yieldMultiplier *
+    (1 + getStructureBonus(state, 'expeditionYieldBonus') + (weather.expeditionYield ?? 0)) *
+    SURVEY_YIELD_MULT;
+  // 人越多带回来的越多：普通探索也一样
+  const sizeFactor = 1 + (partySize - 1) * PARTY_YIELD_PER_EXTRA;
+
+  const { base, rare } = getSurveyLoot(tier);
+  let working = state;
+  const gains: ExpeditionOutcome['gains'] = [];
+
+  const push = (item: ItemId, rawAmount: number): void => {
+    const variance = YIELD_VARIANCE_MIN + random() * (YIELD_VARIANCE_MAX - YIELD_VARIANCE_MIN);
+    const seasonal = isBasicMaterial(item) ? 1 + getEnvironmentMaterialBonus(working, item) : 1;
+    const amount = Math.max(
+      1,
+      Math.floor(rawAmount * yieldMultiplier * sizeFactor * variance * Math.max(0, seasonal)),
+    );
+    working = addItem(working, item, D(amount));
+    const existing = gains.find((g) => g.id === item);
+    if (existing) existing.amount += amount;
+    else {
+      gains.push({
+        id: item,
+        amount,
+        name: ITEM_MAP[item].name,
+        icon: ITEM_MAP[item].icon,
+      });
+    }
+  };
+
+  // 1. 必定产出的基础材料（1~2 种，数量随机）
+  const kinds =
+    SURVEY_BASE_KINDS_MIN +
+    (SURVEY_BASE_KINDS_MAX > SURVEY_BASE_KINDS_MIN && random() < 0.5 ? 1 : 0);
+  for (const entry of weightedDraw(base, Math.min(kinds, base.length), random)) {
+    push(entry.item, entry.amount);
+  }
+
+  // 2. 有概率带回稀有材料
+  if (rare.length > 0 && random() < SURVEY_RARE_CHANCE) {
+    const [picked] = weightedDraw(rare, 1, random);
+    if (picked) push(picked.item, picked.amount);
+  }
+
+  /* 3. 有概率发现新秘境（与探秘境共用同一套概率与硬保底） */
+  let discovered: ExpeditionOutcome['discovered'] = null;
+  // 普通探索只会在**这一带**找到秘境（需求 1：这是打开新区域的唯一入口）
+  const candidates = getUndiscoveredCandidates(working, region.id);
+  if (candidates.length > 0) {
+    if (isDiscoveryGuaranteed(working) || random() < getDiscoveryChance(working)) {
+      const [found] = weightedDraw(
+        candidates.map((c) => ({ ...c, weight: c.discoveryWeight })),
+        1,
+        random,
+      );
+      if (found) {
+        working = discoverRealm(working, found.id);
+        discovered = { id: found.id, name: found.name, icon: found.icon };
+      }
+    } else {
+      working = recordDiscoveryFailure(working);
+    }
+  }
+
+  /* 4. 心得：普通探索也给，但只有秘境的一半 —— 见闻不如亲历 */
+  const minRealm = Math.max(0, region.requiresRealm - 1);
+  const insightGain = Math.max(
+    1,
+    Math.round(
+      ((INSIGHT_PER_EXPEDITION + minRealm * INSIGHT_PER_REALM_LEVEL) * 0.5) *
+        (1 + getStructureBonus(working, 'insightBonus')),
+    ),
+  );
+  const disciples = working.sect.disciples.map((d) =>
+    alive.includes(d.id) ? { ...d, status: 'idle' as const, expeditionId: undefined, insight: d.insight + insightGain } : d,
+  );
+  working = { ...working, sect: { ...working.sect, disciples } };
+
+  let journal = working.journal;
+  const summary = gains.map((g) => `${g.icon}${g.name}×${g.amount}`).join(' ');
+  journal = pushJournal(journal, {
+    time: working.playTime,
+    kind: 'good',
+    text: `${region.name}普通探索归来（${partySize} 人）：${summary || '一无所获'}`,
+  });
+  if (discovered) {
+    journal = pushJournal(journal, {
+      time: working.playTime,
+      kind: 'good',
+      text: `在${region.name}发现了新的秘境：${discovered.icon}${discovered.name}`,
+    });
+  }
+
+  const next: GameState = {
+    ...working,
+    expeditions: working.expeditions.filter((e) => e.id !== expedition.id),
+    journal,
+  };
+
+  return {
+    state: next,
+    outcome: {
+      realmName: `${region.name}（普通探索）`,
+      gains,
+      pills: [],
+      seeds: [],
+      blueprints: [],
+      discovered,
+      insight: insightGain,
+      casualties: [],
+      powerRatio: 1,
+      partySize,
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* 时间推进                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -481,7 +743,10 @@ export function tickExpeditions(state: GameState, dt: number, random: RandomSour
 
   let working: GameState = { ...state, expeditions: remaining };
   for (const expedition of finished) {
-    working = resolveExpedition(working, expedition, random).state;
+    working =
+      expedition.kind === 'survey'
+        ? resolveSurvey(working, expedition, random).state
+        : resolveExpedition(working, expedition, random).state;
   }
   return working;
 }

@@ -22,6 +22,7 @@ import {
   GENERATORS,
   MATERIAL_IDS,
   MAP_REGIONS,
+  QUEUE_UPGRADES,
   MATERIAL_MAP,
   PILL_MAP,
   REALMS,
@@ -220,6 +221,8 @@ function runSimulation(seed: number): SimResult {
   let iterations = 0;
   let deadlock = false;
   let seenStorage = false;
+  let seenQueue = false;
+  let seenSurvey = false;
   let seenServant = false;
 
   const milestones: Milestone[] = [];
@@ -327,6 +330,40 @@ function runSimulation(seed: number): SimResult {
         }
       }
 
+      /*
+       * 需求 1 的普通探索：还没发现秘境的小区域只能这么做，
+       * 而且发现新秘境**只在同一个大区域内生效** ——
+       * 所以"先普通探索把一片地方打开"是往前走必经的一步。
+       *
+       * 但它排在探秘境**后面**，这是刻意的：两者抢的是同一批队伍名额，
+       * 而探秘境的收益远高于普通探索。实测把它排在前面，AI 会把队伍
+       * 全压在开图上，秘境收益断供 → 弟子变弱 → 寿命变短 → 人口崩掉
+       * （30 天结束时弟子 0 人）。所以只在"秘境这边没得打"的空窗期才出门开图。
+       */
+      if (state.sect.founded && state.expeditions.length < expeditions.getMaxExpeditions(state)) {
+        const reachable = MAP_REGIONS.filter(
+          (r) => engine.canReachRegion(state, r) && expeditions.canSurveyRegion(state, r.id).ok,
+        );
+        // 一处秘境都还没发现的小区域：只能靠普通探索打开
+        const locked = reachable.find((r) =>
+          SECRET_REALMS.filter((x) => x.regionId === r.id).every((x) => state.discoveredRealms[x.id] !== true),
+        );
+        if (locked) {
+          const party = expeditions.autoSelectSurveyParty(state, locked.id, 2);
+          if (party.length > 0 && expeditions.canStartSurvey(state, locked.id, party).ok) {
+            const next = expeditions.startSurvey(state, locked.id, party, makeRandom(seed + state.expeditions.length + 1));
+            if (next !== state) {
+              state = next;
+              if (!seenSurvey) {
+                seenSurvey = true;
+                record(`首次普通探索（${locked.name}）`);
+              }
+              continue;
+            }
+          }
+        }
+      }
+
       if (state.expeditions.length < expeditions.getMaxExpeditions(state)) {
         let started = false;
         // 从最远的已发现秘境往前找：收益最高的优先。
@@ -336,16 +373,13 @@ function runSimulation(seed: number): SimResult {
           const party = expeditions.autoSelectParty(state, realm.id);
           if (party.length < realm.minParty) continue;
           /*
-           * 理性玩家不会把队伍送进去送死。
-           *
-           * 这道闸是补上来的：早先的 AI 只看"能不能派出人"，不看战力够不够，
-           * 于是它会把刚招进来的弟子成批送进远低于推荐战力的秘境。
-           * 而伤亡是个正反馈 —— 多死几个 → 队伍凑不满 → 战力比更低 → 死得更多 ——
-           * 一旦踩进去就再也爬不出来：实测 30 天结束时**弟子 0 人**、心得 0。
-           * 那不是游戏数值的问题，是 AI 的问题，所以修在这里而不是改平衡。
+           * 战力闸。0.9 是"刚好打得动"，但那个比值下的伤亡率接近基础值的 1.1 倍 ——
+           * 弟子会被慢慢磨死（实测每名弟子平均只活 1.3 天，心得根本攒不起来）。
+           * 提到 1.5 更接近真人：宁可等弟子变强，也不拿命去填。
+           * 这属于模拟器自身的修正，不是游戏数值。
            */
           const power = disciples.getPartyPower(state, party);
-          if (power < realm.requiredPower * 0.9) continue;
+          if (power < realm.requiredPower * 1.5) continue;
           const next = expeditions.startExpedition(state, realm.id, party);
           if (next !== state) {
             state = next;
@@ -621,6 +655,55 @@ function runSimulation(seed: number): SimResult {
       }
     }
 
+    /* ---------------- 3c. 建造队列与天工院（需求 2） ----------------
+       队列的语义是"排好队，资源一到就自动盖"，所以挂机型 AI 正该用它：
+       把想盖的下一个目标排进去，让 tick 自己推进。
+       这里也顺手把天工院建起来并升满 —— 否则 7 个名额这条线一辈子没人走。 */
+    if (state.sect.founded) {
+      const hall = BUILDABLE_MAP.tiangongYuan;
+      if (
+        engine.getBuildingCount(state, 'tiangongYuan') === 0 &&
+        engine.getBuildGate(hall, state) === null &&
+        engine.canAfford(state, engine.getCost(hall, 0, 1))
+      ) {
+        const next = engine.buyBuilding(state, hall, 1);
+        if (next !== state) {
+          state = next;
+          if (!seenQueue) {
+            seenQueue = true;
+            record('建成天工院（建造队列名额 +1）');
+          }
+          continue;
+        }
+      }
+      if (engine.canUpgradeQueue(state).ok) {
+        const before = engine.getQueueSlots(state);
+        state = engine.upgradeQueue(state);
+        if (engine.getQueueSlots(state) > before) {
+          record(`天工院特殊升级：建造名额 ${before} → ${engine.getQueueSlots(state)}`);
+          continue;
+        }
+      }
+      /*
+       * 队列里**只挂一个**目标，而不是把 7 个名额全填满。
+       *
+       * 一开始图省事把空位全填上，结果 AI 同时朝 6 个方向花钱，把灵石抽干了 ——
+       * `canRecruit` 要灵石，招收一停，弟子就归零。
+       * 真人不会这么干：建造队列是"排好一个再排下一个"，
+       * 名额多是为了**挂机时能提前排好几步**，不是让人并行撒钱。
+       */
+      if (state.buildQueue.length === 0) {
+        const want = chooseBuilding(state);
+        if (want) {
+          const queued = engine.enqueueBuild(state, want);
+          if (queued !== state) {
+            state = queued;
+            continue;
+          }
+        }
+      }
+    }
+
     /* ---------------- 死锁检测 ----------------
        真正的死锁只有一个判据：灵气满了，且什么都买不起。
        所有建筑都含灵气造价，灵气一满收入就永远是 0。
@@ -799,6 +882,15 @@ function printDetail(result: SimResult): void {
     (def) => def.group === 'hall' && engine.getBuildingCount(state, def.id) > 0,
   ).map((def) => `${def.name}×${engine.getBuildingCount(state, def.id)}`);
   console.log(`  宗门建筑：${hallBuilt.length === 0 ? '无' : hallBuilt.join('，')}`);
+  {
+    const queueNames = state.buildQueue.map((id) => BUILDABLE_MAP[id]?.name ?? id);
+    console.log(
+      `  建造队列（需求 2）：${state.buildQueue.length}/${engine.getQueueSlots(state)} 名额` +
+        ` · 天工院${engine.getBuildingCount(state, 'tiangongYuan') > 0 ? '已建' : '未建'}` +
+        ` · 特殊升级 ${state.tiangongLevel}/${QUEUE_UPGRADES.length}` +
+        ` · 队列 ${queueNames.length === 0 ? '空' : queueNames.join('、')}`,
+    );
+  }
   if (sectActivity.hasArena(state)) {
     const countdown = sectActivity.getArenaCountdown(state);
     console.log(

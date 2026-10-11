@@ -75,7 +75,7 @@ export const TRAVEL_MIN_STONE = 40;
 export const TRAVEL_REGIONS: TravelRegionDef[] = [
   {
     id: 'mortalVillage',
-    regionId: 'nearHills',
+    regionId: 'eastMountains_0',
     name: '山野荒村',
     icon: '🏘',
     desc: '山下的凡俗村落，收些药材、换些散碎灵石，炼气修士足矣。',
@@ -97,7 +97,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'mistyForest',
-    regionId: 'mistyFrontier',
+    regionId: 'eastMountains_4',
     name: '迷雾灵林',
     icon: '🌫',
     desc: '终年不散的白雾中藏着灵蚕与妖兽，筑基修士方可深入。',
@@ -117,7 +117,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'emberRavine',
-    regionId: 'scorchedWilds',
+    regionId: 'eastMountains_8',
     name: '烈焰裂谷',
     icon: '🌋',
     desc: '地火喷涌的裂谷，火髓与寒玉在此同生，乃是奇景。',
@@ -142,7 +142,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'frostHollow',
-    regionId: 'iceValley',
+    regionId: 'eastMountains_12',
     name: '寒泉幽谷',
     icon: '❄',
     desc: '万年寒泉自谷底涌出，泉边结满寒玉，月华在此凝露。',
@@ -163,7 +163,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'ancientBattlefield',
-    regionId: 'netherVoid',
+    regionId: 'eastMountains_15',
     name: '上古战场',
     icon: '⚔',
     desc: '两位大能交手之处，空间至今未曾愈合，残兵与魂魄遍地。',
@@ -183,7 +183,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'netherRift',
-    regionId: 'starCorridor',
+    regionId: 'southFrontier_15',
     name: '九幽裂隙',
     icon: '🕳',
     desc: '直通九幽的裂口，魂火飘荡，寻常修士靠近便神魂受损。',
@@ -203,7 +203,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'chaosSea',
-    regionId: 'primordialRemnant',
+    regionId: 'westDesert_15',
     name: '混沌之海',
     icon: '🌊',
     desc: '未经开辟的混沌之水，一滴可压塌山岳，紫气自其中翻涌而出。',
@@ -222,7 +222,7 @@ export const TRAVEL_REGIONS: TravelRegionDef[] = [
   },
   {
     id: 'primordialVoid',
-    regionId: 'starSeaEnd',
+    regionId: 'northReach_15',
     name: '鸿蒙虚空',
     icon: '🌌',
     desc: '开天辟地之前的遗迹，法则尚未成形，道果就悬在最深处。',

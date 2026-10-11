@@ -21,6 +21,7 @@ import {
   clampResources,
   produceResources,
   refreshUnlocks,
+  tickBuildQueue,
   tickInjury,
   tickMind,
   tickRealmCooldowns,
@@ -80,6 +81,8 @@ export function applyTick(state: GameState, dt: number, random: RandomSource = g
   next = { ...next, buffs: tickBuffs(next.buffs, dt) };
   next = tickShop(next, dt, random);
   next = refreshUnlocks(next);
+  // 建造队列（需求 2）：解锁刷新之后再推进，刚解锁的建筑当帧就能排上
+  next = tickBuildQueue(next);
   next = clampResources(next);
 
   return next;
