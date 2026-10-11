@@ -200,8 +200,17 @@ export function resolveSoloRealm(
     amount: Math.max(1, Math.round(entry.amount * SOLO_REALM_YIELD_MULT)),
   }));
 
+  /*
+   * "必掉"的条目对掌门也必掉。
+   *
+   * 一开始这里把整张表一起丢进加权抽，`guaranteed` 就被无声地忽略了 ——
+   * 于是同一处秘境，派弟子去一定有那份招牌产出，掌门亲自去反而可能空手，
+   * 而界面上写的是"产出倾向：…"，玩家只会觉得是 bug。抽签只该决定**额外**的东西。
+   */
+  const guaranteed = entries.filter((entry) => entry.guaranteed);
+  const optional = entries.filter((entry) => !entry.guaranteed);
   const rolls = Math.max(2, Math.round(LOOT_ROLLS * 0.7));
-  const picked = weightedDraw(entries, rolls, random);
+  const picked = [...guaranteed, ...weightedDraw(optional, rolls, random)];
 
   let working = state;
   const gains: TravelGain[] = [];

@@ -299,9 +299,13 @@ function runSimulation(seed: number): SimResult {
       }
     }
 
-    /* ---------------- 1. 修行 ---------------- */
+    /* ---------------- 1. 修行 ----------------
+       ⚠️ 这里必须显式传 random。`advanceLayer` 的 random 有默认值 `gameRandom`
+       （也就是 Math.random），漏传就会让整份模拟**不可复现** ——
+       同一份代码连跑两次，主种子的合体期能从 4天6小时 漂到 6天13小时。
+       模拟器的全部意义就是可复现，所以这个参数一个都不能省。 */
     if (engine.canAdvanceLayer(state)) {
-      state = engine.advanceLayer(state);
+      state = engine.advanceLayer(state, random);
       continue;
     }
 
@@ -414,7 +418,8 @@ function runSimulation(seed: number): SimResult {
            */
           const power = disciples.getPartyPower(state, party);
           if (power < realm.requiredPower * 1.5) continue;
-          const next = expeditions.startExpedition(state, realm.id, party);
+          // 同上：random 必须显式传，否则每次派队伍的 id 都不同、模拟不可复现
+          const next = expeditions.startExpedition(state, realm.id, party, random);
           if (next !== state) {
             state = next;
             started = true;
