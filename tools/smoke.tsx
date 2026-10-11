@@ -4340,8 +4340,39 @@ section('[39] 炼制成功率 / 可携带器物（需求 2）');
     check('炼出可携带器物时耐久写满', engine.getGearCharges(crafted.state, ARTIFACT_MAP.beastBanner) === 6);
   }
 
-  /* ---- 存活率丹药（需求 2） ---- */
+  /* ---- 成功率加成真的接上了吗（这条是补的：字段声明了但没人赋值过一次） ---- */
   {
+    // 只认"炼丹 / 炼器成功率"的措辞 —— 雷池那种"突破成功率"是另一回事，
+    // 不能被这条断言误伤（第一版就是这么写错的，冒烟当场纠正了）
+    const claimsAlchemy = STRUCTURES.filter((s) => s.desc.includes('炼丹成功率 +'));
+    const claimsRefining = STRUCTURES.filter((s) => s.desc.includes('炼器成功率 +'));
+    check(
+      '写了"炼丹成功率 +"的建筑真的带了 alchemySuccessBonus',
+      claimsAlchemy.length > 0 && claimsAlchemy.every((s) => (s.alchemySuccessBonus ?? 0) > 0),
+      claimsAlchemy.filter((s) => !((s.alchemySuccessBonus ?? 0) > 0)).map((s) => s.name).join('、') ||
+        `${claimsAlchemy.length} 座`,
+    );
+    check(
+      '写了"炼器成功率 +"的建筑真的带了 refiningSuccessBonus',
+      claimsRefining.length > 0 && claimsRefining.every((s) => (s.refiningSuccessBonus ?? 0) > 0),
+      claimsRefining.filter((s) => !((s.refiningSuccessBonus ?? 0) > 0)).map((s) => s.name).join('、') ||
+        `${claimsRefining.length} 座`,
+    );
+
+    // 加成确实影响了成功率
+    const bare = { ...createInitialState(0), alchemyTier: 4 };
+    const withFurnace = forceBuild(bare, 'alchemyFurnace', 3);
+    check(
+      '建了丹炉阵之后炼丹成功率真的变高',
+      crafting.getCraftSuccessRate(withFurnace, 'alchemy', 4) >
+        crafting.getCraftSuccessRate(bare, 'alchemy', 4),
+      `${(crafting.getCraftSuccessRate(bare, 'alchemy', 4) * 100).toFixed(0)}% → ${(
+        crafting.getCraftSuccessRate(withFurnace, 'alchemy', 4) * 100
+      ).toFixed(0)}%`,
+    );
+  }
+
+  /* ---- 存活率丹药（需求 2） ---- */  {
     const pill = PILL_MAP.lifeGuardPill;
     check('存在提升探索存活率的丹药', Boolean(pill));
     check('保命丹是按次生效的', pill.effect.kind === 'expeditionSafety' && 'once' in pill.effect);

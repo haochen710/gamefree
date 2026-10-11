@@ -408,6 +408,8 @@ export const STRUCTURES: StructureDef[] = [
     icon: '🫕',
     desc: '九座丹炉同燃的大阵，炉火纯青。炼丹成功率 +8%/座。需钻研丹道精要。',
     alchemySlots: 3,
+    // 需求 2：丹房唯一之后，名额这条路没了 —— 丹炉阵改成提升成功率
+    alchemySuccessBonus: 0.08,
     baseCost: { qi: 3e6, fireMarrow: 60, stone: 2e4 },
     costGrowth: 1.3,
     unlock: { fireMarrow: 30 },
@@ -422,6 +424,8 @@ export const STRUCTURES: StructureDef[] = [
     icon: '🌋',
     desc: '引地火入炉，锻打时火候更稳。炼器成功率 +8%/座。需钻研器道精要。',
     refiningSlots: 3,
+    // 需求 2：炼器房唯一之后，名额这条路没了 —— 地火熔炉改成提升成功率
+    refiningSuccessBonus: 0.08,
     baseCost: { qi: 8e6, fireMarrow: 120, ore: 5e4 },
     costGrowth: 1.3,
     unlock: { fireMarrow: 60 },
