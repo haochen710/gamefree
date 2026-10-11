@@ -9,6 +9,7 @@ import { PILLS, TIER_NAMES, tierName, type PillDef } from '../game/content';
 import { canAfford, toCostMap } from '../game/engine';
 import { canCraftPill, describeCraftRate, getAlchemyUpgradeStatus, getCraftSuccessRate, maxCraftable } from '../game/crafting';
 import { useGame } from '../game/store';
+import { FoldSection } from './fold';
 import CostList from './CostList';
 
 const CATEGORY_LABEL: Record<PillDef['category'], string> = {
@@ -58,6 +59,17 @@ export function AlchemyPanel() {
 
   // 只展示已解锁品阶 + 下一个品阶，避免开局就列出九品丹方
   const visible = PILLS.filter((p) => p.tier <= game.alchemyTier + 1);
+  /*
+   * 需求 2：丹药按品阶分组、各自可折叠。
+   * 高品阶那一组默认收起 —— 玩家关心的是"我现在能炼什么"。
+   */
+  const byTier = new Map<number, PillDef[]>();
+  for (const pill of visible) {
+    const list = byTier.get(pill.tier) ?? [];
+    list.push(pill);
+    byTier.set(pill.tier, list);
+  }
+  const tiers = [...byTier.keys()].sort((a, b) => a - b);
 
   return (
     <section className="panel">
@@ -69,18 +81,27 @@ export function AlchemyPanel() {
       <TierUpgrade />
 
       <div className="recipe-list">
-        {visible.map((pill) => {
-          const locked = pill.tier > game.alchemyTier;
-          const cost = toCostMap(pill.cost);
-          const check = canCraftPill(game, pill.id);
-          const max = maxCraftable(game, cost);
-          const owned = game.pills[pill.id] ?? 0;
-          // 需求 2：炼制有概率失败
-          const rate = getCraftSuccessRate(game, 'alchemy', pill.tier);
+        {tiers.map((tier) => (
+          <FoldSection
+            key={tier}
+            title={`${tierName(tier)}丹方`}
+            hint={tier > game.alchemyTier ? '尚未掌握' : undefined}
+            count={byTier.get(tier)?.length ?? 0}
+            storageKey={`pill.tier.${tier}`}
+            defaultOpen={tier <= game.alchemyTier}
+          >
+            {(byTier.get(tier) ?? []).map((pill) => {
+              const locked = pill.tier > game.alchemyTier;
+              const cost = toCostMap(pill.cost);
+              const check = canCraftPill(game, pill.id);
+              const max = maxCraftable(game, cost);
+              const owned = game.pills[pill.id] ?? 0;
+              // 需求 2：炼制有概率失败
+              const rate = getCraftSuccessRate(game, 'alchemy', pill.tier);
 
-          return (
-            <article key={pill.id} className={locked ? 'recipe recipe--locked' : 'recipe'}>
-              <div className="recipe__head">
+              return (
+                <article key={pill.id} className={locked ? 'recipe recipe--locked' : 'recipe'}>
+                  <div className="recipe__head">
                 <span className="recipe__icon">{pill.icon}</span>
                 <span className="recipe__name">{pill.name}</span>
                 <span className={`tier-badge tier-badge--${pill.tier}`}>{TIER_NAMES[pill.tier]}</span>
@@ -128,9 +149,11 @@ export function AlchemyPanel() {
               </div>
 
               {locked && <div className="recipe__lock">需炼丹术 {pill.tier} 品</div>}
-            </article>
-          );
-        })}
+                </article>
+              );
+            })}
+          </FoldSection>
+        ))}
       </div>
     </section>
   );

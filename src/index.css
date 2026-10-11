@@ -61,10 +61,16 @@ a {
 /* ---------------------------------------------------------------- 布局 */
 
 .app {
-  /* 需求 2 之后左边多了一条常驻资源栏，整体放宽一点，免得内容区比上一版还窄 */
-  max-width: 1320px;
+  /*
+   * 需求 5：「界面框架可以增大一点，屏幕两边空挺多的」。
+   *
+   * 原来卡在 1320px，在 1920 / 2560 的屏上左右各留出两三百像素的空白，
+   * 而内容区反倒要挤。改成按视口走：普通屏几乎铺满，超宽屏留一个上限
+   * （不然一行的阅读距离会长到眼睛累）。
+   */
+  max-width: min(1720px, 96vw);
   margin: 0 auto;
-  padding: 18px 16px 40px;
+  padding: 18px 20px 44px;
 }
 
 .layout {
@@ -1860,7 +1866,8 @@ a {
 }
 
 .shell__side {
-  flex: 0 0 176px;
+  /* 需求 5：框架变宽之后，侧栏也跟着宽一点，资源名与「X后满」才不会被截断 */
+  flex: 0 0 196px;
   position: sticky;
   top: 10px;
   align-self: flex-start;
@@ -2698,14 +2705,21 @@ a {
   margin-bottom: 0;
 }
 
-/* 页头右上角的纪年（需求 2） */
+/* 页头右上角的纪年（需求 2；配色在需求 5 调过） */
 .year-badge {
   margin-left: auto;
   min-width: 128px;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.6);
+  /*
+   * 需求 5：「右上角纪年的显示框和周围颜色同步一下，有点突兀了」。
+   *
+   * 原来它自带一层白底 + 实线边框，而页头本身是半透明的一层，
+   * 于是右上角像贴了张便利贴。现在**不画自己的底和边**，
+   * 只靠左侧一条分隔线说明"这块和左边那排读数是一家人"。
+   */
+  padding: 2px 0 2px 14px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
   text-align: right;
 }
 
@@ -2853,6 +2867,56 @@ a {
   border-color: rgba(196, 150, 60, 0.55);
   color: #8a6a1f;
   background: rgba(196, 150, 60, 0.12);
+}
+
+/* 通用折叠区（需求 2 / 3 / 7）：建筑分组、丹药 / 器物按品阶分组 */
+.fold {
+  margin-bottom: 6px;
+}
+
+.fold__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 2px;
+  border: 0;
+  border-bottom: 1px dashed var(--line);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.fold__chevron {
+  color: var(--muted);
+  font-size: 11px;
+  width: 11px;
+}
+
+.fold__title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.fold__hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.fold__count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.fold__body {
+  padding-top: 6px;
+}
+
+.fold--collapsed {
+  margin-bottom: 2px;
 }
 
 /* 资源富集区秘境的「开启」区（需求 1） */

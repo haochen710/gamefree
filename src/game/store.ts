@@ -295,7 +295,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       if (!check.ok) return { notice: check.reason ?? '无法出行' };
       const next = travel.startTravel(s.game, regionId);
       if (next === s.game) return {};
-      return { ...nextGame(s.game, next), notice: '掌门已启程，洞府产量下降' };
+      return { ...nextGame(s.game, next), notice: '掌门已启程' };
     });
   },
 
@@ -626,7 +626,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       if (!check.ok) return { notice: check.reason ?? '无法前往' };
       return {
         ...nextGame(s.game, travel.startSoloRealm(s.game, realmId)),
-        notice: '掌门已独自前往秘境（洞府产量下降）',
+        notice: '掌门已独自前往秘境',
       };
     });
   },
@@ -638,7 +638,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       if (!check.ok) return { notice: check.reason ?? '无法前往' };
       return {
         ...nextGame(s.game, travel.startSoloSurvey(s.game, regionId)),
-        notice: '掌门已亲自出发（洞府产量下降）',
+        notice: '掌门已亲自出发',
       };
     });
   },

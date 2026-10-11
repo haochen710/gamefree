@@ -16,6 +16,7 @@ import {
   maxCraftable,
 } from '../game/crafting';
 import { getGearCharges } from '../game/engine';
+import { FoldSection } from './fold';
 import { useGame } from '../game/store';
 import CostList from './CostList';
 
@@ -60,6 +61,14 @@ export function RefiningPanel() {
 
   const holders = Math.max(1, game.sect.disciples.length);
   const visible = ARTIFACTS.filter((a) => a.tier <= game.refiningTier + 1);
+  // 需求 2：器物按品阶分组、各自可折叠
+  const byTier = new Map<number, typeof ARTIFACTS>();
+  for (const a of visible) {
+    const list = byTier.get(a.tier) ?? [];
+    list.push(a);
+    byTier.set(a.tier, list as typeof ARTIFACTS);
+  }
+  const tiers = [...byTier.keys()].sort((a, b) => a - b);
 
   return (
     <section className="panel">
@@ -76,14 +85,23 @@ export function RefiningPanel() {
       </p>
 
       <div className="recipe-list">
-        {visible.map((artifact) => {
-          const locked = artifact.tier > game.refiningTier;
-          const cost = toCostMap(artifact.cost);
-          const check = canCraftArtifact(game, artifact.id);
-          const max = maxCraftable(game, cost);
-          const owned = game.artifacts[artifact.id] ?? 0;
-          const effective = Math.min(owned, holders);
-          // 需求 2：炼制有概率失败；可携带器物还要显示剩余次数
+        {tiers.map((tier) => (
+          <FoldSection
+            key={tier}
+            title={`${tierName(tier)}器物`}
+            hint={tier > game.refiningTier ? '尚未掌握' : undefined}
+            count={byTier.get(tier)?.length ?? 0}
+            storageKey={`gear.tier.${tier}`}
+            defaultOpen={tier <= game.refiningTier}
+          >
+            {(byTier.get(tier) ?? []).map((artifact) => {
+              const locked = artifact.tier > game.refiningTier;
+              const cost = toCostMap(artifact.cost);
+              const check = canCraftArtifact(game, artifact.id);
+              const max = maxCraftable(game, cost);
+              const owned = game.artifacts[artifact.id] ?? 0;
+              const effective = Math.min(owned, holders);
+              // 需求 2：炼制有概率失败；可携带器物还要显示剩余次数
           const rate = getCraftSuccessRate(game, 'refining', artifact.tier);
           const charges = artifact.carry ? getGearCharges(game, artifact) : null;
 
@@ -144,7 +162,9 @@ export function RefiningPanel() {
               {locked && <div className="recipe__lock">需炼器术 {artifact.tier} 品</div>}
             </article>
           );
-        })}
+            })}
+          </FoldSection>
+        ))}
       </div>
     </section>
   );

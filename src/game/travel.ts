@@ -5,8 +5,11 @@
  *
  * 与弟子秘境的关键区别：
  *   - 不占弟子、不会死人（掌门自己远比同境界弟子强）
- *   - 但**出门期间全局产量下降**（engine.getTravelMultiplier）
  *   - 没有宗门也能进行 —— 这正是需求 1 想解决的"开宗之前没事干"
+ *
+ * ⚠️ 原来这里还有一条「出门期间全局产量下降」（`TRAVEL_PRODUCTION_PENALTY = 0.45`），
+ * **本轮需求 4 已删除**。它只让玩家不敢出门：出门本身已经有时间成本，
+ * 再叠一层看不见的 45% 全局减产，玩家往往是事后才发现自己亏了。
  *
  * 需求 5 之后，能去哪儿由**地图区域**决定（见 map.ts）：
  * 境界越高飞得越远，区域门槛就是「探索距离」的体现。
@@ -119,7 +122,7 @@ export function startTravel(state: GameState, regionId: string): GameState {
     journal: pushJournal(state.journal, {
       time: state.playTime,
       kind: 'info',
-      text: `掌门启程前往${def.name}游历，洞府无人监管，产量下降`,
+      text: `掌门启程前往${def.name}游历`,
     }),
   };
 }
@@ -137,7 +140,7 @@ export function startTravel(state: GameState, regionId: string): GameState {
  *      但稀有材料的权重 ×4 —— 想要星辰砂、太阴玄晶这类东西，
  *      亲自跑一趟比派弟子划算。
  *
- * 掌门亲自出门同样会**让洞府产量下降**（和游历共用同一套惩罚），
+ * 掌门亲自出门同样（和游历一样）就不再有任何产量惩罚了 —— 见文件头的说明。
  * 所以这不是"免费的第二支队伍"，而是拿家中产量换稀有材料。
  */
 export const SOLO_REALM_DURATION_MULT = 1.4;
@@ -189,7 +192,7 @@ export function startSoloRealm(state: GameState, realmId: string): GameState {
     journal: pushJournal(state.journal, {
       time: state.playTime,
       kind: 'info',
-      text: `掌门独自前往${def.name}，洞府无人监管，产量下降`,
+      text: `掌门独自前往${def.name}`,
     }),
   };
 }
@@ -284,7 +287,7 @@ export interface SoloRealmOutcome {
  * 两件事都要修：
  *   1. **玩家本人也能去** —— 原来普通探索必须派弟子，而弟子要开宗之后才有，
  *      于是"开宗前"和"手头没人"的玩家完全碰不到这条线。现在掌门可以自己去，
- *      代价照旧（人不在洞府，产量下降），好处是**不会折损弟子**。
+ *      好处是**不会折损弟子**，而且本轮起**没有产量惩罚**。
  *   2. **范围太窄** —— 原来按"小区域的档次"卡（东部群山内部从需 0 一路到需 4），
  *      所以除了最前面几个小区域，别的都点不动。现在按**大区域**的门槛卡：
  *      整个东部群山自炼气就可去，南疆要筑基…… 见 `canSurveyRegion`。
@@ -319,7 +322,7 @@ export function startSoloSurvey(state: GameState, regionId: string): GameState {
     journal: pushJournal(state.journal, {
       time: state.playTime,
       kind: 'info',
-      text: `掌门独自前往${region.name}一带查探，洞府无人监管，产量下降`,
+      text: `掌门独自前往${region.name}一带查探`,
     }),
   };
 }

@@ -59,20 +59,33 @@ export const REFINE_RECIPES: RefineRecipe[] = [
     id: 'spiritEssenceRefine',
     name: '熬炼灵液',
     icon: '💧',
-    desc: '以灵气反复煎熬灵草，取其精华。四品以上的丹方都要用它作引。',
+    desc: '以灵气反复煎熬灵草，取其精华。三品以上的丹方都要用它作引。',
     cost: { qi: 2e4, herb: 6000 },
     output: { item: 'spiritEssence', amount: 1 },
-    requiresRealm: 2,
+    /*
+     * ⚠️ 门槛从「金丹期」下调到「筑基期」（本轮需求 3）。
+     *
+     * 原因是一条**真的死循环**：凝金丹（3 品）是用来从筑基突破到金丹的，
+     * 而升到炼丹 3 品要 2 份灵液 —— 灵液却要金丹期才能合成。
+     * 也就是说"想突破金丹就得先到金丹"。降到筑基之后这条链才走得通：
+     *   筑基期 → 熬灵液 → 升炼丹 3 品 → 炼凝金丹 → 突破金丹。
+     */
+    requiresRealm: 1,
     requiresTech: 'alchemyArt',
   },
   {
     id: 'refinedGoldRefine',
     name: '百炼精金',
     icon: '🥇',
-    desc: '灵矿与灵石同炉百炼，去尽杂质。五品以上的器物非它不成。',
+    desc: '灵矿与灵石同炉百炼，去尽杂质。三品以上的器物非它不成。',
     cost: { ore: 9000, stone: 2500 },
     output: { item: 'refinedGold', amount: 1 },
-    requiresRealm: 3,
+    /*
+     * 同样是本轮需求 3 下调的一档：门槛从「元婴期」降到「金丹期」。
+     * 升炼器 3 品要 2 份精金，而精金原本要元婴期 —— 于是整条炼器线
+     * 在它最该有用的那两品（3~4 品的灵剑 / 洞天罗盘）上完全用不了。
+     */
+    requiresRealm: 2,
     requiresTech: 'refiningArt',
   },
   {

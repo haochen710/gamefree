@@ -65,7 +65,6 @@ import {
   STONE_REFINE_OUTPUT,
   STRUCTURES,
   TECH_MAP,
-  TRAVEL_PRODUCTION_PENALTY,
   discipleCapBySect,
   isResourceId,
   servantCost,
@@ -289,8 +288,7 @@ export function getGlobalMultiplier(state: GameState): Decimal {
     .mul(getDaoYunMultiplier(state))
     .mul(1 + artifact + getStructureBonus(state, 'productionBonus') + getWeatherProductionBonus(state))
     .mul(state.buffs.productionMultiplier)
-    .mul(getInjuryMultiplier(state))
-    .mul(getTravelMultiplier(state));
+    .mul(getInjuryMultiplier(state));
 }
 
 /** 道伤未愈时的产量惩罚（「萎靡不振」的具象化） */
@@ -298,15 +296,15 @@ export function getInjuryMultiplier(state: GameState): number {
   return state.injurySeconds > 0 ? 1 - INJURY_PRODUCTION_PENALTY : 1;
 }
 
-/**
- * 掌门出门游历时的产量惩罚（需求 1：「由于无人监管家里，各种产量降低」）。
+/*
+ * 「掌门出门时产量下降」这条惩罚已经**删除**（本轮需求 4）。
  *
- * 这是游历的代价，也是它最核心的取舍：
- * 想要材料就得减产，想攒灵气就别出门。
+ * 原来的设计是"想要材料就得减产"——把出门当成一种取舍。但实际玩下来它只做了一件事：
+ * 让玩家不敢出门。而出门本身已经有明确的代价（时间、以及派队伍时的伤亡风险），
+ * 再叠一层看不见的全局减产能只让人在事后才发现"我亏了 45%"。
+ * 所以 `TRAVEL_PRODUCTION_PENALTY` / `getTravelMultiplier` 一并移除，
+ * 产量公式里不再有这一项。
  */
-export function getTravelMultiplier(state: GameState): number {
-  return state.personalTravel ? 1 - TRAVEL_PRODUCTION_PENALTY : 1;
-}
 
 /* ------------------------------------------------------------------ */
 /* 钻研与图纸（需求 6）                                                 */

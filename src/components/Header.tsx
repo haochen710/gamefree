@@ -121,11 +121,11 @@ export function Header() {
         )}
 
         {game.personalTravel && (
-          <div className="stat stat--injury">
-            <span className="stat__label">游历中</span>
-            <span className="stat__value stat__value--injury">
+          <div className="stat">
+            <span className="stat__label">掌门在外</span>
+            <span className="stat__value">
               {TRAVEL_REGION_MAP[game.personalTravel.regionId]?.name ?? '在外'}
-              <em className="stat__layer">产量下降</em>
+              <em className="stat__layer">已出行</em>
             </span>
           </div>
         )}
@@ -145,7 +145,7 @@ export function Header() {
             <span className="stat__label">道伤</span>
             <span className="stat__value stat__value--injury">
               {fmtDuration(game.injurySeconds)}
-              <em className="stat__layer">产量下降</em>
+              <em className="stat__layer">突破受阻</em>
             </span>
           </div>
         )}

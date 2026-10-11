@@ -40,6 +40,7 @@ import { useGame } from '../game/store';
 import { ITEM_MAP, stageOf, timeJumpYears } from '../game/content';
 import type { ItemId } from '../game/content';
 import type { GameState } from '../game/state';
+import Panel from './Panel';
 
 export function EnlightenmentPanel() {
   const game = useGame((s) => s.game);
@@ -50,15 +51,11 @@ export function EnlightenmentPanel() {
 
   if (!isEnlightenmentUnlocked(game)) {
     return (
-      <section className="panel">
-        <div className="panel__head">
-          <h2>感悟</h2>
-          <span className="panel__hint">未解锁</span>
-        </div>
+      <Panel title="感悟" hint="未解锁" storageKey="enlighten">
         <p className="panel__note panel__note--warn">
           需修至<strong>元婴期</strong>方能开启感悟。五行之道在元婴期解锁，时空大道还要再等一境（化神期）。
         </p>
-      </section>
+      </Panel>
     );
   }
 
@@ -68,13 +65,11 @@ export function EnlightenmentPanel() {
   const ringCost = getNextSpaceRingCost(game);
 
   return (
-    <section className="panel">
-      <div className="panel__head">
-        <h2>感悟</h2>
-        <span className="panel__hint">
-          每条道 {MAX_ENLIGHTEN_LEVEL} 阶（{MAX_ENLIGHTEN_LEVEL / MINOR_PER_MAJOR} 大阶段 × {MINOR_PER_MAJOR} 小阶段）
-        </span>
-      </div>
+    <Panel
+      title="感悟"
+      hint={`每条道 ${MAX_ENLIGHTEN_LEVEL} 阶（${MAX_ENLIGHTEN_LEVEL / MINOR_PER_MAJOR} 大阶段 × ${MINOR_PER_MAJOR} 小阶段）`}
+      storageKey="enlighten"
+    >
       <p className="panel__note">
         感悟是<strong>贯穿整局的长线</strong>：一阶要花掉大量资源与时间，一条道修满要按天算。
         同一时间只能修一条道，但已经修出来的效果永久生效。
@@ -159,7 +154,7 @@ export function EnlightenmentPanel() {
           <PathCard key={path.id} path={path} state={game} onStart={() => enlighten(path.id)} />
         ))}
       </div>
-    </section>
+    </Panel>
   );
 }
 

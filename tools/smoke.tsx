@@ -117,6 +117,11 @@ import {
   SEEDS,
   SERVANT_BONUS_PER_HEAD,
   MAX_CRAFT_TIER,
+  ALCHEMY_TIER_COST,
+  ALCHEMY_TIER_TECH,
+  REFINING_TIER_COST,
+  ITEM_MAP,
+  type ItemId,
   RICH_SUB_INDEX,
   CRAFT_BASE_SUCCESS,
   PILL_MAP,
@@ -131,7 +136,6 @@ import {
   STRUCTURES,
   TECHS,
   TECH_MAP,
-  TRAVEL_PRODUCTION_PENALTY,
   TRAVEL_REGIONS,
   countMaterialKinds,
   createEmptyBuffs,
@@ -1539,9 +1543,10 @@ section('[16] 个人游历（需求 1）');
   const traveling = travel.startTravel(base, 'mortalVillage');
   check('启程后进入游历状态', traveling.personalTravel !== null);
   const during = engine.getGlobalMultiplier(traveling).toNumber();
+  // 需求 4：这条惩罚已删除 —— 出门不再扣全局产量
   check(
-    '出游期间全局产量下降',
-    Math.abs(during / before - (1 - TRAVEL_PRODUCTION_PENALTY)) < 1e-9,
+    '出游期间全局产量不再下降（本轮需求 4）',
+    Math.abs(during - before) < 1e-9,
     `${before.toFixed(2)} → ${during.toFixed(2)}`,
   );
   check('重复启程会被拒绝', travel.canStartTravel(traveling, 'mortalVillage').ok === false);
@@ -4506,6 +4511,34 @@ section('[41] 界面布局 / 普通探索 / 唯一建筑 / 满仓倒计时');
     check('折叠按钮带 aria-expanded', out.includes('aria-expanded'));
   }
 
+  /* ---- 需求 1（本轮）：钻研在仆役下面、感悟升为页签 ---- */
+  {
+    const out = renderToString(<App />);
+    const nav = out.slice(out.indexOf('<nav'), out.indexOf('</nav>'));
+    check('页签里有「感悟」', nav.includes('感悟'));
+    check('页签里有「洞府」（同级对照）', nav.includes('洞府'));
+
+    /*
+     * 钻研要排在仆役**下面**。SSR 输出的顺序就是渲染顺序，
+     * 所以直接比较两者在 HTML 里的位置即可 —— 这比断言 CSS 的 grid 顺序可靠。
+     */
+    const servantIdx = out.indexOf('仆役');
+    const researchIdx = out.indexOf('钻研');
+    check('钻研排在仆役之后', servantIdx >= 0 && researchIdx > servantIdx, `仆役@${servantIdx} 钻研@${researchIdx}`);
+  }
+
+  /* ---- 需求 2（本轮）：分类建筑与丹器品阶都能折叠 ---- */
+  {
+    // 折叠区在「洞府」与「丹器」两页，默认的修行页里没有，所以要各自渲染
+    const buildings = renderToString(<BuildingsPanel />);
+    check('建筑分组可折叠', buildings.includes('fold__head'));
+    check('建筑分组标题会渲染出分组名', /fold__title/.test(buildings));
+
+    const alchemy = renderToString(<AlchemyPanel />);
+    check('丹药按品阶分组且可折叠', alchemy.includes('fold__head'));
+    check('丹药分组标题写着品阶', alchemy.includes('丹方'));
+  }
+
   /* ---- 需求 5：普通探索 ---- */
   {
     // 门槛按**大区域**算，而不是小区域档次
@@ -4589,6 +4622,138 @@ section('[41] 界面布局 / 普通探索 / 唯一建筑 / 满仓倒计时');
       getRefiningUpgradeStatus({ ...room, refiningTier: 6 }).reason ?? '',
     );
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 42. 顺序体检：有没有"要 A 得先有 A"的循环（需求 3）                    */
+/* ------------------------------------------------------------------ */
+section('[42] 顺序体检：前置不能比产物更晚（需求 3）');
+{
+  /*
+   * 需求原文：「境界丹是突破到这个境界使用，但是境界丹的炼制（包括炼丹等级的晋升
+   * 和材料）又需要突破后的等级才能获取，有点卡手了，你看看还有没有其它类似的问题」。
+   *
+   * 所以这一节把"顺序"这件事形式化：先算出**每样东西最早能在哪个境界拿到**，
+   * 再检查每一处"前置 → 产物"的关系里，前置是否比"用到产物的那一刻"更晚。
+   * 这类问题不报错、不崩，玩家的进度会**静默地**卡住 —— 所以必须由断言守着。
+   */
+  const MAX_R = REALMS.length - 1;
+
+  /* ---- 来源表：item → 最早境界 ---- */
+  const earliest = new Map<string, number>();
+  for (const id of RESOURCE_IDS) earliest.set(id, 0);
+  for (const realm of SECRET_REALMS) {
+    for (const l of realm.loot) {
+      const cur = earliest.get(l.item as string);
+      if (cur === undefined || realm.minRealm < cur) earliest.set(l.item as string, realm.minRealm);
+    }
+  }
+  // 进阶资源要迭代几轮（它们自己也可能吃进阶资源）
+  for (let pass = 0; pass < 4; pass += 1) {
+    for (const recipe of REFINE_RECIPES) {
+      let need = recipe.requiresRealm ?? 0;
+      const tech = recipe.requiresTech;
+      if (tech) need = Math.max(need, TECHS.find((t) => t.id === tech)?.requiresRealm ?? 0);
+      for (const item of Object.keys(recipe.cost)) need = Math.max(need, earliest.get(item) ?? 99);
+      if (need > MAX_R) continue;
+      const cur = earliest.get(recipe.output.item);
+      if (cur === undefined || need < cur) earliest.set(recipe.output.item, need);
+    }
+  }
+  const at = (id: string): number => earliest.get(id) ?? 99;
+
+  /* ---- ① 境界丹：全部前置必须在**突破之前**（含当前境界）到手 ---- */
+  const chainBreaks: string[] = [];
+  for (let R = 0; R < MAX_R; R += 1) {
+    const pill = PILL_MAP[REALMS[R].breakthroughPill];
+    if (!pill) continue;
+    const late: string[] = [];
+    for (let t = 2; t <= pill.tier; t += 1) {
+      const tech = ALCHEMY_TIER_TECH[t];
+      if (tech && (TECHS.find((x) => x.id === tech)?.requiresRealm ?? 0) > R) {
+        late.push(`升 ${t} 品的技术「${TECH_MAP[tech]?.name ?? tech}」`);
+      }
+      for (const item of Object.keys(ALCHEMY_TIER_COST[t] ?? {})) {
+        if (at(item) > R) late.push(`升 ${t} 品要的${ITEM_MAP[item as ItemId]?.name ?? item}`);
+      }
+    }
+    for (const item of Object.keys(pill.cost)) {
+      if (at(item) > R) late.push(`${ITEM_MAP[item as ItemId]?.name ?? item}`);
+    }
+    if (late.length > 0) {
+      chainBreaks.push(`${pill.name}（${REALMS[R].name}→${REALMS[R + 1].name}）：${late.join('、')}`);
+    }
+  }
+  check('每颗境界丹的前置链都能在突破之前走通', chainBreaks.length === 0, chainBreaks.join(' / '));
+
+  /* ---- ② 升品材料不能比该品阶本身更晚 ---- */
+  const lateTiers: string[] = [];
+  for (let t = 3; t <= MAX_CRAFT_TIER; t += 1) {
+    for (const [cost, label] of [
+      [ALCHEMY_TIER_COST, '炼丹'],
+      [REFINING_TIER_COST, '炼器'],
+    ] as const) {
+      for (const item of Object.keys(cost[t] ?? {})) {
+        if (at(item) > t - 1) {
+          lateTiers.push(`${label} ${t} 品要的${ITEM_MAP[item as ItemId]?.name ?? item}（第 ${at(item) + 1} 境才有）`);
+        }
+      }
+    }
+  }
+  check('升品材料不会比该品阶更晚出现', lateTiers.length === 0, lateTiers.join('、'));
+
+  /* ---- ③ 秘境的两个门槛（境界 / 宗门）不能互相倒挂 ---- */
+  const inverted: string[] = [];
+  for (const realm of SECRET_REALMS) {
+    const need = realm.requiresSectLevel ?? 0;
+    if (need <= 0) continue;
+    const sectRealm = SECT_LEVELS[need - 1]?.requiresRealm ?? 0;
+    if (sectRealm > realm.minRealm) {
+      inverted.push(
+        `${realm.name}（需${REALMS[realm.minRealm].name}）却要 ${need} 品宗门（需${REALMS[sectRealm].name}）`,
+      );
+    }
+  }
+  check(
+    '秘境不会要求一个该境界还达不到的宗门品阶',
+    inverted.length === 0,
+    `${inverted.length} 处：${inverted.slice(0, 3).join('；')}`,
+  );
+
+  /* ---- ④ 技术树的前置不能让自身更难 ---- */
+  check(
+    '技术的前置不会要求更高的境界',
+    TECHS.every((t) =>
+      (t.requires ?? []).every(
+        (p) => (TECHS.find((x) => x.id === p)?.requiresRealm ?? 0) <= t.requiresRealm,
+      ),
+    ),
+  );
+
+  /* ---- ⑤ 器物材料不能比它的品阶更晚 ---- */
+  const lateArtifacts = ARTIFACTS.filter((a) => Object.keys(a.cost).some((i) => at(i) > a.tier));
+  check('器物的材料都在它的品阶之前可得', lateArtifacts.length === 0, lateArtifacts.map((a) => a.name).join('、'));
+
+  /* ---- ⑥ 进阶资源的门槛不能晚于第一次用到它 ---- */
+  const gateTooLate: string[] = [];
+  for (const recipe of REFINE_RECIPES) {
+    const out = recipe.output.item as string;
+    const gate = recipe.requiresRealm ?? 0;
+    const users: number[] = [];
+    for (const pill of PILLS) {
+      if (!Object.keys(pill.cost).includes(out)) continue;
+      const R = REALMS.findIndex((r) => r.breakthroughPill === pill.id);
+      users.push(R >= 0 ? R : pill.tier - 1);
+    }
+    for (let t = 2; t <= MAX_CRAFT_TIER; t += 1) {
+      if (Object.keys(ALCHEMY_TIER_COST[t] ?? {}).includes(out)) users.push(t - 1);
+      if (Object.keys(REFINING_TIER_COST[t] ?? {}).includes(out)) users.push(t - 1);
+    }
+    if (users.length > 0 && gate > Math.min(...users)) {
+      gateTooLate.push(`${recipe.name}（需第 ${gate + 1} 境）但第 ${Math.min(...users) + 1} 境就要用`);
+    }
+  }
+  check('进阶资源的门槛不晚于第一次用到它', gateTooLate.length === 0, gateTooLate.join('、'));
 }
 
 /* ------------------------------------------------------------------ */

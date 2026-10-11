@@ -41,6 +41,7 @@ import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
 import CostList from './CostList';
 import Panel from './Panel';
+import { FoldSection } from './fold';
 
 /** 建筑效果的一行短说明（只用于不产出资源的建筑） */
 function describeEffect(def: StructureDef): string {
@@ -310,17 +311,21 @@ export function BuildingsPanel({ collapsible = false }: { collapsible?: boolean 
       {visibleByGroup.length === 0 && <p className="panel__note">暂无可建造的项目。</p>}
 
       {visibleByGroup.map(({ group, defs }) => (
-        <div key={group.id} className="build-group">
-          <div className="build-group__head">
-            <h3 className="build-group__title">{group.title}</h3>
-            <span className="build-group__hint">{group.hint}</span>
-          </div>
+        // 需求 2：各类建筑分组也可以折叠（洞府里设施 / 居所 / 工坊十几组）
+        <FoldSection
+          key={group.id}
+          title={`${group.title}`}
+          hint={group.hint}
+          count={defs.length}
+          storageKey={`build.${group.id}`}
+          className="build-group"
+        >
           <div className="generator-list">
             {defs.map((def) => (
               <BuildRow key={def.id} def={def} state={game} />
             ))}
           </div>
-        </div>
+        </FoldSection>
       ))}
 
       <LockedHint state={game} />

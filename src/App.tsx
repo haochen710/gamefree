@@ -32,11 +32,13 @@ import SavePanel from './components/SavePanel';
 import JournalPanel from './components/JournalPanel';
 import OfflineModal from './components/OfflineModal';
 
-type TabId = 'cultivation' | 'cave' | 'sect' | 'expedition' | 'craft' | 'farm';
+type TabId = 'cultivation' | 'cave' | 'enlighten' | 'sect' | 'expedition' | 'craft' | 'farm';
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'cultivation', label: '修行', icon: '☯' },
   { id: 'cave', label: '洞府', icon: '🏔' },
+  // 需求 1：感悟升格为与洞府同级的页签
+  { id: 'enlighten', label: '感悟', icon: '🧘' },
   { id: 'sect', label: '宗门', icon: '🏯' },
   { id: 'expedition', label: '探索', icon: '🗺' },
   { id: 'craft', label: '丹器', icon: '⚗' },
@@ -82,23 +84,31 @@ function CultivationTab() {
       <div className="layout__left">
         <ActionPanel />
         <ServantPanel />
+        {/*
+          需求 1：钻研与图纸挪到**仆役下面**（修行页左栏）。
+          原来它们在右栏最底下，得往下翻很久；而"我下一步该钻研什么"
+          是修行页最常看的信息之一，放在手边更合理。
+        */}
+        <ResearchPanel collapsible />
       </div>
       <div className="layout__right">
         {/* 需求 2：开宗前的随机遭遇与善恶值，放在修行页最上面 */}
         <EncounterPanel />
         <RealmPanel />
-        {/* 需求 3：元婴期后解锁的感悟 */}
-        <EnlightenmentPanel />
         <SeasonPanel />
-        {/*
-          需求 1：钻研 / 合成 / 图纸三道栏搬到修行页。
-          修行页**不再**有灵石合成 —— 那一条只保留在洞府里（见 CaveTab）。
-          需求 7：这几块也都能折叠（面板外壳统一走 Panel 组件）。
-        */}
-        <ResearchPanel collapsible />
+        {/* 需求 1：合成 · 精炼留在修行页右栏（灵石合成只在洞府，见 CaveTab） */}
         <RefinePanel collapsible />
         <AscendPanel />
       </div>
+    </main>
+  );
+}
+
+/** 感悟（需求 1：从修行页里的一个面板升格为与洞府同级的页签） */
+function EnlightenmentTab() {
+  return (
+    <main className="layout layout--single">
+      <EnlightenmentPanel />
     </main>
   );
 }
@@ -225,6 +235,7 @@ export default function App() {
         <div className="shell__main">
           {tab === 'cultivation' && <CultivationTab />}
           {tab === 'cave' && <CaveTab />}
+          {tab === 'enlighten' && <EnlightenmentTab />}
           {tab === 'sect' && <SectTab />}
           {tab === 'expedition' && <ExpeditionTab />}
           {tab === 'craft' && <CraftTab />}

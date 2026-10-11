@@ -40,6 +40,7 @@ import {
   type RealmProfile,
 } from './map';
 import { REALMS } from './realms';
+import { SECT_LEVELS } from './sect';
 import { MATERIAL_MAP, type ItemId, type MaterialId } from './resources';
 
 export type { RealmProfile };
@@ -468,12 +469,46 @@ function buildRealm(
     seedMaxRarity: stat.seedMaxRarity,
     blueprintChance: stat.blueprintChance,
     discoveryWeight,
-    requiresSectLevel: stat.sectLevel > 0 ? stat.sectLevel : undefined,
+    /*
+     * 宗门品阶门槛 —— **必须夹住**（本轮需求 3 修的倒挂）。
+     *
+     * 原来的写法是直接取 `TIER_STATS[tier].sectLevel`，而 `tier` 来自**小区域**的档次、
+     * `minRealm` 来自**大区域**的门槛 —— 两者能差三四个境界。于是出现了
+     * 「龙骸血池（需筑基期）却要求 2 品宗门，而 2 品宗门本身要化神期」这种条目：
+     * 同一处秘境的两个门槛互相打架，实际开放时间被硬拖到化神，
+     * 而界面上写的还是"需筑基期"。全库 67 处都是这么来的。
+     *
+     * 现在按「**这个境界最多能有几品宗门**」夹一次：
+     * 秘境声明自己在境界 R 开放，那它就不可能要求一个 R 时根本达不到的宗门品阶。
+     */
+    requiresSectLevel: capSectLevelByRealm(
+      stat.sectLevel,
+      Math.max(0, MAJOR_REGION_MAP[region.majorId]?.requiresRealm ?? 0),
+    ),
     specialty: specialty ?? undefined,
     // 需求 1：资源富集区的秘境要先花钱"开启"
     unlockCost: region.index >= RICH_SUB_INDEX ? buildUnlockCost(tier, rank, isSpecialty) : undefined,
     rank,
   };
+}
+
+/**
+ * 把宗门品阶门槛夹到「这个境界实际能达到的品阶」以内（本轮需求 3）。
+ *
+ * 宗门每升一品都有境界要求（见 `SECT_LEVELS`），所以某个境界 R 时
+ * 最高只能有 `maxSectLevelAt(R)` 品。秘境要求更高的品阶 = 要求一个还做不到的东西。
+ *
+ * 注意 R 比较小的时候结果是 0（连 1 品都要金丹期，而开宗本身就要金丹）——
+ * 那正好说明"这些秘境在早期不该有宗门门槛"，返回 `undefined` 即可。
+ */
+function capSectLevelByRealm(wanted: number, minRealm: number): number | undefined {
+  if (wanted <= 0) return undefined;
+  let max = 0;
+  for (let level = 1; level <= SECT_LEVELS.length; level += 1) {
+    if ((SECT_LEVELS[level - 1]?.requiresRealm ?? 99) <= minRealm) max = level;
+  }
+  const capped = Math.min(wanted, max);
+  return capped > 0 ? capped : undefined;
 }
 
 /**
