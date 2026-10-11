@@ -14,7 +14,9 @@ import {
   AUTO_REFINE_LEVEL_MAX,
   BLUEPRINT_MAP,
   BUILDABLES,
+  DISCOVERY_PITY_CAP,
   FINAL_REALM_INDEX,
+  INSIGHT_MAX,
   ITEM_MAP,
   MATERIAL_IDS,
   MATERIAL_MAP,
@@ -37,6 +39,7 @@ import {
   type ResourceId,
   type ShopOffer,
 } from './content';
+import { ARENA_INTERVAL_SECONDS } from './sectActivity';
 import { applyTick } from './tick';
 import { refreshUnlocks } from './engine';
 import {
@@ -48,7 +51,7 @@ import {
   createEmptySect,
   createEmptyShop,
   createEmptyUnlocked,
-  createEmptyUnlockedRealms,
+  createEmptyDiscoveredRealms,
   createInitialState,
   type Disciple,
   type Expedition,
@@ -89,7 +92,7 @@ export interface SerializedGame {
   b: Record<string, number>;
   /** unlockedBuildings */
   ub: Record<string, boolean>;
-  /** unlockedRealms */
+  /** discoveredRealms（需求 1：探索中发现） */
   ur: Record<string, boolean>;
   /** pills */
   pl: Record<string, number>;
@@ -122,6 +125,16 @@ export interface SerializedGame {
   bpr?: Record<string, boolean>;
   /** shop：商行货架（需求 3） */
   sh?: ShopState;
+  /** realmCooldowns：各秘境的冷却剩余秒数（需求 1） */
+  rc?: Record<string, number>;
+  /** discoveryPity：发现新秘境的保底累积（需求 1） */
+  dp?: number;
+  /** arenaEnabled / arenaTimer / arenaBuffSeconds：宗门大比（需求 4） */
+  ae?: boolean;
+  arn?: number;
+  arb?: number;
+  /** sectEventTimer：距离下次宗门随机事件的秒数（需求 4） */
+  se?: number;
   dy: string;
   asc: number;
   tq: string;
@@ -157,7 +170,7 @@ export function serialize(state: GameState): SerializedGame {
     m,
     b: { ...state.buildings },
     ub: { ...state.unlockedBuildings },
-    ur: { ...state.unlockedRealms },
+    ur: { ...state.discoveredRealms },
     pl: { ...state.pills },
     ar: { ...state.artifacts },
     ri: state.realmIndex,
@@ -178,6 +191,12 @@ export function serialize(state: GameState): SerializedGame {
     rs: state.research,
     bpr: { ...state.blueprints },
     sh: state.shop,
+    rc: { ...state.realmCooldowns },
+    dp: state.discoveryPity,
+    ae: state.arenaEnabled,
+    arn: state.arenaTimer,
+    arb: state.arenaBuffSeconds,
+    se: state.sectEventTimer,
     dy: state.daoYun.toString(),
     asc: state.ascensions,
     tq: state.totalQi.toString(),
@@ -257,6 +276,7 @@ function sanitizeDisciple(raw: unknown, index: number): Disciple | null {
     realmIndex: toInt(d.realmIndex, 0, 0, FINAL_REALM_INDEX),
     progress: toFloat(d.progress, 0, 0, 1e9),
     age: toFloat(d.age, 16, 0, 1e9),
+    insight: toFloat(d.insight, 0, 0, INSIGHT_MAX),
     // status 交给 repairState 依据探索列表重新推导，这里先一律置空闲
     status: 'idle',
   };
@@ -402,6 +422,18 @@ function sanitizePlantings(raw: unknown, nextId: number): Planting[] {
   return out;
 }
 
+/** 秘境冷却表：只保留已知秘境，剩余时间取正数并设上限 */
+function sanitizeCooldowns(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (raw === null || typeof raw !== 'object') return out;
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!SECRET_REALM_MAP[id]) continue;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) continue;
+    out[id] = Math.min(value, 1e6);
+  }
+  return out;
+}
+
 function sanitizeResearch(raw: unknown): ResearchState | null {
   if (raw === null || typeof raw !== 'object') return null;
   const r = raw as Partial<ResearchState>;
@@ -519,21 +551,24 @@ export function deserialize(raw: unknown): GameState | null {
     }
   }
 
-  /* ---- 已解锁秘境 ---- */
-  // 和建筑同理：存档里明确记着的算，兼容旧存档时只要还留着任何一项所需材料
-  // 就认为曾经发现过（材料可能已经被炼成丹药花掉了）
-  const unlockedRealms = createEmptyUnlockedRealms();
+  /* ---- 已发现的秘境（需求 1：发现机制） ---- */
+  // 存档里明确记着「已发现」的，一律保留。
+  // 兼容 v3 及更早的存档：那一版秘境是「攒够材料自动解锁」的，
+  // 只要玩家现在还留着任何一项材料（或曾经把材料炼掉过），
+  // 就按「已发现」处理 —— 升级不该让玩家丢掉已经走过的地图。
+  const discoveredRealms = createEmptyDiscoveredRealms();
   const rawRealms = (data.ur ?? {}) as Record<string, unknown>;
+  const hasLegacyRealmData = Object.keys(rawRealms).length > 0;
   for (const def of SECRET_REALMS) {
     if (rawRealms[def.id] === true) {
-      unlockedRealms[def.id] = true;
-      continue;
+      discoveredRealms[def.id] = true;
     }
-    const touched = Object.keys(def.unlock).some((id) => {
-      const amount = (resources as Record<string, Decimal>)[id] ?? (materials as Record<string, Decimal>)[id];
-      return amount !== undefined && amount.gt(0);
-    });
-    if (touched) unlockedRealms[def.id] = true;
+  }
+  if (hasLegacyRealmData) {
+    // 旧存档只记了「解锁过」的，没记「哪些是初始就有」的 —— 全部保留即可
+    for (const [id, value] of Object.entries(rawRealms)) {
+      if (value === true && SECRET_REALM_MAP[id]) discoveredRealms[id] = true;
+    }
   }
 
   /* ---- 丹药与器物 ---- */
@@ -596,7 +631,7 @@ export function deserialize(raw: unknown): GameState | null {
     materials,
     buildings,
     unlockedBuildings,
-    unlockedRealms,
+    discoveredRealms,
     pills,
     artifacts,
     realmIndex,
@@ -617,6 +652,12 @@ export function deserialize(raw: unknown): GameState | null {
     research: sanitizeResearch(data.rs),
     blueprints: toBoolMap(data.bpr, Object.keys(BLUEPRINT_MAP)),
     shop: sanitizeShop(data.sh),
+    realmCooldowns: sanitizeCooldowns(data.rc),
+    discoveryPity: toFloat(data.dp, 0, 0, DISCOVERY_PITY_CAP),
+    arenaEnabled: data.ae === true,
+    arenaTimer: toFloat(data.arn, ARENA_INTERVAL_SECONDS, 0, 1e9),
+    arenaBuffSeconds: toFloat(data.arb, 0, 0, 1e9),
+    sectEventTimer: toFloat(data.se, 0, 0, 1e9),
     daoYun: toDec(data.dy, 0),
     ascensions: toInt(data.asc, 0, 0, Number.MAX_SAFE_INTEGER),
     totalQi: toDec(data.tq, 0),

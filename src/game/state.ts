@@ -9,7 +9,7 @@ import {
   BUILDABLES,
   MATERIAL_IDS,
   RESOURCE_IDS,
-  SECRET_REALMS,
+  STARTER_REALM_ID,
   createEmptyBuffs,
   type ActiveBuffs,
   type AptitudeId,
@@ -40,6 +40,13 @@ export interface Disciple {
   /** 年龄（游戏年） */
   age: number;
   status: DiscipleStatus;
+  /**
+   * 心得（需求 4）：探索归来后积累，直接加快自身修行。
+   *
+   * 放在弟子身上而不是宗门账上，是因为需求原文说的是
+   * 「弟子探索后增加心得，加快进境」—— 出过力的弟子才长进。
+   */
+  insight: number;
   /** 正在参与的探索 id */
   expeditionId?: string;
 }
@@ -129,18 +136,21 @@ export interface GameState {
    * 解锁是「达成过就永久记住」，而不是每帧重新按当前资源判断 ——
    * 否则玩家一花掉灵气，已经建了好几座的灵木林就会从面板上凭空消失。
    *
-   * 注意：这只记「资源门槛」这一种解锁。技术 / 图纸门槛是实时判断的
-   * （需求 6），因为它们本来就是"有没有"的二值事实。
+   * 注意：这只记「资源门槛」这一种解锁。技术 / 图纸 / 前置建筑门槛
+   * 都是实时判断的（需求 6），因为它们本来就是"有没有"的二值事实。
    */
   unlockedBuildings: Record<string, boolean>;
   /**
-   * 已永久解锁的秘境 id。
+   * 已**发现**的秘境 id（需求 1）。
    *
-   * 和建筑同理：秘境的门槛是「拥有过若干秘境材料」，
-   * 而材料会被炼丹消耗掉。如果按当前持有量实时判断，
-   * 玩家一炼丹，整片秘境就会从探索列表里消失。
+   * 秘境不再是「攒够材料就自动出现」，而是弟子探索或掌门游历时
+   * 有概率发现；一旦发现就永久固定在秘境栏，不会因为材料被花掉而消失。
    */
-  unlockedRealms: Record<string, boolean>;
+  discoveredRealms: Record<string, boolean>;
+  /** 各秘境的冷却剩余秒数（需求 1：每次探索后要隔一段时间才能再探） */
+  realmCooldowns: Record<string, number>;
+  /** 连续未发现新秘境的保底累积（防止运气差永远发现不了） */
+  discoveryPity: number;
 
   /** 丹药库存 */
   pills: ItemCountMap;
@@ -192,6 +202,16 @@ export interface GameState {
   /** 已获得的图纸 */
   blueprints: Record<string, boolean>;
 
+  /* ---- 宗门活动（需求 4） ---- */
+  /** 比武台是否开启 —— 需求明文「由玩家决定是否开启」 */
+  arenaEnabled: boolean;
+  /** 距离下次大比的秒数 */
+  arenaTimer: number;
+  /** 大比带来的全宗修行加速剩余秒数 */
+  arenaBuffSeconds: number;
+  /** 距离下次宗门随机事件判定的秒数 */
+  sectEventTimer: number;
+
   /* ---- 商行（需求 3） ---- */
   shop: ShopState;
 
@@ -219,7 +239,7 @@ export interface GameState {
   nextDiscipleId: number;
 }
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 /* ------------------------------------------------------------------ */
 /* 工厂                                                                */
@@ -255,13 +275,14 @@ export function createEmptyUnlocked(): Record<string, boolean> {
   return unlocked;
 }
 
-/** 初始已发现的秘境：没有任何材料门槛的那几处 */
-export function createEmptyUnlockedRealms(): Record<string, boolean> {
-  const unlocked: Record<string, boolean> = {};
-  for (const def of SECRET_REALMS) {
-    if (Object.keys(def.unlock).length === 0) unlocked[def.id] = true;
-  }
-  return unlocked;
+/**
+ * 初始已发现的秘境。
+ *
+ * 只有落霞谷 —— 宗门草创时的第一处试炼地必须现成，
+ * 否则「发现秘境」这件事本身就成了开局的第一道随机卡点。
+ */
+export function createEmptyDiscoveredRealms(): Record<string, boolean> {
+  return { [STARTER_REALM_ID]: true };
 }
 
 export function createEmptySect(): Sect {
@@ -290,7 +311,9 @@ export function createInitialState(now = Date.now()): GameState {
     materials: createEmptyMaterials(),
     buildings: createEmptyBuildings(),
     unlockedBuildings: createEmptyUnlocked(),
-    unlockedRealms: createEmptyUnlockedRealms(),
+    discoveredRealms: createEmptyDiscoveredRealms(),
+    realmCooldowns: {},
+    discoveryPity: 0,
     pills: {},
     artifacts: {},
     realmIndex: 0,
@@ -310,6 +333,10 @@ export function createInitialState(now = Date.now()): GameState {
     techs: {},
     research: null,
     blueprints: {},
+    arenaEnabled: false,
+    arenaTimer: 0,
+    arenaBuffSeconds: 0,
+    sectEventTimer: 0,
     shop: createEmptyShop(),
     daoYun: D(0),
     ascensions: 0,
@@ -332,7 +359,7 @@ export function createInitialState(now = Date.now()): GameState {
  *
  * 道韵、飞升次数、历世累计灵气保留。
  * 宗门与弟子一并遣散 —— 否则"转世重修"就没有代价了。
- * 技术、图纸与种子是「知识」，跟着神魂一起带走。
+ * 技术、图纸、种子、已发现的秘境是「知识」，跟着神魂一起带走。
  */
 export function createAscendedState(state: GameState, daoYunGain: Decimal, now = Date.now()): GameState {
   const fresh = createInitialState(now);
@@ -347,5 +374,7 @@ export function createAscendedState(state: GameState, daoYunGain: Decimal, now =
     blueprints: { ...state.blueprints },
     // 种子也留一部分：否则每次飞升都要重新收集稀有种子，太惩罚
     seeds: { ...state.seeds },
+    // 走过的地方记得路 —— 已发现的秘境也算"知识"
+    discoveredRealms: { ...state.discoveredRealms },
   };
 }

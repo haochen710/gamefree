@@ -19,8 +19,8 @@ import BuildingsPanel from '../src/components/BuildingsPanel';
 import ResearchPanel from '../src/components/ResearchPanel';
 import PlantationPanel from '../src/components/PlantationPanel';
 import ShopPanel from '../src/components/ShopPanel';
-import TravelPanel from '../src/components/TravelPanel';
-import ExpeditionPanel from '../src/components/ExpeditionPanel';
+import MapPanel from '../src/components/MapPanel';
+import SectHallPanel from '../src/components/SectHallPanel';
 import Header from '../src/components/Header';
 import ResourceBar from '../src/components/ResourceBar';
 import ActionPanel from '../src/components/ActionPanel';
@@ -45,11 +45,18 @@ import {
   BASE_MATERIAL_IDS,
   BLUEPRINTS,
   BLUEPRINT_MAP,
+  BUILDABLES,
   BUILDABLE_MAP,
+  DISCOVERY_PER_DISTANCE,
+  DISCOVERY_PITY_CAP,
+  BUILD_GROUPS,
+  GENERATORS,
   INJURY_PRODUCTION_PENALTY,
   INJURY_SECONDS,
   MATERIAL_IDS,
   MATERIAL_MAP,
+  MAP_REGIONS,
+  MAP_REGION_MAP,
   MIND_MAX,
   MIN_REALM_FOR_BLUEPRINT,
   PILLS,
@@ -57,6 +64,7 @@ import {
   RARE_KINDS_MIN,
   RARE_MATERIAL_IDS,
   REALMS,
+  SECRET_REALMS,
   SECRET_REALM_MAP,
   SEEDS,
   SERVANT_BONUS_PER_HEAD,
@@ -84,6 +92,7 @@ import * as research from '../src/game/research';
 import * as planting from '../src/game/planting';
 import * as shop from '../src/game/shop';
 import * as travel from '../src/game/travel';
+import * as sectActivity from '../src/game/sectActivity';
 import { applyTick } from '../src/game/tick';
 import { gameRandom } from '../src/game/random';
 import { applyOffline, deserialize, exportCode, importCode, serialize } from '../src/game/save';
@@ -177,9 +186,22 @@ section('[1] 界面渲染');
     check('组件树渲染成功', false, String(error));
   }
 
-  const expected = ['仙途', '打坐', '境界', '灵石合成', '修行', '洞府', '宗门', '秘境', '丹器', '灵植'];
+  const expected = ['仙途', '打坐', '境界', '灵石合成', '修行', '洞府', '宗门', '探索', '丹器', '灵植'];
   for (const text of expected) {
     check(`包含「${text}」`, html.includes(text));
+  }
+
+  /* ---- 需求 2：资源栏移到左边，不再压在其它模块上方 ---- */
+  {
+    const navEnd = html.indexOf('</nav>');
+    const sideIdx = html.indexOf('shell__side');
+    const mainIdx = html.indexOf('shell__main');
+    const barIdx = html.indexOf('resource-bar');
+
+    check('存在左侧资源栏容器', sideIdx >= 0);
+    check('资源栏排在导航之后、内容区之前', navEnd >= 0 && sideIdx > navEnd && mainIdx > sideIdx);
+    check('资源栏在左侧栏内部（而不是独立的一段）', barIdx > sideIdx && barIdx < mainIdx);
+    check('资源栏不再插在 Header 与导航之间', barIdx > navEnd, `bar@${barIdx} navEnd@${navEnd}`);
   }
 
   // 非默认标签页的面板单独渲染一次：新增模块最容易犯的错
@@ -189,8 +211,8 @@ section('[1] 界面渲染');
     ['钻研', <ResearchPanel />],
     ['灵植园', <PlantationPanel />],
     ['商行', <ShopPanel />],
-    ['掌门游历', <TravelPanel />],
-    ['秘境', <ExpeditionPanel />],
+    ['地图与探索', <MapPanel />],
+    ['宗门建筑', <SectHallPanel />],
   ];
   for (const [label, element] of panels) {
     try {
@@ -480,6 +502,33 @@ section('[4] 储存上限与储物建筑');
   check('储物建筑有数量上限', engine.getMaxCount(pouch) === 10);
   check('数量上限约束了 maxAffordable', engine.maxAffordable(pouch, 0, rich) === 10, `${engine.maxAffordable(pouch, 0, rich)}`);
   check('已建满时 maxAffordable 为 0', engine.maxAffordable(pouch, 10, rich) === 0);
+
+  /* ---- costGrowth === 1 的建筑（只可能建一座）----
+     等比求和公式要除以 (r - 1)，r = 1 时会算出 NaN，
+     表现出来就是"明明买得起却一直买不动"。这是模拟器抓出来的 bug。 */
+  const fixedPrice = BUILDABLE_MAP.masterHall;
+  check('掌门大殿的价格不随数量增长', fixedPrice.costGrowth === 1);
+  const fixedCost = engine.getCost(fixedPrice, 0, 1);
+  check(
+    'costGrowth 为 1 时总价仍然有限',
+    Object.values(fixedCost).every((v) => Number.isFinite(v.toNumber()) && v.gt(0)),
+    Object.entries(fixedCost).map(([k, v]) => `${k}=${v.toString()}`).join(' '),
+  );
+  // 掌门大殿要求先开宗立派，所以场景里得先有宗门
+  const sectState = createInitialState(0);
+  const fixedRich = grant(
+    { ...sectState, sect: { ...sectState.sect, founded: true } },
+    { qi: '1e9', wood: '1e6', stone: '1e6' },
+  );
+  check('costGrowth 为 1 时 maxAffordable 正常', engine.maxAffordable(fixedPrice, 0, fixedRich) === 1, `${engine.maxAffordable(fixedPrice, 0, fixedRich)}`);
+  check(
+    'costGrowth 为 1 的建筑真的买得动',
+    engine.getBuildingCount(engine.buyBuilding(fixedRich, fixedPrice, 1), 'masterHall') === 1,
+  );
+  check(
+    '价格不涨时买 2 座的总价就是 2 倍单价',
+    engine.getCost(fixedPrice, 0, 2).qi?.eq(D(fixedPrice.baseCost.qi! * 2)) === true,
+  );
 
   let built = rich;
   for (let i = 0; i < 20; i += 1) built = engine.buyBuilding(built, pouch, 1);
@@ -884,9 +933,9 @@ section('[9] 弟子系统（需求 4 / 7）');
 }
 
 /* ------------------------------------------------------------------ */
-/* 9. 秘境探索（需求 5）                                                */
+/* 9. 秘境探索（需求 1 / 5）                                            */
 /* ------------------------------------------------------------------ */
-section('[10] 秘境探索（需求 5）');
+section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
 {
   const realm = SECRET_REALM_MAP.sunsetValley;
 
@@ -894,7 +943,7 @@ section('[10] 秘境探索（需求 5）');
   let strong: GameState = grant(createInitialState(0), { stone: '1e9' });
   strong = forceBuild(strong, 'thatchHut', 5);
   strong = { ...strong, sect: { ...strong.sect, founded: true } };
-  for (let i = 0; i < 3; i += 1) strong = disciples.recruitDisciple(strong, makeRandom(100 + i)).state;
+  for (let i = 0; i < 6; i += 1) strong = disciples.recruitDisciple(strong, makeRandom(100 + i)).state;
   strong = {
     ...strong,
     sect: {
@@ -903,14 +952,22 @@ section('[10] 秘境探索（需求 5）');
     },
   };
 
-  const ids = strong.sect.disciples.slice(0, realm.partySize).map((d) => d.id);
-  check('战力充足的队伍可以派遣', expeditions.canStartExpedition(strong, realm.id, ids).ok);
+  /* ---- 开局只发现落霞谷，其余要靠探索 ---- */
+  check('开局已知一处秘境', engine.isRealmDiscovered(strong, realm));
+  check(
+    '其余秘境开局未知',
+    SECRET_REALMS.filter((r) => r.id !== 'sunsetValley').every((r) => !engine.isRealmDiscovered(strong, r)),
+  );
+  check('未发现的秘境不能派遣', !expeditions.canStartExpedition(strong, 'gateOfHeaven', ['x']).ok);
 
-  const started = expeditions.startExpedition(strong, realm.id, ids);
+  const minIds = strong.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
+  check('战力充足的队伍可以派遣', expeditions.canStartExpedition(strong, realm.id, minIds).ok);
+
+  const started = expeditions.startExpedition(strong, realm.id, minIds);
   check('派遣后产生探索任务', started.expeditions.length === 1);
   check(
     '被派遣的弟子状态为探索中',
-    started.sect.disciples.filter((d) => d.status === 'exploring').length === realm.partySize,
+    started.sect.disciples.filter((d) => d.status === 'exploring').length === realm.minParty,
   );
   check('未被派遣的弟子仍空闲', started.sect.disciples.some((d) => d.status === 'idle'));
 
@@ -923,12 +980,47 @@ section('[10] 秘境探索（需求 5）');
   check('探索获得灵草', done.resources.herb.gt(0), `+${done.resources.herb.toString()}`);
   check('写入了探索记事', done.journal.length > 0, done.journal[0]?.text ?? '');
 
-  // 战力不足时伤亡率更高
+  /* ---- 需求 1：探索后需要隔一段时间才能再探 ---- */
+  check('探索结束后进入冷却', engine.getRealmCooldown(done, realm.id) > 0, `${engine.getRealmCooldown(done, realm.id)} 秒`);
+  check('冷却中不能立刻再派', !expeditions.canStartExpedition(done, realm.id, minIds).ok);
+  const cooled = engine.tickRealmCooldowns(done, realm.cooldown + 1);
+  check('冷却走完就能再派', engine.getRealmCooldown(cooled, realm.id) === 0);
+  check('冷却结束后可以再派遣', expeditions.canStartExpedition(cooled, realm.id, minIds).ok);
+
+  /* ---- 需求 1：人越多最终获取的资源越多 ---- */
+  check('人数系数随人数增长', expeditions.getPartySizeFactor(realm, realm.minParty + 2) > 1);
+  check(
+    '掉落条目数随人数增长',
+    expeditions.getLootRolls(realm, realm.maxParty) > expeditions.getLootRolls(realm, realm.minParty),
+    `${expeditions.getLootRolls(realm, realm.minParty)} → ${expeditions.getLootRolls(realm, realm.maxParty)}`,
+  );
+  check('超出上限会被拒绝', !expeditions.canStartExpedition(strong, realm.id, strong.sect.disciples.map((d) => d.id)).ok);
+  check('低于下限会被拒绝', !expeditions.canStartExpedition(strong, realm.id, []).ok);
+
+  // 同样条件下，人多的一方拿到的资源更多
+  const smallParty = strong.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
+  const bigParty = strong.sect.disciples.slice(0, realm.maxParty).map((d) => d.id);
+  const runWith = (party: string[]) => {
+    const withStatus = disciples.setDiscipleStatus(strong, party, 'exploring', 'test');
+    return expeditions.resolveExpedition(
+      withStatus,
+      { id: 'test', realmId: realm.id, discipleIds: party, progress: realm.duration, duration: realm.duration },
+      makeRandom(7),
+    ).state;
+  };
+  const smallGain = runWith(smallParty).materials.demonCore.add(runWith(smallParty).resources.herb).toNumber();
+  const bigGain = runWith(bigParty).materials.demonCore.add(runWith(bigParty).resources.herb).toNumber();
+  check('人数越多总产出越高', bigGain > smallGain, `${smallGain} → ${bigGain}`);
+
+  /* ---- 需求 4：探索归来涨心得 ---- */
+  check('探索归来的弟子获得心得', done.sect.disciples.some((d) => d.insight > 0), `最高 ${Math.max(...done.sect.disciples.map((d) => d.insight))}`);
+
+  /* ---- 战力不足时伤亡率更高 ---- */
   let weak: GameState = grant(createInitialState(0), { stone: '1e9' });
   weak = forceBuild(weak, 'thatchHut', 3);
   weak = { ...weak, sect: { ...weak.sect, founded: true } };
   for (let i = 0; i < 3; i += 1) weak = disciples.recruitDisciple(weak, makeRandom(200 + i)).state;
-  const weakIds = weak.sect.disciples.slice(0, realm.partySize).map((d) => d.id);
+  const weakIds = weak.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
   const weakStarted = expeditions.startExpedition(weak, realm.id, weakIds);
   const weakResolved = expeditions.resolveExpedition(
     weakStarted,
@@ -941,38 +1033,49 @@ section('[10] 秘境探索（需求 5）');
     `${weakStarted.sect.disciples.length} → ${weakResolved.sect.disciples.length}`,
   );
 
-  // 丹药掉落
-  check('秘境可能掉成品丹药', done.pills === undefined || true);
-
   // 战力比影响产量：同一秘境，强队收获更多
   const weakGain = weakResolved.materials.demonCore.toNumber();
   const strongGain = done.materials.demonCore.toNumber();
   check('战力越强秘境产量越高', strongGain > weakGain, `${weakGain} → ${strongGain}`);
 
-  // 未解锁的秘境不能派遣
-  const hidden = SECRET_REALM_MAP.gateOfHeaven;
-  check('未解锁的秘境不可派遣', !expeditions.canStartExpedition(strong, hidden.id, ids.slice(0, hidden.partySize)).ok);
-
-  /* ---- 秘境发现的持久性（与建筑同一类 bug） ----
-     黑风岭的发现条件是「拥有过 10 颗妖丹」，而妖丹会被炼丹消耗掉。
-     按当前持有量实时判断的话，玩家一炼丹整片秘境就消失了。 */
-  const blackWind = SECRET_REALM_MAP.blackWindRidge;
-
-  let realmState = engine.refreshUnlocks(createInitialState(0));
-  check('材料不足时黑风岭未发现', !engine.isRealmUnlocked(blackWind, realmState));
-
-  realmState = engine.refreshUnlocks(grant(realmState, { demonCore: '10' }));
-  check('妖丹达到 10 后发现黑风岭', engine.isRealmUnlocked(blackWind, realmState));
-
-  realmState = { ...realmState, materials: { ...realmState.materials, demonCore: D(0) } };
-  check('妖丹花光后黑风岭仍然存在（本次修复的 bug）', engine.isRealmUnlocked(blackWind, realmState));
+  /* ---- 需求 1：发现是「探索中发现」，发现后固定在秘境栏 ---- */
+  // 把所有弟子放到足够高的境界，再反复探索，看能不能把秘境一个个找出来
+  let explorer: GameState = { ...strong, realmIndex: 7 };
+  explorer = {
+    ...explorer,
+    sect: { ...explorer.sect, disciples: explorer.sect.disciples.map((d) => ({ ...d, realmIndex: 7 })) },
+  };
+  const before = expeditions.getUndiscoveredCount(explorer);
+  for (let i = 0; i < 400 && expeditions.getUndiscoveredCount(explorer) > 0; i += 1) {
+    const party = explorer.sect.disciples.slice(0, 2).map((d) => d.id);
+    // 不停在同一个秘境上耗着：每次换一处已发现的、且不在冷却里的
+    const target = SECRET_REALMS.find(
+      (r) => engine.isRealmDiscovered(explorer, r) && !engine.isRealmOnCooldown(explorer, r.id) && r.maxParty >= party.length,
+    );
+    if (!target) {
+      explorer = engine.tickRealmCooldowns(explorer, 99999);
+      continue;
+    }
+    const withStatus = disciples.setDiscipleStatus(explorer, party, 'exploring', 't');
+    explorer = expeditions.resolveExpedition(
+      withStatus,
+      { id: 't', realmId: target.id, discipleIds: party, progress: target.duration, duration: target.duration },
+      makeRandom(1000 + i),
+    ).state;
+    explorer = engine.tickRealmCooldowns(explorer, 99999);
+  }
+  const after = expeditions.getUndiscoveredCount(explorer);
+  check('反复探索能发现新秘境', after < before, `${before} → ${after}`);
   check(
-    '对照：原始发现条件确实已不满足',
-    !engine.meetsRealmUnlockCondition(blackWind, realmState),
+    '已发现的秘境永久固定（不会因为材料变化而消失）',
+    engine.getDiscoveredRealms(explorer).length === SECRET_REALMS.length - after,
   );
 
-  const realmRestored = deserialize(JSON.parse(JSON.stringify(serialize(realmState))));
-  check('秘境发现状态能存档还原', realmRestored !== null && engine.isRealmUnlocked(blackWind, realmRestored));
+  const realmRestored = deserialize(JSON.parse(JSON.stringify(serialize(explorer))));
+  check(
+    '秘境发现状态与冷却都能存档还原',
+    realmRestored !== null && engine.getDiscoveredRealms(realmRestored).length === SECRET_REALMS.length - after,
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -1569,7 +1672,12 @@ section('[20] 钻研与图纸（需求 6）');
   // —— 它们是"能攒下灵气去突破"的前提，卡住它们会直接把游戏锁死
   const UNGATED_OK = new Set(['thatchHut', 'storagePouch']);
   const needTech = STRUCTURES.filter(
-    (s) => s.group !== 'resource' && !s.requiresTech && !s.requiresBlueprint && !UNGATED_OK.has(s.id),
+    (s) =>
+      s.group !== 'resource' &&
+      !s.requiresTech &&
+      !s.requiresBlueprint &&
+      !s.requiresSect &&
+      !UNGATED_OK.has(s.id),
   );
   check(
     '除基础资源设施与少数开局必需建筑外，都有技术或图纸门槛',
@@ -1678,6 +1786,16 @@ section('[20] 钻研与图纸（需求 6）');
   );
   const altar = forceBuild({ ...base, realmIndex: 6 }, 'starAltar', 1);
   check('星坛提高全局产量', engine.getGlobalMultiplier(altar).gt(engine.getGlobalMultiplier({ ...base, realmIndex: 6 })));
+  // 武技阁的 disciplePowerBonus 必须真的接进战力计算（曾经声明了却没接线）
+  const pavilion = forceBuild({ ...base, realmIndex: 5 }, 'martialPavilion', 2);
+  const sample = disciples.rollDisciple(5, 1, makeRandom(1));
+  const plain: GameState = { ...base, realmIndex: 5, sect: { ...base.sect, disciples: [sample] } };
+  const buffed: GameState = { ...pavilion, sect: { ...pavilion.sect, disciples: [sample] } };
+  check(
+    '武技阁真的提高弟子战力',
+    disciples.getDisciplePower(buffed, sample) > disciples.getDisciplePower(plain, sample),
+    `${disciples.getDisciplePower(plain, sample)} → ${disciples.getDisciplePower(buffed, sample)}`,
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -1698,6 +1816,14 @@ section('[21] 新字段的存档往返');
       offers: [{ id: 'o1', kind: 'seed', item: 'demonCore', amount: 3, price: 120, sold: false }],
       secondsLeft: 42,
     },
+    // 需求 1 / 4 的新字段
+    discoveredRealms: { sunsetValley: true, blackWindRidge: true },
+    realmCooldowns: { blackWindRidge: 123 },
+    discoveryPity: 0.24,
+    arenaEnabled: true,
+    arenaTimer: 77,
+    arenaBuffSeconds: 8,
+    sectEventTimer: 31,
   };
   const withSeeds = planting.addSeeds(loaded, 'starSand', 5);
 
@@ -1712,6 +1838,13 @@ section('[21] 新字段的存档往返');
     check('地块保留', round.plantings.length === 1 && round.plantings[0].material === 'demonCore');
     check('种子保留', round.seeds.starSand === 5);
     check('商行货架保留', round.shop.offers.length === 1 && round.shop.secondsLeft === 42);
+    check('已发现秘境保留', engine.isRealmDiscovered(round, SECRET_REALM_MAP.blackWindRidge));
+    check('秘境冷却保留', engine.getRealmCooldown(round, 'blackWindRidge') === 123);
+    check('发现保底保留', Math.abs(round.discoveryPity - 0.24) < 1e-9);
+    check('大比开关保留', round.arenaEnabled === true);
+    check('大比计时保留', round.arenaTimer === 77 && round.arenaBuffSeconds === 8);
+    check('宗门事件计时保留', round.sectEventTimer === 31);
+    check('弟子心得保留', round.sect.disciples.every((d) => typeof d.insight === 'number'));
   }
 
   /* ---- 坏数据不会让读档崩掉 ---- */
@@ -1725,6 +1858,12 @@ section('[21] 新字段的存档往返');
     rs: { id: 'nope', remaining: 5 },
     sh: { offers: [{ kind: 'seed', item: 'notAGood' }], secondsLeft: 'x' },
     pv: { regionId: 'notARegion' },
+    rc: { notARealm: 500, blackWindRidge: -3 },
+    dp: 99,
+    ae: 'yes',
+    arn: -5,
+    arb: 'x',
+    se: 12,
     au: 999,
   });
   check('含垃圾字段的存档仍可读入', junk !== null);
@@ -1736,6 +1875,11 @@ section('[21] 新字段的存档往返');
     check('非法钻研被丢弃', junk.research === null);
     check('非法货品被丢弃', junk.shop.offers.length === 0);
     check('非法游历被丢弃', junk.personalTravel === null);
+    check('非法冷却被丢弃', Object.keys(junk.realmCooldowns).length === 0);
+    check('越界的发现保底被夹回上限', junk.discoveryPity <= DISCOVERY_PITY_CAP);
+    check('非布尔的大比开关按 false 处理', junk.arenaEnabled === false);
+    check('负数的大比计时被夹回 0', junk.arenaTimer >= 0);
+    check('非法的大比加速时长被夹回 0', junk.arenaBuffSeconds === 0);
     check('档位被夹到合法范围', junk.autoRefineLevel <= AUTO_REFINE_LEVEL_MAX);
   }
 
@@ -1786,6 +1930,14 @@ section('[22] 界面：非空状态渲染');
   rich = forceBuild(rich, 'plantation', 2);
   rich = forceBuild(rich, 'tradeHouse', 1);
   rich = forceBuild(rich, 'sectHall', 1);
+  // 需求 4 的宗门建筑 + 需求 5 的地图相关状态
+  rich = forceBuild(rich, 'masterHall', 1);
+  rich = forceBuild(rich, 'mountainGate', 1);
+  rich = forceBuild(rich, 'arena', 1);
+  rich = forceBuild(rich, 'scriptureHall', 1);
+  rich = forceBuild(rich, 'martialPavilion', 1);
+  rich = forceBuild(rich, 'heavenTower', 1);
+  rich = forceBuild(rich, 'skyMirror', 1);
   rich = withTech(
     rich,
     'alchemyArt',
@@ -1795,8 +1947,12 @@ section('[22] 界面：非空状态渲染');
     'tradeArt',
     'plantingArt',
     'preachingArt',
+    'arenaArt',
+    'martialArt',
+    'scriptureArt',
+    'towerArt',
   );
-  rich = withBlueprint(rich, 'spiritBoatBlueprint');
+  rich = withBlueprint(rich, 'spiritBoatBlueprint', 'skyMirrorBlueprint');
   rich = {
     ...rich,
     realmIndex: 5,
@@ -1804,6 +1960,12 @@ section('[22] 界面：非空状态渲染');
     servants: { wood: 3, ore: 2 },
     injurySeconds: 90,
     autoRefineLevel: 2,
+    discoveredRealms: { sunsetValley: true, blackWindRidge: true, boneField: true },
+    realmCooldowns: { blackWindRidge: 90 },
+    discoveryPity: 0.2,
+    arenaEnabled: true,
+    arenaTimer: 60,
+    arenaBuffSeconds: 5,
     sect: {
       ...rich.sect,
       founded: true,
@@ -1844,8 +2006,8 @@ section('[22] 界面：非空状态渲染');
       ['弟子', <DisciplePanel />],
       ['灵植园', <PlantationPanel />],
       ['商行', <ShopPanel />],
-      ['掌门游历', <TravelPanel />],
-      ['秘境', <ExpeditionPanel />],
+      ['地图与探索', <MapPanel />],
+      ['宗门建筑', <SectHallPanel />],
       ['炼丹', <AlchemyPanel />],
       ['炼器', <RefiningPanel />],
       ['库存', <InventoryPanel />],
@@ -1957,6 +2119,36 @@ section('[23] store 动作闭环');
     check('store.buyShopOffer 扣了灵石', after.lt(before), `${fmt(before)} → ${fmt(after)}`);
   }
 
+  /* ---- 宗门大比（需求 4） ---- */
+  {
+    const arenaBase = createInitialState(0);
+    let arena: GameState = grantAll(
+      { ...arenaBase, sect: { ...arenaBase.sect, founded: true } },
+      { qi: '1e9', wood: '1e7', stone: '1e7' },
+    );
+    arena = forceBuild(arena, 'masterHall', 1);
+    arena = engine.refreshUnlocks(withTech(arena, 'arenaArt'));
+    store.setState({ game: arena, notice: null });
+    store.getState().toggleArena();
+    check('store.toggleArena 能建成前拒绝', store.getState().game.arenaEnabled === false);
+    // 大比要有弟子才有意义（没弟子时不会给加速）
+    arena = forceBuild(store.getState().game, 'arena', 1);
+    arena = forceBuild(arena, 'thatchHut', 2);
+    arena = disciples.recruitDisciple(arena, makeRandom(5)).state;
+    check('大比测试场景里招到了弟子', arena.sect.disciples.length === 1);
+    store.setState({ game: arena });
+    store.getState().toggleArena();
+    check('store.toggleArena 生效', store.getState().game.arenaEnabled === true);
+    check('开启后写入满周期', store.getState().game.arenaTimer > 0);
+    store.getState().holdArena();
+    check('周期没走完时不能立刻开比', store.getState().game.arenaBuffSeconds === 0);
+    store.setState({ game: { ...store.getState().game, arenaTimer: 0 } });
+    store.getState().holdArena();
+    check('store.holdArena 生效', store.getState().game.arenaBuffSeconds > 0);
+    store.getState().toggleArena();
+    check('store.toggleArena 可以停办', store.getState().game.arenaEnabled === false);
+  }
+
   /* ---- 建造（技术门槛已过的建筑） ---- */
   seedState();
   const beforeBuild = engine.getBuildingCount(store.getState().game, 'plantation');
@@ -1982,6 +2174,253 @@ section('[23] store 动作闭环');
 
   // 收尾：把 store 恢复成一份干净存档，免得影响后面的检查
   store.setState({ game: createInitialState(0), offline: null, notice: null });
+}
+
+/* ------------------------------------------------------------------ */
+/* 23. 地图与探索距离（需求 5）                                          */
+/* ------------------------------------------------------------------ */
+section('[24] 地图与探索距离（需求 5）');
+{
+  /* ---- 地图完整性：秘境与游历目的地都必须挂到某个区域 ---- */
+  const realmOrphans = SECRET_REALMS.filter((r) => !MAP_REGION_MAP[r.regionId]);
+  check('每处秘境都挂在一个已定义的地图区域下', realmOrphans.length === 0, realmOrphans.map((r) => r.name).join('、'));
+
+  const travelOrphans = TRAVEL_REGIONS.filter((r) => !MAP_REGION_MAP[r.regionId]);
+  check('每个游历目的地都挂在已定义区域下', travelOrphans.length === 0, travelOrphans.map((r) => r.name).join('、'));
+
+  const unlistedRealms = SECRET_REALMS.filter(
+    (r) => !MAP_REGIONS.some((region) => region.realms.includes(r.id)),
+  );
+  check('没有秘境被漏在地图之外', unlistedRealms.length === 0, unlistedRealms.map((r) => r.name).join('、'));
+
+  const unlistedTravel = TRAVEL_REGIONS.filter(
+    (r) => !MAP_REGIONS.some((region) => region.travel.includes(r.id)),
+  );
+  check('没有游历目的地被漏在地图之外', unlistedTravel.length === 0, unlistedTravel.map((r) => r.name).join('、'));
+
+  check(
+    '秘境所在区域的境界门槛不低于秘境自身的弟子门槛',
+    SECRET_REALMS.every((r) => MAP_REGION_MAP[r.regionId].requiresRealm <= r.minRealm),
+  );
+  check(
+    '游历目的地不会出现在还没抵达的区域里',
+    TRAVEL_REGIONS.every((r) => r.minRealm >= MAP_REGION_MAP[r.regionId].requiresRealm),
+  );
+  check('区域按距离由近到远排列', MAP_REGIONS.every((r, i) => i === 0 || r.distance > MAP_REGIONS[i - 1].distance));
+
+  /* ---- 探索距离随境界增长（需求 5 的核心） ---- */
+  const atRealm = (idx: number) => ({ ...createInitialState(0), realmIndex: idx });
+  const range0 = engine.getExplorationRange(atRealm(0));
+  const range3 = engine.getExplorationRange(atRealm(3));
+  const range8 = engine.getExplorationRange(atRealm(8));
+
+  check('开局只能抵达最近的一个区域', range0.reachable.length === 1, `${range0.reachable.length} 区`);
+  check('境界越高可抵达区域越多', range3.reachable.length > range0.reachable.length);
+  check('境界越高探索距离越远', range3.distance > range0.distance, `${range0.distance} → ${range3.distance} 里`);
+  check('最高境界可达全部区域', range8.reachable.length === MAP_REGIONS.length, `${range8.reachable.length}/${MAP_REGIONS.length}`);
+  check(
+    '距离是各区域距离之和',
+    range8.distance === MAP_REGIONS.reduce((sum, r) => sum + r.distance, 0),
+  );
+
+  /* ---- 灵舟坊提高探索距离（造物加成） ---- */
+  const withBoat = forceBuild(engine.refreshUnlocks(grant(atRealm(8), { blackIron: '1e6' })), 'spiritBoat', 2);
+  const boatRange = engine.getExplorationRange(withBoat);
+  check('灵舟坊提高探索距离', boatRange.distance > range8.distance, `${range8.distance} → ${boatRange.distance}`);
+  check('探索距离加成同时提高发现概率', engine.getDiscoveryChance(withBoat) > engine.getDiscoveryChance(atRealm(8)));
+  {
+    // 2 座灵舟坊 = +50% 距离 → 按 DISCOVERY_PER_DISTANCE 折算 +25% 发现概率
+    const delta = engine.getDiscoveryChance(withBoat) - engine.getDiscoveryChance(atRealm(8));
+    check(
+      '距离折算发现概率用的是专门的换算常量（不再和 0.25 重复相乘）',
+      Math.abs(delta - 2 * 0.25 * DISCOVERY_PER_DISTANCE) < 1e-9,
+      `+${(delta * 100).toFixed(1)}%`,
+    );
+  }
+
+  /* ---- 只能发现「够得着」的秘境 ---- */
+  check(
+    '低境界时发现候选只包含近处区域',
+    engine.getUndiscoveredCandidates(atRealm(0)).every((r) => MAP_REGION_MAP[r.regionId].requiresRealm <= 0),
+  );
+  const highCandidates = engine.getUndiscoveredCandidates(atRealm(8));
+  check('高境界时能发现远处的秘境', highCandidates.length >= 6, `${highCandidates.length} 处候选`);
+  check('开局那处不算候选（已经发现了）', !highCandidates.some((r) => r.id === 'sunsetValley'));
+
+  /* ---- 提前一档可见 ---- */
+  const locked0 = engine.getExplorationRange(atRealm(0)).locked;
+  check('提前一个境界能看到下一片区域', locked0.length >= 1, locked0.map((r) => r.name).join('、'));
+}
+
+/* ------------------------------------------------------------------ */
+/* 24. 新增建筑与图纸（需求 3）                                          */
+/* ------------------------------------------------------------------ */
+section('[25] 建筑与图纸扩充（需求 3）');
+{
+  check('建筑数量比上一版明显增加', BUILDABLES.length >= 45, `${BUILDABLES.length} 座`);
+  check('图纸数量增加到 8 张', BLUEPRINTS.length === 8, `${BLUEPRINTS.length} 张`);
+  check('技术数量增加到 19 门', TECHS.length === 19, `${TECHS.length} 门`);
+  check('设施（基础资源建筑）也扩充了', GENERATORS.length >= 10, `${GENERATORS.length} 种`);
+
+  /* ---- 分组自洽：新增的建筑要归到一个已定义的分组 ---- */
+  const groupIds = new Set<string>(BUILD_GROUPS.map((g) => g.id));
+  const badGroup = BUILDABLES.filter((b) => !groupIds.has(b.group));
+  check('所有建筑都归到已定义的分组', badGroup.length === 0, badGroup.map((b) => b.name).join('、'));
+  check('每个分组都至少有一座建筑', BUILD_GROUPS.every((g) => BUILDABLES.some((b) => b.group === g.id)));
+
+  /* ---- id 唯一 ---- */
+  const ids = BUILDABLES.map((b) => b.id);
+  check('建筑 id 不重复', new Set(ids).size === ids.length);
+
+  /* ---- 图纸与建筑的门槛一致（需求 6 的不变量） ---- */
+  check(
+    '每张图纸都对应一座建筑，且境界门槛一致',
+    BLUEPRINTS.every((bp) => {
+      const building = BUILDABLES.find((b) => b.requiresBlueprint === bp.id);
+      return building?.requiresRealm === bp.requiresRealm;
+    }),
+  );
+  check('每张图纸都被某座建筑使用', BLUEPRINTS.every((bp) => BUILDABLES.some((b) => b.requiresBlueprint === bp.id)));
+
+  /* ---- 技术自洽 ---- */
+  const techIds = new Set(TECHS.map((t) => t.id));
+  check('技术 id 不重复', techIds.size === TECHS.length);
+  check('技术前置都存在且不自引用', TECHS.every((t) => t.requires.every((id) => techIds.has(id) && id !== t.id)));
+  check('所有技术都被某座建筑使用', TECHS.every((t) => BUILDABLES.some((b) => b.requiresTech === t.id)));
+
+  /* ---- 新增建筑的效果字段确实会被 engine 汇总 ---- */
+  const bonusKeys = [
+    'disciplePowerBonus',
+    'expeditionYieldBonus',
+    'casualtyReduction',
+    'discoveryBonus',
+    'insightBonus',
+    'expeditionDistanceBonus',
+  ] as const;
+  for (const key of bonusKeys) {
+    const owner = STRUCTURES.find((s) => s[key]);
+    check(`效果「${key}」有建筑提供`, Boolean(owner), owner?.name ?? '无');
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 25. 宗门建筑、心得、大比、随机事件（需求 4）                           */
+/* ------------------------------------------------------------------ */
+section('[26] 宗门建筑与大比（需求 4）');
+{
+  const masterHall = BUILDABLE_MAP.masterHall;
+  const mountainGate = BUILDABLE_MAP.mountainGate;
+  const arena = BUILDABLE_MAP.arena;
+  const martialPavilion = BUILDABLE_MAP.martialPavilion;
+  const scriptureHall = BUILDABLE_MAP.scriptureHall;
+  const heavenTower = BUILDABLE_MAP.heavenTower;
+
+  /* ---- 需求明文：除了掌门大殿和山门，其余建筑需钻研解锁 ---- */
+  check('掌门大殿不需要钻研', masterHall.requiresTech === undefined);
+  check('山门不需要钻研', mountainGate.requiresTech === undefined);
+  check('但两者都需要先开宗立派', masterHall.requiresSect === true && mountainGate.requiresSect === true);
+  check(
+    '比武台 / 武技阁 / 功法殿 / 通天塔都需要钻研',
+    [arena, martialPavilion, scriptureHall, heavenTower].every((d) => Boolean(d.requiresTech)),
+  );
+  check('比武台还需要先有掌门大殿', arena.requiresBuilding === 'masterHall');
+
+  const base = createInitialState(0);
+  check('未开宗时建不了掌门大殿', engine.getBuildGate(masterHall, base) === '需先开宗立派');
+
+  const founded: GameState = engine.refreshUnlocks({
+    ...grant(base, { qi: '1e6', wood: '1e5', stone: '1e5', blackIron: '5000' }),
+    sect: { ...base.sect, founded: true, level: 4 },
+  });
+  check('开宗后可以建掌门大殿', engine.getBuildGate(masterHall, founded) === null);
+  check('没建大殿时比武台被拦下（先看技术）', engine.getBuildGate(arena, founded) === '需钻研「比武之礼」');
+
+  const withTechs = withTech(founded, 'arenaArt', 'martialArt', 'scriptureArt', 'towerArt', 'preachingArt');
+  check('钻研之后仍要求先建掌门大殿', engine.getBuildGate(arena, withTechs) === '需先建掌门大殿');
+
+  let built = forceBuild(withTechs, 'masterHall', 1);
+  built = forceBuild(built, 'arena', 1);
+  built = engine.refreshUnlocks(built);
+  check('建好大殿后比武台可建', engine.getBuildGate(arena, built) === null);
+
+  /* ---- 比武台：玩家决定是否开启 ---- */
+  check('默认未开启', built.arenaEnabled === false && !sectActivity.isArenaRunning(built));
+  const running: GameState = { ...built, arenaEnabled: true, arenaTimer: sectActivity.ARENA_INTERVAL_SECONDS };
+  check('开启后大比开始计时', sectActivity.isArenaRunning(running));
+  check('未开启时没有倒计时', sectActivity.getArenaCountdown(built) === null);
+  check(
+    '十年一比、持续一年',
+    Math.abs(sectActivity.ARENA_INTERVAL_SECONDS - 10 * sectActivity.SECONDS_PER_GAME_YEAR) < 1e-9 &&
+      Math.abs(sectActivity.ARENA_BUFF_SECONDS - sectActivity.SECONDS_PER_GAME_YEAR) < 1e-9,
+    `${sectActivity.ARENA_INTERVAL_SECONDS.toFixed(1)} 秒 / ${sectActivity.ARENA_BUFF_SECONDS.toFixed(1)} 秒`,
+  );
+
+  /* ---- 大比到点自动举办，全宗修行加速 ---- */
+  let sect: GameState = { ...running, sect: { ...running.sect, disciples: [] } };
+  for (let i = 0; i < 4; i += 1) sect = disciples.recruitDisciple(sect, makeRandom(i + 1)).state;
+  const speedBefore = disciples.getDiscipleSpeed(sect, sect.sect.disciples[0]);
+
+  const multBefore = engine.getCultivationSpeedMultiplier(sect);
+  const afterInterval = sectActivity.tickArena(sect, sectActivity.ARENA_INTERVAL_SECONDS + 1);
+  check('到点自动举办大比', afterInterval.arenaBuffSeconds > 0);
+  check('大比后弟子获得心得', afterInterval.sect.disciples.every((d) => d.insight > 0));
+  const speedAfter = disciples.getDiscipleSpeed(afterInterval, afterInterval.sect.disciples[0]);
+  check(
+    '大比使全宗修行倍率翻倍',
+    Math.abs(engine.getCultivationSpeedMultiplier(afterInterval) / multBefore - 2) < 1e-9,
+    `×${engine.getCultivationSpeedMultiplier(afterInterval).toFixed(2)}`,
+  );
+  check('心得与大比叠加，实际速度更高', speedAfter / speedBefore > 2, `×${(speedAfter / speedBefore).toFixed(2)}`);
+  check('大比写入了记事', afterInterval.journal.some((e) => e.text.includes('宗门大比')));
+
+  const expired = sectActivity.tickArena(afterInterval, sectActivity.ARENA_BUFF_SECONDS + 1);
+  check('一年后加速结束', expired.arenaBuffSeconds === 0);
+  check(
+    '倍率回落到大比前的水平',
+    Math.abs(engine.getCultivationSpeedMultiplier(expired) - multBefore) < 1e-9,
+    `×${engine.getCultivationSpeedMultiplier(expired).toFixed(2)}`,
+  );
+  check('停办后不再自动开比', sectActivity.tickArena({ ...running, arenaEnabled: false }, 1e6).arenaBuffSeconds === 0);
+
+  /* ---- 需求 4：弟子探索后增加心得，加快进境 ---- */
+  const withInsight: GameState = {
+    ...sect,
+    sect: { ...sect.sect, disciples: sect.sect.disciples.map((d) => ({ ...d, insight: 50 })) },
+  };
+  check('心得提高修行速度', disciples.getInsightSpeedBonus(withInsight.sect.disciples[0]) > 0);
+  check(
+    '每点心得 +1%',
+    Math.abs(disciples.getInsightSpeedBonus(withInsight.sect.disciples[0]) - 0.5) < 1e-9,
+  );
+  const maxed: GameState = {
+    ...sect,
+    sect: { ...sect.sect, disciples: sect.sect.disciples.map((d) => ({ ...d, insight: 9999 })) },
+  };
+  check('心得加速有上限（+100%）', Math.abs(disciples.getInsightSpeedBonus(maxed.sect.disciples[0]) - 1) < 1e-9);
+
+  /* ---- 随机事件：弟子自发使用宗门建筑 ---- */
+  let hall: GameState = forceBuild(withTechs, 'masterHall', 1);
+  hall = forceBuild(hall, 'scriptureHall', 1);
+  hall = forceBuild(hall, 'martialPavilion', 1);
+  hall = forceBuild(hall, 'heavenTower', 1);
+  hall = { ...hall, sect: { ...hall.sect, disciples: [] } };
+  for (let i = 0; i < 3; i += 1) hall = disciples.recruitDisciple(hall, makeRandom(i + 1)).state;
+
+  check('已建成的弟子用建筑会被列出', sectActivity.getEventBuildings(hall).length === 3, `${sectActivity.getEventBuildings(hall).length} 处`);
+  check(
+    '比武台不参与随机事件（需求明文除外）',
+    !sectActivity.getEventBuildings(hall).some((b) => b.id === 'arena'),
+  );
+
+  const fired = sectActivity.rollSectEvent(hall, fixedRandom(0.01));
+  check('随机事件可以触发', fired.text !== null, fired.text ?? '未触发');
+  check('触发后写入了记事', fired.state.journal.length > hall.journal.length);
+  const neverFires = sectActivity.rollSectEvent(hall, fixedRandom(0.999));
+  check('概率不到时不会触发', neverFires.text === null);
+
+  /* ---- 计时器按固定间隔判定，而不是每帧掷骰 ---- */
+  const ticked = sectActivity.tickSectEvents(hall, 1, makeRandom(1));
+  check('不足一个间隔时只累积计时器', ticked.sectEventTimer > 0 && ticked.journal.length === hall.journal.length);
 }
 
 /* ------------------------------------------------------------------ */

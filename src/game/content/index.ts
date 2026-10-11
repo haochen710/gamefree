@@ -7,12 +7,14 @@
  *   buildables.ts   设施与建筑（含灵石合成与自动合成档位）
  *   techs.ts        钻研技术与图纸（需求 6）
  *   shop.ts         商行货品与刷新（需求 3 / 6）
+ *   map.ts          地图与区域划分（需求 5）
  *   travel.ts       个人游历区域（需求 1）
+ *   secretRealms.ts 秘境（发现机制、冷却、人数产出）
+ *   sectActivity.ts 心得、宗门随机事件、大比（需求 4）
  *   realms.ts       境界体系、突破成功率、时间尺度
  *   recipes.ts      丹方、器方、炼丹炼器品阶
  *   sect.ts         弟子资质、宗门品阶、招收规则、名字生成
  *   servants.ts     仆人（杂役）工种与加成
- *   secretRealms.ts 秘境
  *
  * 外界一律 `import { ... } from './content'`，不需要关心内部怎么拆的。
  */
@@ -21,9 +23,11 @@ export * from './planting';
 export * from './buildables';
 export * from './techs';
 export * from './shop';
+export * from './map';
 export * from './travel';
+export * from './secretRealms';
+export * from './sectActivity';
 export * from './realms';
 export * from './recipes';
 export * from './sect';
 export * from './servants';
-export * from './secretRealms';

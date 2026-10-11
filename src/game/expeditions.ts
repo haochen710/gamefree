@@ -1,27 +1,37 @@
 /**
- * 秘境探索（需求 5）
+ * 秘境探索（需求 1 / 5）
  *
  * 一次探索的生命周期：
- *   派遣 → 按探索速度累积进度 → 完成时结算产出与伤亡
+ *   发现 ──► 派遣（minParty~maxParty）──► 按探索速度累积进度
+ *        ──► 结算产出 / 伤亡 / 心得 / 发现新秘境 ──► 该秘境进入冷却
  *
- * 结算的两个核心量：
+ * 需求 1 的三条硬性要求在这里落实：
+ *   「弟子或者玩家探索发现」   → discovery 判定（个人游历里也有一份）
+ *   「发现后固定在秘境栏」     → state.discoveredRealms 只增不减
+ *   「每次探索后需要隔一段时间」→ 结算时写入 realmCooldowns
+ *   「人越多最终获取的资源越多」→ 数量系数 + 掉落条目数都随人数增长
+ *
+ * 结算的核心量：
  *   战力比 = 队伍战力 / 秘境推荐战力
- *   产出   = 基础 × clamp(战力比, 0.5, 3) × 增益 × 随机浮动
+ *   人数系数 = 1 + (人数 - minParty) × PARTY_YIELD_PER_EXTRA
+ *   产出   = 基础 × clamp(战力比, 0.5, 3) × 人数系数 × 增益 × 随机浮动
  *   伤亡率 = 基础伤亡率 / 战力比 × (1 - 减免)
- *
- * 战力比同时影响收益和风险，所以"派谁去"是个真实决策：
- * 派太弱的队伍，收益腰斩且死伤惨重；派最强的队伍，又可能耽误别的探索。
  */
 import { D } from './decimal';
 import { gameRandom, randomId, weightedDraw, type RandomSource } from './random';
 import {
   BLUEPRINTS,
   EXPLORATION_SEEDS,
+  INSIGHT_PER_EXPEDITION,
+  INSIGHT_PER_REALM_LEVEL,
   ITEM_MAP,
   LOOT_ROLLS,
+  LOOT_ROLLS_MAX,
+  LOOT_ROLLS_PER_EXTRA,
   MAX_CASUALTY_RATE,
   MAX_YIELD_FACTOR,
   MIN_YIELD_FACTOR,
+  PARTY_YIELD_PER_EXTRA,
   PILL_DROP_CHANCE,
   PILL_MAP,
   REALMS,
@@ -37,21 +47,29 @@ import {
   type MaterialId,
   type SecretRealmDef,
 } from './content';
-import { addItem, getArtifactBonuses, getStructureBonus, isRealmUnlocked } from './engine';
+import {
+  addItem,
+  discoverRealm,
+  getArtifactBonuses,
+  getDiscoveryChance,
+  getRealmCooldown,
+  getStructureBonus,
+  getUndiscoveredCandidates,
+  growDiscoveryPity,
+  isRealmAvailable,
+  isRealmDiscovered,
+} from './engine';
 import { getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
 import { addSeeds } from './planting';
 import type { Disciple, Expedition, GameState } from './state';
 
 /* ------------------------------------------------------------------ */
-/* 解锁与校验                                                          */
+/* 校验与选人                                                          */
 /* ------------------------------------------------------------------ */
 
-export function getUnlockedRealms(state: GameState): SecretRealmDef[] {
-  return SECRET_REALMS.filter((def) => isRealmUnlocked(def, state));
-}
-
-export function getRunningCount(state: GameState): number {
-  return state.expeditions.length;
+/** 尚未发现的秘境数量（界面上给个「还有几处没找到」的目标感） */
+export function getUndiscoveredCount(state: GameState): number {
+  return SECRET_REALMS.filter((def) => !isRealmDiscovered(state, def)).length;
 }
 
 export function getMaxExpeditions(state: GameState): number {
@@ -72,12 +90,23 @@ export function canStartExpedition(state: GameState, realmId: string, ids: strin
   const def = SECRET_REALM_MAP[realmId];
   if (!def) return { ok: false, reason: '秘境不存在' };
   if (!state.sect.founded) return { ok: false, reason: '尚未开宗立派' };
-  if (!isRealmUnlocked(def, state)) return { ok: false, reason: '尚未发现此秘境' };
+  if (!isRealmDiscovered(state, def)) return { ok: false, reason: '尚未发现此秘境' };
+  if (!isRealmAvailable(state, def)) {
+    const cooldown = getRealmCooldown(state, def.id);
+    if (cooldown > 0) return { ok: false, reason: `冷却中，还需 ${Math.ceil(cooldown)} 秒` };
+    return { ok: false, reason: '此地暂时去不了' };
+  }
   if (state.expeditions.length >= getMaxExpeditions(state)) {
     return { ok: false, reason: '探索队伍已满，提升宗门品阶可增加队伍' };
   }
-  if (ids.length !== def.partySize) {
-    return { ok: false, reason: `需派遣 ${def.partySize} 名弟子` };
+  if (ids.length < def.minParty) {
+    return { ok: false, reason: `至少需派遣 ${def.minParty} 名弟子` };
+  }
+  if (ids.length > def.maxParty) {
+    return { ok: false, reason: `最多可派遣 ${def.maxParty} 名弟子` };
+  }
+  if (new Set(ids).size !== ids.length) {
+    return { ok: false, reason: '同一名弟子不能重复派遣' };
   }
 
   const byId = new Map(state.sect.disciples.map((d) => [d.id, d]));
@@ -92,8 +121,13 @@ export function canStartExpedition(state: GameState, realmId: string, ids: strin
   return { ok: true, reason: null };
 }
 
-/** 自动挑一队满足条件且战力最高的空闲弟子（界面上「推荐队伍」用） */
-export function autoSelectParty(state: GameState, realmId: string): string[] {
+/**
+ * 自动挑一队满足条件且战力最高的空闲弟子（界面上「推荐队伍」用）。
+ *
+ * 默认按 maxParty 满编 —— 「人越多最终获取的资源越多」，
+ * 空闲弟子闲着也是闲着。
+ */
+export function autoSelectParty(state: GameState, realmId: string, size?: number): string[] {
   const def = SECRET_REALM_MAP[realmId];
   if (!def) return [];
 
@@ -101,7 +135,8 @@ export function autoSelectParty(state: GameState, realmId: string): string[] {
     .filter((d) => d.realmIndex >= def.minRealm)
     .sort((a, b) => REALMS[b.realmIndex].power - REALMS[a.realmIndex].power);
 
-  return candidates.slice(0, def.partySize).map((d) => d.id);
+  const want = Math.max(def.minParty, Math.min(size ?? def.maxParty, def.maxParty));
+  return candidates.slice(0, want).map((d) => d.id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -118,6 +153,8 @@ export function startExpedition(
   if (!check.ok) return state;
 
   const def = SECRET_REALM_MAP[realmId];
+  if (!def) return state;
+
   const expedition: Expedition = {
     // 用随机 id 而不是 playTime：同一时刻派出两支队伍时，
     // 基于时间的 id 会撞车，结算时就会误删另一支队伍
@@ -139,7 +176,7 @@ export function startExpedition(
     journal: pushJournal(withStatus.journal, {
       time: withStatus.playTime,
       kind: 'info',
-      text: `${names} 启程探索${def.name}`,
+      text: `${names} 启程探索${def.name}（${ids.length} 人）`,
     }),
   };
 }
@@ -156,8 +193,31 @@ export interface ExpeditionOutcome {
   seeds: { material: MaterialId; amount: number; name: string; icon: string }[];
   /** 寻获的图纸（需求 6） */
   blueprints: { id: string; name: string; icon: string }[];
+  /** 本次新发现的秘境（需求 1） */
+  discovered: { id: string; name: string; icon: string } | null;
+  /** 队员们获得的心得（需求 4） */
+  insight: number;
   casualties: string[];
   powerRatio: number;
+  partySize: number;
+}
+
+/** 人数系数：超出最少人数的部分每人 +40% */
+export function getPartySizeFactor(def: SecretRealmDef, partySize: number): number {
+  const extra = Math.max(0, partySize - def.minParty);
+  return 1 + extra * PARTY_YIELD_PER_EXTRA;
+}
+
+/** 掉落条目数：人数越多抽得越多 */
+export function getLootRolls(def: SecretRealmDef, partySize: number): number {
+  const extra = Math.max(0, partySize - def.minParty);
+  return Math.min(LOOT_ROLLS + extra * LOOT_ROLLS_PER_EXTRA, LOOT_ROLLS_MAX);
+}
+
+/** 一次探索给每名参与者多少心得 */
+export function getExpeditionInsight(state: GameState, def: SecretRealmDef): number {
+  const base = INSIGHT_PER_EXPEDITION + def.minRealm * INSIGHT_PER_REALM_LEVEL;
+  return Math.max(1, Math.round(base * (1 + getStructureBonus(state, 'insightBonus'))));
 }
 
 /**
@@ -178,15 +238,19 @@ export function resolveExpedition(
   const alive = expedition.discipleIds.filter((id) => state.sect.disciples.some((d) => d.id === id));
   const partyPower = getPartyPower(state, alive);
   const powerRatio = def.requiredPower > 0 ? partyPower / def.requiredPower : MAX_YIELD_FACTOR;
+  const partySize = alive.length;
 
   const yieldFactor = Math.min(Math.max(powerRatio, MIN_YIELD_FACTOR), MAX_YIELD_FACTOR);
+  const sizeFactor = getPartySizeFactor(def, partySize);
   const artifacts = getArtifactBonuses(state);
-  const yieldMultiplier = state.buffs.yieldMultiplier * (1 + artifacts.expeditionYield);
+  const yieldMultiplier =
+    state.buffs.yieldMultiplier *
+    (1 + artifacts.expeditionYield + getStructureBonus(state, 'expeditionYieldBonus'));
 
   /* ---- 1. 计算产出 ---- */
   const pool = def.loot.filter((entry) => !entry.guaranteed);
   const guaranteed = def.loot.filter((entry) => entry.guaranteed);
-  const picked: LootEntry[] = [...guaranteed, ...weightedDraw(pool, LOOT_ROLLS, random)];
+  const picked: LootEntry[] = [...guaranteed, ...weightedDraw(pool, getLootRolls(def, partySize), random)];
 
   let working = state;
   const gains: ExpeditionOutcome['gains'] = [];
@@ -194,7 +258,10 @@ export function resolveExpedition(
 
   for (const entry of picked) {
     const variance = YIELD_VARIANCE_MIN + random() * (YIELD_VARIANCE_MAX - YIELD_VARIANCE_MIN);
-    const amount = Math.max(1, Math.floor(entry.amount * yieldFactor * yieldMultiplier * variance));
+    const amount = Math.max(
+      1,
+      Math.floor(entry.amount * yieldFactor * sizeFactor * yieldMultiplier * variance),
+    );
     working = addItem(working, entry.item, D(amount));
     gains.push({
       id: entry.item,
@@ -252,8 +319,40 @@ export function resolveExpedition(
     }
   }
 
+  /* ---- 1d. 发现新秘境（需求 1） ---- */
+  let discovered: ExpeditionOutcome['discovered'] = null;
+  const candidates = getUndiscoveredCandidates(working);
+  if (candidates.length > 0) {
+    const extra = Math.max(0, partySize - def.minParty);
+    if (random() < getDiscoveryChance(working, extra)) {
+      const [found] = weightedDraw(
+        candidates.map((c) => ({ ...c, weight: c.discoveryWeight })),
+        1,
+        random,
+      );
+      if (found) {
+        working = discoverRealm(working, found.id);
+        discovered = { id: found.id, name: found.name, icon: found.icon };
+      }
+    } else {
+      // 没发现也长保底，避免运气差的玩家永远停在第一处秘境
+      working = growDiscoveryPity(working);
+    }
+  }
+
+  /* ---- 1e. 心得（需求 4：弟子探索后增加心得，加快进境） ---- */
+  const insightGain = getExpeditionInsight(working, def);
+
   /* ---- 2. 判定伤亡 ---- */
-  const safety = Math.min(1, Math.max(0, state.buffs.safetyReduction + artifacts.expeditionSafety));
+  const safety = Math.min(
+    1,
+    Math.max(
+      0,
+      state.buffs.safetyReduction +
+        artifacts.expeditionSafety +
+        getStructureBonus(state, 'casualtyReduction'),
+    ),
+  );
   const baseRate = powerRatio > 0 ? def.baseCasualty / powerRatio : MAX_CASUALTY_RATE;
   const casualtyRate = Math.min(Math.max(baseRate, 0), MAX_CASUALTY_RATE) * (1 - safety);
 
@@ -275,7 +374,13 @@ export function resolveExpedition(
 
   const disciples = working.sect.disciples
     .filter((d) => !deadIds.has(d.id))
-    .map((d) => (survivorSet.has(d.id) ? { ...d, status: 'idle' as const, expeditionId: undefined } : d));
+    .map((d) => {
+      const survived = survivorSet.has(d.id);
+      // 生还者：回空闲 + 涨心得；其他人（未参与本次）原样保留
+      return survived
+        ? { ...d, status: 'idle' as const, expeditionId: undefined, insight: d.insight + insightGain }
+        : d;
+    });
 
   let journal = working.journal;
   const summary = gains.map((g) => `${g.icon}${g.name}×${g.amount}`).join(' ');
@@ -288,8 +393,17 @@ export function resolveExpedition(
   journal = pushJournal(journal, {
     time: working.playTime,
     kind: 'good',
-    text: `${def.name}探索归来：${summary || '一无所获'}${extra ? `，另得 ${extra}` : ''}`,
+    text: `${def.name}探索归来（${partySize} 人）：${summary || '一无所获'}${
+      extra ? `，另得 ${extra}` : ''
+    }`,
   });
+  if (discovered) {
+    journal = pushJournal(journal, {
+      time: working.playTime,
+      kind: 'good',
+      text: `弟子在${def.name}深处发现了新的秘境：${discovered.icon}${discovered.name}`,
+    });
+  }
   if (casualties.length > 0) {
     journal = pushJournal(journal, {
       time: working.playTime,
@@ -302,6 +416,8 @@ export function resolveExpedition(
     ...working,
     sect: { ...working.sect, disciples },
     expeditions: working.expeditions.filter((e) => e.id !== expedition.id),
+    // 需求 1：每次探索后要隔一段时间才能再探
+    realmCooldowns: { ...working.realmCooldowns, [def.id]: def.cooldown },
     journal,
   };
 
@@ -313,8 +429,11 @@ export function resolveExpedition(
       pills: pillGains,
       seeds: seedGains,
       blueprints: blueprintGains,
+      discovered,
+      insight: insightGain,
       casualties: casualties.map((c) => c.name),
       powerRatio,
+      partySize,
     },
   };
 }
@@ -363,3 +482,4 @@ export function getExpeditionProgress(expedition: Expedition): number {
   if (expedition.duration <= 0) return 1;
   return Math.min(1, expedition.progress / expedition.duration);
 }
+

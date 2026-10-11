@@ -13,6 +13,7 @@ import { fmt } from '../game/decimal';
 import {
   BLUEPRINT_MAP,
   BUILDABLES,
+  BUILDABLE_MAP,
   BUILD_GROUPS,
   REALMS,
   RESOURCE_MAP,
@@ -46,9 +47,16 @@ function describeEffect(def: StructureDef): string {
   if (def.refiningSlots) parts.push(`炼器位 +${def.refiningSlots}`);
   if (def.shopSlots) parts.push(`商行货位 +${def.shopSlots}`);
   if (def.cultivationBonus) parts.push(`弟子修炼 +${Math.round(def.cultivationBonus * 100)}%`);
+  if (def.disciplePowerBonus) parts.push(`弟子战力 +${Math.round(def.disciplePowerBonus * 100)}%`);
   if (def.expeditionSpeedBonus) parts.push(`探索速度 +${Math.round(def.expeditionSpeedBonus * 100)}%`);
+  if (def.expeditionDistanceBonus) parts.push(`探索距离 +${Math.round(def.expeditionDistanceBonus * 100)}%`);
+  if (def.expeditionYieldBonus) parts.push(`秘境产出 +${Math.round(def.expeditionYieldBonus * 100)}%`);
+  if (def.casualtyReduction) parts.push(`伤亡率 -${Math.round(def.casualtyReduction * 100)}%`);
+  if (def.discoveryBonus) parts.push(`发现秘境 +${Math.round(def.discoveryBonus * 100)}%`);
+  if (def.insightBonus) parts.push(`弟子心得 +${Math.round(def.insightBonus * 100)}%`);
   if (def.breakthroughBonus) parts.push(`突破成功率 +${Math.round(def.breakthroughBonus * 100)}%`);
   if (def.productionBonus) parts.push(`全局产量 +${Math.round(def.productionBonus * 100)}%`);
+  if (def.arena) parts.push('解锁宗门大比');
   if (def.storage) {
     const storage = (Object.entries(def.storage) as [ResourceId, number][])
       .map(([id, amount]) => `${RESOURCE_MAP[id].icon}+${fmt(amount)}`)
@@ -67,6 +75,9 @@ function describeEffect(def: StructureDef): string {
 function GateTags({ def, state }: { def: BuildableDef; state: GameState }) {
   const tags: { text: string; done: boolean }[] = [];
 
+  if (def.requiresSect) {
+    tags.push({ text: '已开宗立派', done: state.sect.founded });
+  }
   if (def.requiresTech) {
     tags.push({
       text: `技术：${TECH_MAP[def.requiresTech]?.name ?? def.requiresTech}`,
@@ -77,6 +88,13 @@ function GateTags({ def, state }: { def: BuildableDef; state: GameState }) {
     tags.push({
       text: `图纸：${BLUEPRINT_MAP[def.requiresBlueprint]?.name ?? def.requiresBlueprint}`,
       done: state.blueprints[def.requiresBlueprint] === true,
+    });
+  }
+  if (def.requiresBuilding) {
+    const need = BUILDABLE_MAP[def.requiresBuilding];
+    tags.push({
+      text: `前置：${need?.name ?? def.requiresBuilding}`,
+      done: getBuildingCount(state, def.requiresBuilding) > 0,
     });
   }
   if (def.requiresRealm !== undefined && def.requiresRealm > 0) {

@@ -1,5 +1,5 @@
 /**
- * 个人游历（需求 1）
+ * 个人游历（需求 1 / 5）
  *
  * 掌门亲自出门，按境界开放区域，带回资源、材料与种子。
  *
@@ -8,12 +8,17 @@
  *   - 但**出门期间全局产量下降**（engine.getTravelMultiplier）
  *   - 没有宗门也能进行 —— 这正是需求 1 想解决的"开宗之前没事干"
  *
- * 材料门槛完全由区域的 minRealm 决定，这就是「材料的获取跟着玩家的等级走」。
+ * 需求 5 之后，能去哪儿由**地图区域**决定（见 map.ts）：
+ * 境界越高飞得越远，区域门槛就是「探索距离」的体现。
+ * 掌门出门同样可能**发现新秘境**（需求 1：「弟子或者玩家探索发现」）。
  */
 import { D } from './decimal';
 import {
   EXPLORATION_SEEDS,
+  INSIGHT_PER_TRAVEL,
   ITEM_MAP,
+  MAP_REGIONS,
+  MAP_REGION_MAP,
   MATERIAL_MAP,
   REALMS,
   SEED_MAP,
@@ -27,7 +32,16 @@ import {
   type MaterialId,
   type TravelRegionDef,
 } from './content';
-import { addItem } from './engine';
+import {
+  addItem,
+  canReachRegion,
+  discoverRealm,
+  getDiscoveryChance,
+  getStructureBonus,
+  getUndiscoveredCandidates,
+  growDiscoveryPity,
+  isRegionVisible,
+} from './engine';
 import { pushJournal } from './disciples';
 import { addSeeds } from './planting';
 import { gameRandom, weightedDraw, type RandomSource } from './random';
@@ -37,17 +51,22 @@ import type { GameState, PersonalTravel } from './state';
 /* 区域可见性与校验                                                     */
 /* ------------------------------------------------------------------ */
 
-
-/** 已经能去的区域 */
-export function getAvailableRegions(state: GameState): TravelRegionDef[] {
-  return TRAVEL_REGIONS.filter((def) => state.realmIndex >= def.minRealm);
+/** 该游历目的地所在的地图区域 */
+export function travelRegionOf(def: TravelRegionDef) {
+  return MAP_REGION_MAP[def.regionId] ?? MAP_REGIONS[0];
 }
 
-/** 可见但还去不了的区域（界面上灰掉，标注所需境界） */
+/** 已经能去的游历目的地（地图区域 + 自身境界双重门槛） */
+export function getAvailableRegions(state: GameState): TravelRegionDef[] {
+  return TRAVEL_REGIONS.filter((def) => canReachRegion(state, travelRegionOf(def)));
+}
+
+/** 可见但还去不了的（提前一档显示，标注所需境界） */
 export function getLockedRegions(state: GameState): TravelRegionDef[] {
-  return TRAVEL_REGIONS.filter(
-    (def) => state.realmIndex < def.minRealm && state.realmIndex + 1 >= def.minRealm,
-  );
+  return TRAVEL_REGIONS.filter((def) => {
+    const region = travelRegionOf(def);
+    return !canReachRegion(state, region) && isRegionVisible(state, region);
+  });
 }
 
 export function getTravelProgress(travel: PersonalTravel): number {
@@ -64,6 +83,11 @@ export function canStartTravel(state: GameState, regionId: string): TravelCheck 
   const def = TRAVEL_REGION_MAP[regionId];
   if (!def) return { ok: false, reason: '此地不存在' };
   if (state.personalTravel) return { ok: false, reason: '掌门已经在外游历' };
+
+  const region = travelRegionOf(def);
+  if (!canReachRegion(state, region)) {
+    return { ok: false, reason: `探索距离不足，需先能抵达${region.name}（${REALMS[region.requiresRealm].name}）` };
+  }
   if (state.realmIndex < def.minRealm) {
     return { ok: false, reason: `需修至${REALMS[def.minRealm].name}` };
   }
@@ -122,13 +146,15 @@ export interface TravelOutcome {
   regionName: string;
   gains: TravelGain[];
   seeds: TravelSeedGain[];
+  /** 掌门本次发现的新秘境（需求 1） */
+  discovered: { id: string; name: string; icon: string } | null;
 }
 
 /**
  * 结算一次游历。
  *
  * 掉落规则与秘境一致（必掉项 + 按权重不放回抽若干项 + 数量浮动），
- * 差别只在于：不会有伤亡、额外可能带回种子。
+ * 差别只在于：不会有伤亡、且掌门见闻会讲给弟子听（全宗 +1 心得）。
  */
 export function resolveTravel(
   state: GameState,
@@ -152,7 +178,7 @@ export function resolveTravel(
     const variance = YIELD_VARIANCE_MIN + random() * (YIELD_VARIANCE_MAX - YIELD_VARIANCE_MIN);
     let amount = Math.max(1, Math.floor(entry.amount * variance));
     // 出门一趟至少带回 TRAVEL_MIN_STONE 灵石，
-    // 保证第一次出门就一定凑得起第一门技术（炼丹入门 100 灵石）
+    // 保证"第一次出门一定有实在收益"
     if (entry.item === 'stone') {
       amount = Math.max(amount, TRAVEL_MIN_STONE - stoneGained);
       stoneGained += amount;
@@ -188,6 +214,37 @@ export function resolveTravel(
     }
   }
 
+  /* ---- 发现新秘境（需求 1：玩家探索也能发现） ---- */
+  let discovered: TravelOutcome['discovered'] = null;
+  const candidates = getUndiscoveredCandidates(working);
+  if (candidates.length > 0) {
+    if (random() < getDiscoveryChance(working, 0)) {
+      const [found] = weightedDraw(
+        candidates.map((c) => ({ ...c, weight: c.discoveryWeight })),
+        1,
+        random,
+      );
+      if (found) {
+        working = discoverRealm(working, found.id);
+        discovered = { id: found.id, name: found.name, icon: found.icon };
+      }
+    } else {
+      working = growDiscoveryPity(working);
+    }
+  }
+
+  /* ---- 掌门见闻讲与弟子（需求 4 的心得） ---- */
+  const insightGain = Math.max(0, Math.round(INSIGHT_PER_TRAVEL * (1 + getStructureBonus(working, 'insightBonus'))));
+  if (insightGain > 0 && working.sect.disciples.length > 0) {
+    working = {
+      ...working,
+      sect: {
+        ...working.sect,
+        disciples: working.sect.disciples.map((d) => ({ ...d, insight: d.insight + insightGain })),
+      },
+    };
+  }
+
   const summary = gains.map((g) => `${g.icon}${g.name}×${g.amount}`).join(' ');
   const seedText = seedGains.map((s) => `${MATERIAL_MAP[s.material]?.icon ?? '🌰'}${s.name}`).join(' ');
 
@@ -200,7 +257,18 @@ export function resolveTravel(
     }),
   };
 
-  return { state: working, outcome: { regionName: def.name, gains, seeds: seedGains } };
+  if (discovered) {
+    working = {
+      ...working,
+      journal: pushJournal(working.journal, {
+        time: working.playTime,
+        kind: 'good',
+        text: `掌门在${def.name}外发现了新的秘境：${discovered.icon}${discovered.name}`,
+      }),
+    };
+  }
+
+  return { state: working, outcome: { regionName: def.name, gains, seeds: seedGains, discovered } };
 }
 
 /* ------------------------------------------------------------------ */

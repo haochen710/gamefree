@@ -4,13 +4,14 @@
  * 两者共用同一套「等比递增价格」机制，所以共用一个基类。
  * engine.ts 里的价格计算、批量购买对它俩是通用的。
  *
- * 门槛（需求 6 之后）共有五种，全部满足才能建造：
+ * 门槛共有六种，全部满足才能建造：
  *   1. unlock             —— 曾经拥有过若干资源（一次性，永久记录）
  *   2. requiresTech       —— 钻研出对应技术
  *   3. requiresBlueprint  —— 持有对应图纸（只能探索或商行获取）
- *   4. requiresRealm      —— 掌门境界
- *   5. requiresSectLevel  —— 宗门品阶
- * 只有基础资源设施不需要 2/3。
+ *   4. requiresBuilding   —— 先建成某座前置建筑（宗门建筑用）
+ *   5. requiresRealm      —— 掌门境界
+ *   6. requiresSectLevel  —— 宗门品阶
+ * 只有基础资源设施不需要 2~4（也正因为如此，开局永远有路可走）。
  */
 import type { ItemId, ResourceId } from './resources';
 
@@ -22,6 +23,7 @@ export type BuildGroupId =
   | 'workshop'
   | 'farm'
   | 'trade'
+  | 'hall'
   | 'sect';
 
 export interface BuildGroupDef {
@@ -37,8 +39,12 @@ export const BUILD_GROUPS: BuildGroupDef[] = [
   { id: 'workshop', title: '丹器工坊', hint: '决定炼丹炼器的品阶上限，需先钻研' },
   { id: 'farm', title: '灵植药圃', hint: '种植材料种子的地块，需先钻研灵植之术' },
   { id: 'trade', title: '坊市商行', hint: '定期刷新货物，可用灵石换取物资与图纸' },
+  { id: 'hall', title: '宗门建筑', hint: '掌门大殿与山门无需钻研，其余皆需（需求 4）' },
   { id: 'sect', title: '宗门奇珍', hint: '需要技术或图纸才能建造的稀有建筑' },
 ];
+
+/** 弟子自发使用该建筑时触发的事件类型（需求 4） */
+export type SectEventKind = 'cultivate' | 'insight' | 'discover';
 
 export interface BuildableBase {
   id: string;
@@ -62,6 +68,10 @@ export interface BuildableBase {
   requiresTech?: string;
   /** 需要持有该图纸才能建造（需求 6，只能探索或商行获得） */
   requiresBlueprint?: string;
+  /** 需要先建成该建筑（宗门建筑之间用，需求 4） */
+  requiresBuilding?: string;
+  /** 必须先开宗立派（需求 4：宗门建筑） */
+  requiresSect?: boolean;
   /** 需要宗门达到该等级才能建造（默认 0，即不限制） */
   requiresSectLevel?: number;
   /**
@@ -87,7 +97,7 @@ export interface GeneratorDef extends BuildableBase {
   baseOutput: number;
 }
 
-/** 建筑：不产出资源，提供容量、地块或增益 */
+/** 建筑：不产出资源，提供容量、地块、加成或功能 */
 export interface StructureDef extends BuildableBase {
   kind: 'structure';
   /** 提供多少居所名额（弟子与仆人共用） */
@@ -107,14 +117,30 @@ export interface StructureDef extends BuildableBase {
   storage?: Partial<Record<ResourceId, number>>;
   /** 弟子修炼速度加成（加算，0.15 = +15%） */
   cultivationBonus?: number;
+  /** 弟子战力加成（加成探索收益与降低伤亡） */
+  disciplePowerBonus?: number;
   /** 秘境探索速度加成（加算） */
   expeditionSpeedBonus?: number;
+  /** 探索距离加成（加算）。距离越远，越容易发现远处的秘境（需求 5） */
+  expeditionDistanceBonus?: number;
   /** 突破成功率加成（加算） */
   breakthroughBonus?: number;
   /** 全局产量加成（加算） */
   productionBonus?: number;
+  /** 秘境产出加成（加算） */
+  expeditionYieldBonus?: number;
+  /** 探索伤亡率削减（加算，0.08 = -8%） */
+  casualtyReduction?: number;
+  /** 发现新秘境的概率加成（加算） */
+  discoveryBonus?: number;
+  /** 弟子心得获取加成（加算） */
+  insightBonus?: number;
   /** 商行货位加成（每多一座多上架几件商品） */
   shopSlots?: number;
+  /** 弟子随机事件：弟子会自发来这座建筑（需求 4）。比武台不用这个 */
+  sectEvent?: SectEventKind;
+  /** 是否解锁「大比」（需求 4，只有比武台） */
+  arena?: boolean;
 }
 
 export type BuildableDef = GeneratorDef | StructureDef;
@@ -189,6 +215,72 @@ export const GENERATORS: GeneratorDef[] = [
     costGrowth: 1.17,
     unlock: { herb: 50 },
   },
+  /* ---------------- 需求 3：中期资源设施，单座产出高得多 ---------------- */
+  {
+    id: 'spiritWell',
+    kind: 'generator',
+    group: 'resource',
+    name: '灵泉井',
+    icon: '⛲',
+    desc: '凿通地底灵泉，井口日夜喷涌灵气，远胜聚灵阵。',
+    produces: 'qi',
+    baseOutput: 5,
+    baseCost: { qi: 1e5, stone: 500 },
+    costGrowth: 1.2,
+    unlock: { stone: 300 },
+  },
+  {
+    id: 'bambooSea',
+    kind: 'generator',
+    group: 'resource',
+    name: '灵竹海',
+    icon: '🎋',
+    desc: '成片灵竹自行蔓延，砍之不尽，是中期木料的主力。',
+    produces: 'wood',
+    baseOutput: 2,
+    baseCost: { qi: 4e5, wood: 4000, stone: 1500 },
+    costGrowth: 1.2,
+    unlock: { wood: 3000 },
+  },
+  {
+    id: 'deepMine',
+    kind: 'generator',
+    group: 'resource',
+    name: '深脉矿洞',
+    icon: '🕳',
+    desc: '直下千丈的矿洞，矿脉更厚，出矿远多于浅层。',
+    produces: 'ore',
+    baseOutput: 1.2,
+    baseCost: { qi: 2e6, ore: 4000, stone: 4000 },
+    costGrowth: 1.21,
+    unlock: { ore: 3000 },
+  },
+  {
+    id: 'hundredHerbGarden',
+    kind: 'generator',
+    group: 'resource',
+    name: '百草园',
+    icon: '🌿',
+    desc: '依山势分畦的百草园，灵草长得又快又密。',
+    produces: 'herb',
+    baseOutput: 0.8,
+    baseCost: { qi: 1e7, herb: 6000, stone: 2e4 },
+    costGrowth: 1.22,
+    unlock: { herb: 3000 },
+  },
+  {
+    id: 'stoneLode',
+    kind: 'generator',
+    group: 'resource',
+    name: '灵石母矿',
+    icon: '🔷',
+    desc: '一整条灵石母脉，凿开便是滚滚财源。',
+    produces: 'stone',
+    baseOutput: 0.6,
+    baseCost: { qi: 4e7, stone: 2e4, ore: 2e4 },
+    costGrowth: 1.22,
+    unlock: { stone: 3000 },
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -236,6 +328,21 @@ export const STRUCTURES: StructureDef[] = [
     requiresTech: 'caveHeavenArt',
     requiresSectLevel: 4,
   },
+  {
+    id: 'immortalResidence',
+    kind: 'structure',
+    group: 'housing',
+    name: '仙府',
+    icon: '🏛',
+    desc: '自成一方小世界的府邸，可容纳 100 人。需钻研洞天开辟。',
+    capacity: 100,
+    baseCost: { qi: 5e9, stone: 2e6, starSand: 3000 },
+    costGrowth: 1.4,
+    unlock: { starSand: 1000 },
+    requiresTech: 'caveHeavenArt',
+    requiresSectLevel: 5,
+    max: 5,
+  },
 
   /* ---------------- 丹器工坊 ---------------- */
   {
@@ -263,6 +370,34 @@ export const STRUCTURES: StructureDef[] = [
     costGrowth: 1.2,
     unlock: { ore: 150 },
     requiresTech: 'refiningArt',
+  },
+  {
+    id: 'alchemyFurnace',
+    kind: 'structure',
+    group: 'workshop',
+    name: '丹炉阵',
+    icon: '🫕',
+    desc: '九座丹炉同燃的大阵，一座抵三座丹房。需钻研丹道精要。',
+    alchemySlots: 3,
+    baseCost: { qi: 3e6, fireMarrow: 60, stone: 2e4 },
+    costGrowth: 1.3,
+    unlock: { fireMarrow: 30 },
+    requiresTech: 'alchemyDeep',
+    max: 5,
+  },
+  {
+    id: 'forgeArray',
+    kind: 'structure',
+    group: 'workshop',
+    name: '地火熔炉',
+    icon: '🌋',
+    desc: '引地火入炉，一座抵三座炼器房。需钻研器道精要。',
+    refiningSlots: 3,
+    baseCost: { qi: 8e6, fireMarrow: 120, ore: 5e4 },
+    costGrowth: 1.3,
+    unlock: { fireMarrow: 60 },
+    requiresTech: 'refiningDeep',
+    max: 5,
   },
 
   /* ---------------- 灵植药圃（需求 5） ---------------- */
@@ -295,6 +430,22 @@ export const STRUCTURES: StructureDef[] = [
     requiresSectLevel: 3,
     max: 10,
   },
+  {
+    id: 'spiritFieldArray',
+    kind: 'structure',
+    group: 'farm',
+    name: '灵田阵',
+    icon: '🪴',
+    desc: '以阵养田，一座便有四十块地的产出。需持有灵田阵图。',
+    plots: 40,
+    baseCost: { qi: 5e10, immortalJade: 200, herb: 1e6 },
+    costGrowth: 1.38,
+    unlock: { immortalJade: 100 },
+    requiresBlueprint: 'spiritFieldBlueprint',
+    requiresRealm: 5,
+    requiresSectLevel: 5,
+    max: 5,
+  },
 
   /* ---------------- 坊市（需求 3） ---------------- */
   {
@@ -310,6 +461,116 @@ export const STRUCTURES: StructureDef[] = [
     unlock: { stone: 300 },
     requiresTech: 'tradeArt',
     max: 3,
+  },
+  {
+    id: 'treasureTower',
+    kind: 'structure',
+    group: 'trade',
+    name: '万宝楼',
+    icon: '🏬',
+    desc: '八方商旅云集之地，一座多上四件货。需钻研商道精要。',
+    shopSlots: 4,
+    baseCost: { qi: 2e8, stone: 1e6, lunarCrystal: 200 },
+    costGrowth: 1.4,
+    unlock: { lunarCrystal: 100 },
+    requiresTech: 'tradeDeep',
+    requiresSectLevel: 4,
+    max: 3,
+  },
+
+  /* ---------------- 宗门建筑（需求 4） ---------------- */
+  {
+    id: 'masterHall',
+    kind: 'structure',
+    group: 'hall',
+    name: '掌门大殿',
+    icon: '🏯',
+    desc: '宗门中枢，议事事、藏典籍、供掌门起居。可容纳 20 人，其余宗门建筑皆以此为基。',
+    capacity: 20,
+    baseCost: { qi: 5e4, wood: 3000, stone: 2000 },
+    costGrowth: 1,
+    unlock: {},
+    requiresSect: true,
+    max: 1,
+  },
+  {
+    id: 'mountainGate',
+    kind: 'structure',
+    group: 'hall',
+    name: '山门',
+    icon: '⛩',
+    desc: '山门越高，门下弟子走得越远。每座使发现新秘境的概率 +4%。',
+    discoveryBonus: 0.04,
+    baseCost: { qi: 2e4, wood: 1500, stone: 800 },
+    costGrowth: 1.32,
+    unlock: {},
+    requiresSect: true,
+    max: 5,
+  },
+  {
+    id: 'arena',
+    kind: 'structure',
+    group: 'hall',
+    name: '比武台',
+    icon: '🥋',
+    desc: '十年一度的宗门大比在此举行。开启后每十年自动开办，比完全宗弟子修行速度翻倍、持续一年。需钻研比武之礼。',
+    arena: true,
+    baseCost: { qi: 3e5, wood: 8000, blackIron: 120 },
+    costGrowth: 1,
+    unlock: { blackIron: 60 },
+    requiresTech: 'arenaArt',
+    requiresBuilding: 'masterHall',
+    max: 1,
+  },
+  {
+    id: 'martialPavilion',
+    kind: 'structure',
+    group: 'hall',
+    name: '武技阁',
+    icon: '🗡',
+    desc: '藏历代武技之处。弟子战力 +8%/座，且弟子会自发入阁研习、积累心得。需钻研武技精要。',
+    disciplePowerBonus: 0.08,
+    sectEvent: 'insight',
+    baseCost: { qi: 2e5, wood: 5000, blackIron: 80 },
+    costGrowth: 1.3,
+    unlock: { blackIron: 40 },
+    requiresTech: 'martialArt',
+    requiresBuilding: 'masterHall',
+    max: 10,
+  },
+  {
+    id: 'scriptureHall',
+    kind: 'structure',
+    group: 'hall',
+    name: '功法殿',
+    icon: '📜',
+    desc: '供奉宗门功法之处。弟子修炼速度 +12%/座，且弟子会自发入殿参悟、修为骤进。需钻研传法之道。',
+    cultivationBonus: 0.12,
+    sectEvent: 'cultivate',
+    baseCost: { qi: 5e5, wood: 8000, herb: 2e4 },
+    costGrowth: 1.3,
+    unlock: { herb: 5000 },
+    requiresTech: 'scriptureArt',
+    requiresBuilding: 'masterHall',
+    max: 10,
+  },
+  {
+    id: 'heavenTower',
+    kind: 'structure',
+    group: 'hall',
+    name: '通天塔',
+    icon: '🗼',
+    desc: '登塔可远眺千里。秘境产出 +15%/座、发现概率 +3%/座，且弟子登塔后可望见远处秘境。需钻研通天营造。',
+    expeditionYieldBonus: 0.15,
+    discoveryBonus: 0.03,
+    sectEvent: 'discover',
+    baseCost: { qi: 5e7, stone: 5e5, lunarCrystal: 60 },
+    costGrowth: 1.35,
+    unlock: { lunarCrystal: 20 },
+    requiresTech: 'towerArt',
+    requiresBuilding: 'masterHall',
+    requiresSectLevel: 4,
+    max: 5,
   },
 
   /* ---------------- 宗门奇珍（技术 / 图纸） ---------------- */
@@ -329,13 +590,29 @@ export const STRUCTURES: StructureDef[] = [
     max: 10,
   },
   {
+    id: 'insightPool',
+    kind: 'structure',
+    group: 'sect',
+    name: '悟道池',
+    icon: '🪷',
+    desc: '池水映心，弟子所得心得 +25%/座。需钻研悟道之术。',
+    insightBonus: 0.25,
+    baseCost: { qi: 1e7, herb: 1e5, lunarCrystal: 30 },
+    costGrowth: 1.34,
+    unlock: { lunarCrystal: 10 },
+    requiresTech: 'insightArt',
+    requiresSectLevel: 3,
+    max: 5,
+  },
+  {
     id: 'spiritBoat',
     kind: 'structure',
     group: 'sect',
     name: '灵舟坊',
     icon: '🛶',
-    desc: '打造横渡虚空的灵舟，探索速度 +25%。需持有灵舟图纸。',
+    desc: '打造横渡虚空的灵舟，探索速度 +25%、探索距离 +25%。需持有灵舟图纸。',
     expeditionSpeedBonus: 0.25,
+    expeditionDistanceBonus: 0.25,
     baseCost: { qi: 1e6, ore: 2e4, blackIron: 60 },
     costGrowth: 1.35,
     unlock: { blackIron: 40 },
@@ -372,6 +649,67 @@ export const STRUCTURES: StructureDef[] = [
     requiresBlueprint: 'starAltarBlueprint',
     requiresRealm: 6,
     max: 5,
+  },
+  /* ---- 需求 3 新增的图纸建筑：都是"锦上添花"的加成类 ---- */
+  {
+    id: 'beastGate',
+    kind: 'structure',
+    group: 'sect',
+    name: '万兽门',
+    icon: '🐾',
+    desc: '以阵法驱使妖兽为弟子开道，秘境产出 +30%/座。需持有万兽门图。',
+    expeditionYieldBonus: 0.3,
+    baseCost: { qi: 8e7, dragonBlood: 200, demonCore: 5e5 },
+    costGrowth: 1.42,
+    unlock: { dragonBlood: 100 },
+    requiresBlueprint: 'beastGateBlueprint',
+    requiresRealm: 5,
+    max: 3,
+  },
+  {
+    id: 'soulLampArray',
+    kind: 'structure',
+    group: 'sect',
+    name: '引魂灯阵',
+    icon: '🏮',
+    desc: '九盏引魂灯为弟子留一线生机，探索伤亡率 -8%/座。需持有引魂灯图。',
+    casualtyReduction: 0.08,
+    baseCost: { qi: 2e7, netherFlame: 40, coldJade: 5000 },
+    costGrowth: 1.4,
+    unlock: { netherFlame: 20 },
+    requiresBlueprint: 'soulLampBlueprint',
+    requiresRealm: 4,
+    max: 5,
+  },
+  {
+    id: 'skyMirror',
+    kind: 'structure',
+    group: 'sect',
+    name: '照天镜',
+    icon: '🪞',
+    desc: '镜面映照万里山河，发现新秘境的概率 +6%/座。需持有照天镜图。',
+    discoveryBonus: 0.06,
+    baseCost: { qi: 5e6, lunarCrystal: 40, coldJade: 2000 },
+    costGrowth: 1.38,
+    unlock: { lunarCrystal: 20 },
+    requiresBlueprint: 'skyMirrorBlueprint',
+    requiresRealm: 3,
+    max: 3,
+  },
+  {
+    id: 'dragonVein',
+    kind: 'structure',
+    group: 'sect',
+    name: '龙脉',
+    icon: '🐉',
+    desc: '截取地脉中一缕龙气为己用，全局产量 +35%/座。需持有龙脉图。',
+    productionBonus: 0.35,
+    baseCost: { qi: 1e12, dragonBlood: 2000, immortalJade: 200 },
+    costGrowth: 1.5,
+    unlock: { dragonBlood: 1000 },
+    requiresBlueprint: 'dragonVeinBlueprint',
+    requiresRealm: 6,
+    max: 3,
   },
 ];
 
@@ -431,8 +769,8 @@ interface StorageTier {
  * 造价则定为「上一级容量的 0.6 倍」，保证永远买得起：
  * 两座上一级仓库就足够攒出下一级的钱，不存在死锁。
  *
- * 第 4 级起额外要求「须弥之法」，第 7 级起要求「混元之法」——
- * 这两步是需求 6 的体现：光有等级还不够，还得有技术。
+ * 第 2 级起要求「储物之术」，第 4 级起「须弥之法」，第 7 级起「混元之法」——
+ * 这几步是需求 6 的体现：光有等级还不够，还得有技术。
  */
 const STORAGE_TIERS: StorageTier[] = [
   { id: 'storagePouch', name: '储物袋', icon: '👝', desc: '最简易的储物法器，内有方寸之地。', power: 2e3, realm: 0, cost: 150 },

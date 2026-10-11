@@ -21,6 +21,7 @@ import {
   BUILDABLE_MAP,
   GENERATORS,
   MATERIAL_IDS,
+  MAP_REGIONS,
   MATERIAL_MAP,
   PILL_MAP,
   REALMS,
@@ -28,6 +29,7 @@ import {
   RESOURCE_IDS,
   SECT_LEVELS,
   SECRET_REALMS,
+  SECRET_REALM_MAP,
   SERVANT_JOBS,
   STRUCTURES,
   TECHS,
@@ -45,6 +47,7 @@ import * as research from '../src/game/research';
 import * as planting from '../src/game/planting';
 import * as shop from '../src/game/shop';
 import * as travel from '../src/game/travel';
+import * as sectActivity from '../src/game/sectActivity';
 import { applyTick } from '../src/game/tick';
 
 /* ------------------------------------------------------------------ */
@@ -103,7 +106,10 @@ function shadowPrices(state: GameState): Record<string, number> {
   const prices: Record<string, number> = { qi: 1, wood: 1, ore: 1, stone: 1, herb: 1 };
   for (const id of ['wood', 'ore', 'stone', 'herb'] as const) {
     const rate = production[id].toNumber();
-    prices[id] = rate > 0 && qi > 0 ? qi / rate : 1;
+    // 产率为 0 时不能按 1 计价 —— 那等于"白送"，AI 会一直忽视它。
+    // 灵石尤其致命：灵石矿单座产出低、容易被别的建筑挤掉，
+    // 一旦按 1 计价，AI 就再也不建灵石矿，最后卡在"没灵石招弟子"上。
+    prices[id] = rate > 0 && qi > 0 ? qi / rate : 400;
   }
   return prices;
 }
@@ -131,6 +137,13 @@ function payback(state: GameState, id: string, prices: Record<string, number>): 
     return value > 0 ? qiCost / value : Infinity;
   }
 
+  // 宗门建筑：'是不是前置''有没有功能'比容量更重要，所以排在最前面
+  if (def.requiresSect && engine.getBuildingCount(state, def.id) === 0) {
+    // 掌门大殿是其余宗门建筑的前提，先建它
+    const isPrereq = STRUCTURES.some((s) => s.requiresBuilding === def.id);
+    const value = def.arena ? 0.1 : def.sectEvent ? 0.15 : isPrereq ? 0.5 : 0.05;
+    return qiCost / (mult * value);
+  }
   if (def.capacity) {
     // 空房间少于 4 间就该扩建了（弟子和仆人都要住）
     const need = engine.getFreeHousing(state) < 4;
@@ -153,9 +166,25 @@ function payback(state: GameState, id: string, prices: Record<string, number>): 
     // 第一座商行是功能性的；再往后只是为了多两个货位，价值不高
     return engine.getBuildingCount(state, def.id) === 0 ? qiCost / (mult * 0.6) : Infinity;
   }
-  // 纯加成类建筑（讲道堂 / 灵舟坊 / 雷池 / 星坛）：按加成强度折算出"回本时间"
+  if (def.arena) {
+    // 比武台是功能性的：十年一次、全宗修行翻倍一年 —— 折算约 +10% 修行速度
+    return engine.getBuildingCount(state, def.id) === 0 ? qiCost / (mult * 0.1) : Infinity;
+  }
+  if (def.sectEvent) {
+    // 弟子用建筑：能提供随机事件与心得，价值按效果与稀缺度粗估
+    const value = (def.cultivationBonus ?? 0) + (def.disciplePowerBonus ?? 0) + 0.05;
+    return qiCost / (mult * value);
+  }
+  // 纯加成类建筑（讲道堂 / 灵舟坊 / 雷池 / 星坛 / 万兽门 …）：按加成强度折算"回本时间"
   const strength =
-    def.productionBonus ?? def.cultivationBonus ?? def.expeditionSpeedBonus ?? def.breakthroughBonus ?? 0;
+    def.productionBonus ??
+    def.expeditionYieldBonus ??
+    def.cultivationBonus ??
+    def.expeditionSpeedBonus ??
+    def.discoveryBonus ??
+    def.insightBonus ??
+    def.breakthroughBonus ??
+    0;
   if (strength > 0) return qiCost / (mult * strength);
   return Infinity;
 }
@@ -194,6 +223,7 @@ function runSimulation(seed: number): SimResult {
   const seenSectLevel = new Set<number>([1]);
   const seenAlchemy = new Set<number>([1]);
   const seenRefining = new Set<number>([1]);
+  const seenHall = new Set<string>();
   const flags = {
     firstTravel: false,
     firstTravelBack: false,
@@ -292,10 +322,12 @@ function runSimulation(seed: number): SimResult {
 
       if (state.expeditions.length < expeditions.getMaxExpeditions(state)) {
         let started = false;
+        // 从最远的已发现秘境往前找：收益最高的优先。
+        // 冷却中或暂时去不了的会被 canStartExpedition 挡掉。
         for (const realm of [...SECRET_REALMS].reverse()) {
-          if (!engine.isRealmUnlocked(realm, state)) continue;
+          if (!engine.isRealmDiscovered(state, realm)) continue;
           const party = expeditions.autoSelectParty(state, realm.id);
-          if (party.length < realm.partySize) continue;
+          if (party.length < realm.minParty) continue;
           const next = expeditions.startExpedition(state, realm.id, party);
           if (next !== state) {
             state = next;
@@ -359,7 +391,8 @@ function runSimulation(seed: number): SimResult {
          - 开宗后：始终给弟子留 8 个空位，其余照收；
                    真的一个空位都没有时才腾退仆人 */
     const freeHousing = engine.getFreeHousing(state);
-    const servantReserve = state.sect.founded ? 4 : 0;
+    // 开宗之后要给弟子留够位置：留 10 间，够招满一品宗门的 6 名弟子
+    const servantReserve = state.sect.founded ? 10 : 0;
 
     if (freeHousing <= 0 && state.sect.founded && engine.getServantCount(state) > 0) {
       // 从人数最多的工种里遣散一个，给弟子腾位置
@@ -392,6 +425,40 @@ function runSimulation(seed: number): SimResult {
           record(`首位仆役入府（${best.name}）`);
         }
         continue;
+      }
+    }
+
+    /* ---------------- 2b2. 宗门建筑与大比（需求 4） ----------------
+       宗门建筑几乎都靠技术解锁，AI 只要建得起就建；
+       比武台一建成立刻开启大比（十年一次的全宗修行翻倍，没有理由不开）。 */
+    if (state.sect.founded) {
+      const hallCandidates = STRUCTURES.filter(
+        (def) => def.group === 'hall' && engine.getBuildGate(def, state) === null,
+      ).sort((a, b) => {
+        const order = (id: string) => (id === 'masterHall' ? 0 : id === 'arena' ? 1 : 2);
+        return order(a.id) - order(b.id);
+      });
+
+      let builtHall = false;
+      for (const def of hallCandidates) {
+        const owned = engine.getBuildingCount(state, def.id);
+        if (owned >= engine.getMaxCount(def)) continue;
+        if (!engine.canAfford(state, engine.getCost(def, owned, 1))) continue;
+        const next = engine.buyBuilding(state, def, 1);
+        if (next !== state) {
+          state = next;
+          builtHall = true;
+          if (!seenHall.has(def.id)) {
+            seenHall.add(def.id);
+            record(`建成${def.name}`);
+          }
+          break;
+        }
+      }
+
+      if (!builtHall && sectActivity.hasArena(state) && !state.arenaEnabled) {
+        state = { ...state, arenaEnabled: true, arenaTimer: sectActivity.ARENA_INTERVAL_SECONDS };
+        record('开启宗门大比');
       }
     }
 
@@ -680,6 +747,49 @@ function printDetail(result: SimResult): void {
   }
   const blueprints = Object.keys(state.blueprints);
   console.log(`  图纸：${blueprints.length} 张${blueprints.length > 0 ? `（${blueprints.join('、')}）` : ''}`);
+
+  /* ---- 需求 5：地图与探索距离 ---- */
+  const range = engine.getExplorationRange(state);
+  const discovered = engine.getDiscoveredRealms(state);
+  console.log(
+    `  探索：距离 ${range.distance} 里 · 可达 ${range.reachable.length}/${MAP_REGIONS.length} 区（${range.reachable
+      .map((r) => r.name)
+      .join('、')}）`,
+  );
+  console.log(
+    `  已发现秘境：${discovered.length}/${SECRET_REALMS.length}（${discovered.map((r) => r.name).join('、')}）`,
+  );
+  const cooling = Object.entries(state.realmCooldowns);
+  console.log(
+    `  冷却中的秘境：${
+      cooling.length === 0
+        ? '无'
+        : cooling.map(([id, s]) => `${SECRET_REALM_MAP[id]?.name ?? id} ${fmtDuration(s)}`).join('，')
+    }`,
+  );
+
+  /* ---- 需求 4：宗门建筑、大比、心得 ---- */
+  const hallBuilt = STRUCTURES.filter(
+    (def) => def.group === 'hall' && engine.getBuildingCount(state, def.id) > 0,
+  ).map((def) => `${def.name}×${engine.getBuildingCount(state, def.id)}`);
+  console.log(`  宗门建筑：${hallBuilt.length === 0 ? '无' : hallBuilt.join('，')}`);
+  if (sectActivity.hasArena(state)) {
+    const countdown = sectActivity.getArenaCountdown(state);
+    console.log(
+      `  大比：${sectActivity.isArenaRunning(state) ? '已开启' : '已停办'}${
+        countdown !== null ? `，距下次 ${fmtDuration(countdown)}` : ''
+      }${sectActivity.isArenaBuffActive(state) ? `，加速中（剩 ${fmtDuration(state.arenaBuffSeconds)}）` : ''}`,
+    );
+  } else {
+    console.log('  大比：未建比武台');
+  }
+  const insights = state.sect.disciples.map((d) => d.insight).sort((a, b) => b - a);
+  const medianInsight = insights[Math.floor(insights.length / 2)] ?? 0;
+  console.log(
+    `  弟子心得：最高 ${Math.round(insights[0] ?? 0)} · 中位 ${Math.round(medianInsight)} · 修行倍率 ×${engine
+      .getCultivationSpeedMultiplier(state)
+      .toFixed(2)}`,
+  );
 
   /* ---- 需求 4：自动合成 ---- */
   console.log(

@@ -16,12 +16,19 @@ import {
   APTITUDE_ORDER,
   GAME_DAYS_PER_SECOND,
   GAME_DAYS_PER_YEAR,
+  INSIGHT_SPEED_CAP,
+  INSIGHT_SPEED_PER_POINT,
   REALMS,
   randomDiscipleName,
   recruitCost,
   rollAptitude,
 } from './content';
-import { getArtifactBonuses, getCultivationSpeedMultiplier, getDiscipleCapacity } from './engine';
+import {
+  getArtifactBonuses,
+  getCultivationSpeedMultiplier,
+  getDiscipleCapacity,
+  getStructureBonus,
+} from './engine';
 import { JOURNAL_LIMIT, type Disciple, type GameState, type JournalEntry } from './state';
 
 /** 弟子一生最多一次跨多少个境界（防止极端离线时间把循环跑爆） */
@@ -61,7 +68,25 @@ export function rollDisciple(sectLevel: number, id: number, random: RandomSource
     progress: random() * 5,
     age: 16 + Math.floor(random() * 14),
     status: 'idle',
+    insight: 0,
   };
+}
+
+/**
+ * 心得带来的修行速度加成（需求 4：弟子探索后增加心得，加快进境）。
+ *
+ * 每点心得 +1%，最多 +100%（100 点封顶）。
+ * 上限定成 100 点，是为了让"心得"是**成长曲线**而不是无限叠加的乘区 ——
+ * 探索几百次之后弟子仍要靠境界和资质往前走。
+ */
+export function getInsightSpeedBonus(disciple: Disciple): number {
+  return Math.min(disciple.insight * INSIGHT_SPEED_PER_POINT, INSIGHT_SPEED_CAP);
+}
+
+/** 弟子的综合修行速度倍率：资质 × (1 + 心得) × 建筑/大比 */
+export function getDiscipleSpeed(state: GameState, disciple: Disciple): number {
+  const aptitude = APTITUDE_MAP[disciple.aptitude].speed;
+  return aptitude * (1 + getInsightSpeedBonus(disciple)) * getCultivationSpeedMultiplier(state);
 }
 
 export interface RecruitResult {
@@ -142,10 +167,18 @@ export function aptitudeRank(id: string): number {
   return index < 0 ? 0 : index;
 }
 
-/** 弟子的战力（受境界与丹药/器物加成影响） */
+/**
+ * 弟子的战力（受境界、丹药增益、器物与宗门建筑加成影响）。
+ *
+ * 宗门建筑这一项是需求 4 的「武技阁」：声明了 `disciplePowerBonus: 0.08`
+ * 却一度没接线 —— 界面上写着 +8%/座、模拟器也按它有值来估值，
+ * 但实际战力算不出来。这是文档核对时被翻出来的。
+ */
 export function getDisciplePower(state: GameState, disciple: Disciple): number {
   const base = REALMS[Math.min(disciple.realmIndex, REALMS.length - 1)].power;
-  const multiplier = state.buffs.powerMultiplier * (1 + getArtifactBonuses(state).combat);
+  const multiplier =
+    state.buffs.powerMultiplier *
+    (1 + getArtifactBonuses(state).combat + getStructureBonus(state, 'disciplePowerBonus'));
   return base * multiplier;
 }
 
@@ -176,8 +209,7 @@ function pushJournal(journal: JournalEntry[], entry: JournalEntry): JournalEntry
 export function tickDisciples(state: GameState, dt: number): GameState {
   if (state.sect.disciples.length === 0 || dt <= 0) return state;
 
-  // 讲道堂等建筑加快弟子修行（需求 6 的稀有建筑效果）
-  const years = ((dt * GAME_DAYS_PER_SECOND) / GAME_DAYS_PER_YEAR) * getCultivationSpeedMultiplier(state);
+  const years = (dt * GAME_DAYS_PER_SECOND) / GAME_DAYS_PER_YEAR;
   if (years <= 0) return state;
 
   const lifespanBonus = 1 + state.sect.lifespanBonus;
@@ -187,14 +219,14 @@ export function tickDisciples(state: GameState, dt: number): GameState {
   let changed = false;
 
   for (const disciple of state.sect.disciples) {
-    const aptitude = APTITUDE_MAP[disciple.aptitude];
     const age = disciple.age + years;
 
     /* --- 修为推进：可能一次跨越多个境界（离线很久时） --- */
     const realmCap = getDiscipleRealmCap(state, disciple);
     let realmIndex = disciple.realmIndex;
     let progress = disciple.progress;
-    let remaining = years * aptitude.speed;
+    // 心得与宗门建筑/大比都在这里一起生效（需求 4）
+    let remaining = years * getDiscipleSpeed(state, disciple);
     let jumps = 0;
 
     while (remaining > 0 && realmIndex < realmCap && jumps < MAX_REALM_JUMPS) {

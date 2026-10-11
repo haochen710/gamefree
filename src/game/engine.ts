@@ -10,6 +10,7 @@
 import Decimal, { D } from './decimal';
 import {
   ALCHEMY_SLOT_REQUIREMENT,
+  ARENA_BUFF_MULTIPLIER,
   ARTIFACTS,
   AUTO_REFINE_LEVEL_MAX,
   AUTO_REFINE_RATES,
@@ -20,9 +21,16 @@ import {
   BREAKTHROUGH_MAX_SUCCESS,
   BREAKTHROUGH_PILL_BONUS,
   BUILDABLES,
+  BUILDABLE_MAP,
   DAO_YUN_BONUS,
   DAO_YUN_DIVISOR,
   DAO_YUN_EXPONENT,
+  DISCOVERY_BASE_CHANCE,
+  DISCOVERY_MAX_CHANCE,
+  DISCOVERY_PER_DISTANCE,
+  DISCOVERY_PER_EXTRA_MEMBER,
+  DISCOVERY_PITY_CAP,
+  DISCOVERY_PITY_STEP,
   FINAL_REALM_INDEX,
   GENERATORS,
   INJURY_FALLBACK_SECONDS,
@@ -30,6 +38,8 @@ import {
   INJURY_PRODUCTION_PENALTY,
   INJURY_SECONDS,
   ITEM_MAP,
+  MAP_REGIONS,
+  MAP_REGION_MAP,
   MEDITATE_COST,
   MEDITATE_MIN_QI,
   MEDITATE_SECONDS,
@@ -37,9 +47,10 @@ import {
   MIND_REGEN_SECONDS,
   REALMS,
   REFINING_SLOT_REQUIREMENT,
+  REGION_PREVIEW_REALMS,
   RESOURCE_IDS,
-  SECT_LEVELS,
   SECRET_REALMS,
+  SECT_LEVELS,
   SERVANT_BONUS_PER_HEAD,
   SERVANT_JOBS,
   SHOP_OFFER_COUNT,
@@ -54,6 +65,7 @@ import {
   type BuildableDef,
   type GeneratorDef,
   type ItemId,
+  type MapRegionDef,
   type RealmDef,
   type ResourceId,
   type SecretRealmDef,
@@ -236,7 +248,13 @@ export function blueprintName(id: string): string {
  */
 export type StructureBonusKey =
   | 'cultivationBonus'
+  | 'disciplePowerBonus'
   | 'expeditionSpeedBonus'
+  | 'expeditionDistanceBonus'
+  | 'expeditionYieldBonus'
+  | 'casualtyReduction'
+  | 'discoveryBonus'
+  | 'insightBonus'
   | 'breakthroughBonus'
   | 'productionBonus';
 
@@ -251,9 +269,168 @@ export function getStructureBonus(state: GameState, key: StructureBonusKey): num
   return total;
 }
 
-/** 弟子修炼速度倍率（讲道堂等建筑提供） */
+/**
+ * 弟子修炼速度倍率。
+ *
+ * = 1 + 建筑加成（讲道堂 / 功法殿）+ 大比加成（需求 4）
+ * 大比每次持续一个游戏年，效果是翻倍 —— 十年一比，
+ * 折算下来长期收益约 +10%，是个"节日型"的加成而不是常驻强度。
+ */
 export function getCultivationSpeedMultiplier(state: GameState): number {
-  return 1 + getStructureBonus(state, 'cultivationBonus');
+  const base = 1 + getStructureBonus(state, 'cultivationBonus');
+  const arena = state.arenaBuffSeconds > 0 ? ARENA_BUFF_MULTIPLIER : 1;
+  return base * arena;
+}
+
+/* ------------------------------------------------------------------ */
+/* 地图与探索距离（需求 5）                                             */
+/* ------------------------------------------------------------------ */
+
+export interface ExplorationRange {
+  /** 可抵达的最远区域下标（-1 表示哪儿都去不了） */
+  maxRegionIndex: number;
+  /** 当前探索距离（里） */
+  distance: number;
+  /** 探索距离倍率（灵舟坊等提供） */
+  distanceMultiplier: number;
+  /** 当前可抵达的区域 */
+  reachable: MapRegionDef[];
+  /** 可见但还去不了的区域（提前一档显示，便于规划） */
+  locked: MapRegionDef[];
+}
+
+/** 某个地图区域当前是否已可抵达 */
+export function canReachRegion(state: GameState, def: MapRegionDef): boolean {
+  return state.realmIndex >= def.requiresRealm;
+}
+
+/** 某个地图区域是否已「看得见」（提前一档显示，让玩家知道远处有什么） */
+export function isRegionVisible(state: GameState, def: MapRegionDef): boolean {
+  return state.realmIndex + REGION_PREVIEW_REALMS >= def.requiresRealm;
+}
+
+/**
+ * 当前探索范围。
+ *
+ * 境界决定能到哪些区域（「境界越高可以飞行，所以探索距离可以增加」），
+ * 灵舟坊这类造物再给一个距离倍率 —— 它不改变能去的区域，
+ * 而是让同样的境界望得更远（转化为发现秘境的概率，见 getDiscoveryChance）。
+ */
+export function getExplorationRange(state: GameState): ExplorationRange {
+  const distanceMultiplier = 1 + getStructureBonus(state, 'expeditionDistanceBonus');
+
+  const reachable: MapRegionDef[] = [];
+  const locked: MapRegionDef[] = [];
+  let maxRegionIndex = -1;
+  let distance = 0;
+
+  MAP_REGIONS.forEach((region, index) => {
+    if (canReachRegion(state, region)) {
+      reachable.push(region);
+      maxRegionIndex = index;
+      distance += region.distance;
+    } else if (isRegionVisible(state, region)) {
+      locked.push(region);
+    }
+  });
+
+  return {
+    maxRegionIndex,
+    distance: Math.round(distance * distanceMultiplier),
+    distanceMultiplier,
+    reachable,
+    locked,
+  };
+}
+
+/** 某个区域是否已进入探索范围 */
+export function isRegionReachable(state: GameState, regionId: string): boolean {
+  const def = MAP_REGION_MAP[regionId];
+  return Boolean(def) && canReachRegion(state, def);
+}
+
+/** 某处秘境是否在可达区域内（秘境探索的第二道门是它自己的 minRealm） */
+export function isRealmInRange(state: GameState, def: SecretRealmDef): boolean {
+  return isRegionReachable(state, def.regionId);
+}
+
+/* ------------------------------------------------------------------ */
+/* 秘境发现（需求 1）                                                   */
+/* ------------------------------------------------------------------ */
+
+/** 某处秘境是否已经被发现 */
+export function isRealmDiscovered(state: GameState, def: SecretRealmDef): boolean {
+  return state.discoveredRealms[def.id] === true;
+}
+
+/** 已经发现的秘境列表（按地图由近到远排序） */
+export function getDiscoveredRealms(state: GameState): SecretRealmDef[] {
+  return SECRET_REALMS.filter((def) => isRealmDiscovered(state, def));
+}
+
+/**
+ * 当前还可能被发现的秘境。
+ *
+ * 三个条件：还没发现、所在区域已抵达、弟子境界门槛够得着（这里只看区域，
+ * 门派境界以下的部分由 minRealm 在派遣时单独把关）。
+ */
+export function getUndiscoveredCandidates(state: GameState): SecretRealmDef[] {
+  return SECRET_REALMS.filter(
+    (def) => !isRealmDiscovered(state, def) && isRealmInRange(state, def) && def.discoveryWeight > 0,
+  );
+}
+
+/**
+ * 一次探索结束时的「发现新秘境」概率。
+ *
+ * = 基础 + 保底累积 + 建筑加成（山门 / 通天塔 / 照天镜）+ 人数加成
+ *   + 探索距离加成折算
+ *
+ * 保底是必要的：纯随机的话运气差的玩家可能永远发现不了第二处秘境，
+ * 而秘境是稀有材料的唯一来源。
+ */
+export function getDiscoveryChance(state: GameState, extraMembers = 0): number {
+  const pity = Math.min(state.discoveryPity, DISCOVERY_PITY_CAP);
+  const buildings = getStructureBonus(state, 'discoveryBonus');
+  // 距离换发现概率：用专门的换算常量，避免和「每座灵舟坊 +25% 距离」的常量混用
+  const distance = getStructureBonus(state, 'expeditionDistanceBonus') * DISCOVERY_PER_DISTANCE;
+  const members = Math.max(0, extraMembers) * DISCOVERY_PER_EXTRA_MEMBER;
+
+  return Math.min(DISCOVERY_BASE_CHANCE + pity + buildings + distance + members, DISCOVERY_MAX_CHANCE);
+}
+
+/** 发现失败时累积保底 */
+export function growDiscoveryPity(state: GameState): GameState {
+  if (state.discoveryPity >= DISCOVERY_PITY_CAP) return state;
+  return {
+    ...state,
+    discoveryPity: Math.min(state.discoveryPity + DISCOVERY_PITY_STEP, DISCOVERY_PITY_CAP),
+  };
+}
+
+/** 秘境的冷却剩余秒数 */
+export function getRealmCooldown(state: GameState, realmId: string): number {
+  return state.realmCooldowns[realmId] ?? 0;
+}
+
+/** 该秘境现在是否处于冷却中 */
+export function isRealmOnCooldown(state: GameState, realmId: string): boolean {
+  return getRealmCooldown(state, realmId) > 0;
+}
+
+/** 推进所有秘境的冷却计时（需求 1） */
+export function tickRealmCooldowns(state: GameState, dt: number): GameState {
+  if (dt <= 0) return state;
+  const entries = Object.entries(state.realmCooldowns);
+  if (entries.length === 0) return state;
+
+  // 冷却归零的条目直接删掉，存档里不会堆积一堆 0
+  const realmCooldowns: Record<string, number> = {};
+  for (const [id, seconds] of entries) {
+    const left = seconds - dt;
+    if (left > 0) realmCooldowns[id] = left;
+  }
+  return { ...state, realmCooldowns };
 }
 
 /** 灵植地块总数（需求 5），由灵植园 / 药王圃提供 */
@@ -417,7 +594,13 @@ export function getGeneratorOutput(state: GameState, def: GeneratorDef): Decimal
 export function getCost(def: BuildableDef, owned: number, count: number): CostMap {
   const out: CostMap = {};
   for (const [id, base] of Object.entries(def.baseCost) as [ItemId, number][]) {
-    out[id] = Decimal.sumGeometricSeries(count, base, def.costGrowth, owned);
+    // costGrowth === 1（只可能建一座的建筑，如掌门大殿 / 比武台）必须单独处理：
+    // 等比求和公式要除以 (r - 1)，r = 1 时会算出 NaN，
+    // 结果就是"明明买得起却买不动"。这个坑是被数值模拟器抓出来的。
+    out[id] =
+      def.costGrowth === 1
+        ? D(base * count)
+        : Decimal.sumGeometricSeries(count, base, def.costGrowth, owned);
   }
   return out;
 }
@@ -435,7 +618,11 @@ export function maxAffordable(def: BuildableDef, owned: number, state: GameState
   let max = Infinity;
   for (const [id, base] of Object.entries(def.baseCost) as [ItemId, number][]) {
     const available = getAmount(state, id);
-    const n = Decimal.affordGeometricSeries(available, base, def.costGrowth, owned).floor().toNumber();
+    // 同上：价格不涨时直接除，绕开 r = 1 的退化情况
+    const n =
+      def.costGrowth === 1
+        ? Math.floor(available.div(base).toNumber())
+        : Decimal.affordGeometricSeries(available, base, def.costGrowth, owned).floor().toNumber();
     max = Math.min(max, n);
   }
   if (!Number.isFinite(max)) return 0;
@@ -477,15 +664,23 @@ export function isUnlocked(def: BuildableDef, state: GameState): boolean {
 /**
  * 现在能不能建。返回不能建造的原因，null 表示可以。
  *
- * 顺序即「玩家下一步该干什么」：先钻研 / 先找图纸，再看等级。
+ * 顺序即「玩家下一步该干什么」：
+ *   先开宗 → 先钻研 / 先找图纸 / 先建前置建筑 → 再看等级。
  */
 export function getBuildGate(def: BuildableDef, state: GameState): string | null {
   if (!state.unlockedBuildings[def.id]) return '尚未解锁';
+  if (def.requiresSect && !state.sect.founded) return '需先开宗立派';
   if (def.requiresTech && !state.techs[def.requiresTech]) {
     return `需钻研「${techName(def.requiresTech)}」`;
   }
   if (def.requiresBlueprint && !state.blueprints[def.requiresBlueprint]) {
     return `需「${blueprintName(def.requiresBlueprint)}」`;
+  }
+  if (def.requiresBuilding) {
+    const need = BUILDABLE_MAP[def.requiresBuilding];
+    if (getBuildingCount(state, def.requiresBuilding) <= 0) {
+      return `需先建${need?.name ?? def.requiresBuilding}`;
+    }
   }
   if (def.requiresRealm !== undefined && state.realmIndex < def.requiresRealm) {
     return `需${REALMS[def.requiresRealm].name}`;
@@ -563,10 +758,13 @@ export function getUnlockProgress(
 }
 
 /**
- * 把新达成的解锁条件永久记录下来（建筑与秘境通用）。
+ * 把新达成的解锁条件永久记录下来。
  *
  * 每次状态推进后都会调用（主循环、购买、读档……）。
  * 没有新解锁时返回**原对象**，避免无谓的重新渲染。
+ *
+ * 注意：秘境**不在这里解锁**。需求 1 之后秘境改为「探索中发现」，
+ * 由 expeditions / travel 在结算时随机揭示（见 discoverRealm）。
  */
 export function refreshUnlocks(state: GameState): GameState {
   let unlockedBuildings: Record<string, boolean> | null = null;
@@ -577,44 +775,59 @@ export function refreshUnlocks(state: GameState): GameState {
     unlockedBuildings[def.id] = true;
   }
 
-  let unlockedRealms: Record<string, boolean> | null = null;
-  for (const def of SECRET_REALMS) {
-    if (state.unlockedRealms[def.id]) continue;
-    if (!meetsRealmUnlockCondition(def, state)) continue;
-    unlockedRealms = unlockedRealms ?? { ...state.unlockedRealms };
-    unlockedRealms[def.id] = true;
-  }
-
-  if (!unlockedBuildings && !unlockedRealms) return state;
-
-  return {
-    ...state,
-    unlockedBuildings: unlockedBuildings ?? state.unlockedBuildings,
-    unlockedRealms: unlockedRealms ?? state.unlockedRealms,
-  };
+  if (!unlockedBuildings) return state;
+  return { ...state, unlockedBuildings };
 }
 
 /* ------------------------------------------------------------------ */
 /* 秘境解锁                                                            */
 /* ------------------------------------------------------------------ */
 
-/** 是否达成过秘境的发现条件（只看材料持有量，是触发条件不是显示条件） */
-export function meetsRealmUnlockCondition(def: SecretRealmDef, state: GameState): boolean {
-  return Object.entries(def.unlock).every(([id, amount]) =>
-    getAmount(state, id as ItemId).gte(amount as number),
-  );
+/**
+ * 把一处秘境记为「已发现」（需求 1）。
+ *
+ * 发现后永久固定，不会因为材料被花掉而消失 —— 这是需求原文
+ * 「发现后固定在秘境栏」的字面实现。
+ */
+export function discoverRealm(state: GameState, realmId: string): GameState {
+  if (state.discoveredRealms[realmId]) return state;
+  return {
+    ...state,
+    discoveredRealms: { ...state.discoveredRealms, [realmId]: true },
+    // 发现了新的，保底清零
+    discoveryPity: 0,
+  };
+}
+
+/** 秘境的宗门等级门槛是否达标（与「是否已发现」是两件事） */
+export function meetsRealmSectGate(def: SecretRealmDef, state: GameState): boolean {
+  return !def.requiresSectLevel || state.sect.level >= def.requiresSectLevel;
 }
 
 /**
- * 秘境当前是否已发现。
+ * 该秘境现在能不能派遣。
  *
- * = 曾经达成过材料条件（永久记录）
- *   且 宗门等级达标（实时判断）
+ * = 已发现 + 区域已抵达 + 宗门等级达标 + 不在冷却中
+ * 弟子境界门槛在 expeditions.canStartExpedition 里单独判断。
  */
-export function isRealmUnlocked(def: SecretRealmDef, state: GameState): boolean {
-  if (!state.unlockedRealms[def.id]) return false;
-  if (def.requiresSectLevel && state.sect.level < def.requiresSectLevel) return false;
-  return true;
+export function isRealmAvailable(state: GameState, def: SecretRealmDef): boolean {
+  if (!isRealmDiscovered(state, def)) return false;
+  if (!isRealmInRange(state, def)) return false;
+  if (!meetsRealmSectGate(def, state)) return false;
+  return !isRealmOnCooldown(state, def.id);
+}
+
+/** 已发现但当前不可派的原因（用于界面提示），可派遣时返回 null */
+export function getRealmGate(state: GameState, def: SecretRealmDef): string | null {
+  if (!isRealmDiscovered(state, def)) return '尚未发现';
+  if (!isRealmInRange(state, def)) {
+    const region = MAP_REGION_MAP[def.regionId];
+    return `需先能抵达${region?.name ?? def.regionId}`;
+  }
+  if (!meetsRealmSectGate(def, state)) return `需${def.requiresSectLevel}品宗门`;
+  const cooldown = getRealmCooldown(state, def.id);
+  if (cooldown > 0) return `冷却中 ${Math.ceil(cooldown)} 秒`;
+  return null;
 }
 
 export function getBuildingCount(state: GameState, id: string): number {

@@ -61,7 +61,8 @@ a {
 /* ---------------------------------------------------------------- 布局 */
 
 .app {
-  max-width: 1180px;
+  /* 需求 2 之后左边多了一条常驻资源栏，整体放宽一点，免得内容区比上一版还窄 */
+  max-width: 1320px;
   margin: 0 auto;
   padding: 18px 16px 40px;
 }
@@ -161,16 +162,9 @@ a {
 /* ------------------------------------------------------------ 资源栏 */
 
 .resource-bar {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-@media (max-width: 620px) {
-  .resource-bar {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .resource {
@@ -1836,4 +1830,173 @@ a {
 .material-tag--rare {
   background: rgba(138, 79, 168, 0.18);
   color: #6b3a86;
+}
+
+/* ------------------------------------------------------------------ */
+/* 需求 2：资源栏移到左侧，不再压在其它模块上方                          */
+/* ------------------------------------------------------------------ */
+
+.shell {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  /* 水平内边距由 .app 负责，这里不再重复，否则左右会各多出 18px */
+  padding: 14px 0 0;
+}
+
+/* 侧栏里的资源卡比原来横向排布时更紧凑 —— 18 种资源（5 资源 + 13 材料）
+   挤在 176px 宽的列里，卡片太胖就得一直滚 */
+.shell__side .resource {
+  padding: 7px 9px;
+  border-radius: 7px;
+}
+
+.shell__side .resource__amount {
+  font-size: 14px;
+}
+
+.shell__side .resource__rate {
+  font-size: 9px;
+}
+
+.shell__side {
+  flex: 0 0 176px;
+  position: sticky;
+  top: 10px;
+  align-self: flex-start;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+
+.shell__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.shell__main .layout {
+  padding: 0;
+}
+
+@media (max-width: 1180px) {
+  .shell__side {
+    flex: 0 0 150px;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 地图（需求 5）                                                       */
+/* ------------------------------------------------------------------ */
+
+.map {
+  position: relative;
+  height: 330px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 50% 92%, rgba(122, 96, 60, 0.14), transparent 58%),
+    radial-gradient(circle at 22% 28%, rgba(58, 110, 168, 0.12), transparent 52%),
+    radial-gradient(circle at 62% 12%, rgba(138, 79, 168, 0.14), transparent 48%),
+    var(--paper-2);
+}
+
+.map-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 9px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--shadow);
+  text-align: center;
+  min-width: 86px;
+}
+
+.map-node--on {
+  border-color: var(--jade);
+  background: rgba(61, 122, 99, 0.12);
+}
+
+.map-node--off {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.map-node__icon {
+  font-size: 17px;
+  line-height: 1.1;
+}
+
+.map-node__name {
+  font-family: var(--font-serif);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.map-node__meta {
+  font-size: 9px;
+  color: var(--ink-faint);
+}
+
+/* ------------------------------------------------------------------ */
+/* 探索卡片补充                                                        */
+/* ------------------------------------------------------------------ */
+
+.realm-card--gated {
+  opacity: 0.62;
+}
+
+.realm-card--travel {
+  border-left: 3px solid var(--jade);
+}
+
+.realm-card + .realm-card {
+  margin-top: 10px;
+}
+
+/* ------------------------------------------------------------------ */
+/* 宗门建筑 / 心得                                                      */
+/* ------------------------------------------------------------------ */
+
+/* 窄屏仍然保持"资源在左"的形状，只是把侧栏压窄；
+   只有真正的手机宽度才允许堆叠（否则内容区会被挤到不能用）。 */
+@media (max-width: 900px) {
+  .shell {
+    gap: 10px;
+    padding: 10px 0 0;
+  }
+
+  .shell__side {
+    flex: 0 0 124px;
+  }
+
+  .resource {
+    padding: 7px 8px;
+  }
+}
+
+@media (max-width: 620px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .shell__side {
+    position: static;
+    flex: 0 0 auto;
+    width: 100%;
+    max-height: none;
+  }
+
+  .shell__side .resource-bar {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .shell__side .resource {
+    flex: 1 1 110px;
+  }
 }

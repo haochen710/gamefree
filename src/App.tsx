@@ -3,6 +3,7 @@ import { useGame } from './game/store';
 import { useGameLoop } from './game/useGameLoop';
 import { getIdleDisciples } from './game/expeditions';
 import { getReadyPlantings } from './game/planting';
+import { isArenaRunning } from './game/sectActivity';
 
 import Header from './components/Header';
 import ResourceBar from './components/ResourceBar';
@@ -14,9 +15,9 @@ import RealmPanel from './components/RealmPanel';
 import AscendPanel from './components/AscendPanel';
 import StonePanel from './components/StonePanel';
 import SectPanel from './components/SectPanel';
+import SectHallPanel from './components/SectHallPanel';
 import DisciplePanel from './components/DisciplePanel';
-import ExpeditionPanel from './components/ExpeditionPanel';
-import TravelPanel from './components/TravelPanel';
+import MapPanel from './components/MapPanel';
 import AlchemyPanel from './components/AlchemyPanel';
 import RefiningPanel from './components/RefiningPanel';
 import InventoryPanel from './components/InventoryPanel';
@@ -32,7 +33,7 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'cultivation', label: '修行', icon: '☯' },
   { id: 'cave', label: '洞府', icon: '🏔' },
   { id: 'sect', label: '宗门', icon: '🏯' },
-  { id: 'expedition', label: '秘境', icon: '🌌' },
+  { id: 'expedition', label: '探索', icon: '🗺' },
   { id: 'craft', label: '丹器', icon: '⚗' },
   { id: 'farm', label: '灵植', icon: '🌱' },
 ];
@@ -104,10 +105,11 @@ function SectTab() {
   return (
     <main className="layout">
       <div className="layout__left">
-        <DisciplePanel />
+        <SectHallPanel />
       </div>
       <div className="layout__right">
         <SectPanel />
+        <DisciplePanel />
         <JournalPanel />
       </div>
     </main>
@@ -116,13 +118,8 @@ function SectTab() {
 
 function ExpeditionTab() {
   return (
-    <main className="layout">
-      <div className="layout__left">
-        <TravelPanel />
-      </div>
-      <div className="layout__right">
-        <ExpeditionPanel />
-      </div>
+    <main className="layout layout--single">
+      <MapPanel />
     </main>
   );
 }
@@ -158,17 +155,17 @@ export default function App() {
   useGameLoop();
   const [tab, setTab] = useState<TabId>('cultivation');
   const sectFounded = useGame((s) => s.game.sect.founded);
+  const arenaRunning = useGame((s) => isArenaRunning(s.game));
 
   return (
     <div className="app">
       <Header />
-      <ResourceBar />
 
       <nav className="tabs">
         {TABS.map((item) => {
           // 只有宗门本身需要开宗立派。
-          // 「秘境」页不再灰掉 —— 需求 1 的个人游历正是给"还没开宗"的玩家准备的；
-          // 「丹器」也不灰掉 —— 需求 1 之后，开宗前靠游历就能拿到炼丹材料。
+          // 「探索」页不灰掉 —— 需求 1 的个人游历正是给"还没开宗"的玩家准备的；
+          // 「丹器」也不灰掉 —— 开宗前靠游历就能拿到炼丹材料。
           const gated = item.id === 'sect' && !sectFounded;
           return (
             <button
@@ -181,17 +178,30 @@ export default function App() {
               {item.label}
               <TabBadge tab={item.id} />
               {gated && <span className="tab__hint">未开宗</span>}
+              {item.id === 'sect' && arenaRunning && <span className="tab__badge tab__badge--soft">比</span>}
             </button>
           );
         })}
       </nav>
 
-      {tab === 'cultivation' && <CultivationTab />}
-      {tab === 'cave' && <CaveTab />}
-      {tab === 'sect' && <SectTab />}
-      {tab === 'expedition' && <ExpeditionTab />}
-      {tab === 'craft' && <CraftTab />}
-      {tab === 'farm' && <FarmTab />}
+      {/*
+        需求 2：资源展示模块移到左边，不再压在其它模块上方。
+        所以这里改成「左侧固定资源栏 + 右侧内容区」的两列骨架。
+      */}
+      <div className="shell">
+        <aside className="shell__side" aria-label="资源">
+          <ResourceBar />
+        </aside>
+
+        <div className="shell__main">
+          {tab === 'cultivation' && <CultivationTab />}
+          {tab === 'cave' && <CaveTab />}
+          {tab === 'sect' && <SectTab />}
+          {tab === 'expedition' && <ExpeditionTab />}
+          {tab === 'craft' && <CraftTab />}
+          {tab === 'farm' && <FarmTab />}
+        </div>
+      </div>
 
       <footer className="footer">
         进度保存在你自己的浏览器里 · 数值设定见仓库中的 BALANCE.md

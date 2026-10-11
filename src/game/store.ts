@@ -19,6 +19,7 @@ import * as research from './research';
 import * as planting from './planting';
 import * as shop from './shop';
 import * as travel from './travel';
+import * as sectActivity from './sectActivity';
 import { applyTick } from './tick';
 import { createAscendedState, createInitialState, type GameState } from './state';
 import {
@@ -73,12 +74,16 @@ export interface GameStore {
   dismissServant(job: string): void;
   dismissAllServants(): void;
 
-  /* 宗门 */
+  /* 宗门（需求 4） */
   foundSect(): void;
   upgradeSect(): void;
   recruitDisciple(): void;
   dismissDisciple(id: string): void;
   dismissBelow(rank: number): void;
+  /** 开启 / 停办宗门大比（需求 4：比武台由玩家决定是否开启） */
+  toggleArena(): void;
+  /** 立刻举办一次大比（只有已开启且冷却走完时可用） */
+  holdArena(): void;
 
   /* 秘境 */
   startExpedition(realmId: string, ids: string[]): void;
@@ -413,6 +418,36 @@ export const useGame = create<GameStore>()((set, get) => ({
       return {
         ...nextGame(s.game, result.state),
         notice: `已逐出 ${result.count} 名低资质弟子`,
+      };
+    });
+  },
+
+  toggleArena: () => {
+    set((s) => {
+      if (!sectActivity.hasArena(s.game)) return { notice: '尚未建成比武台' };
+      const enabled = !s.game.arenaEnabled;
+      return {
+        game: {
+          ...s.game,
+          arenaEnabled: enabled,
+          // 开启时给一个满周期，免得一开就立刻开比
+          arenaTimer: enabled ? sectActivity.ARENA_INTERVAL_SECONDS : s.game.arenaTimer,
+        },
+        notice: enabled ? '宗门大比已开启，十年一比' : '宗门大比已停办',
+      };
+    });
+  },
+
+  holdArena: () => {
+    set((s) => {
+      if (!sectActivity.isArenaRunning(s.game)) return { notice: '需先建成比武台并开启大比' };
+      if (s.game.arenaTimer > 0) {
+        return { notice: `距下次大比还有 ${fmtDuration(s.game.arenaTimer)}` };
+      }
+      const result = sectActivity.runArena(s.game);
+      return {
+        ...nextGame(s.game, result.state),
+        notice: `大比落幕，${result.participants} 名弟子各得心得，全宗修行加速一年`,
       };
     });
   },
