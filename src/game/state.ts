@@ -9,6 +9,7 @@ import {
   BUILDABLES,
   MATERIAL_IDS,
   RESOURCE_IDS,
+  SECRET_REALMS,
   createEmptyBuffs,
   type ActiveBuffs,
   type AptitudeId,
@@ -87,6 +88,21 @@ export interface GameState {
 
   /** 设施与建筑的数量（id -> 个数） */
   buildings: Record<string, number>;
+  /**
+   * 已永久解锁的建筑 id。
+   *
+   * 解锁是「达成过就永久记住」，而不是每帧重新按当前资源判断 ——
+   * 否则玩家一花掉灵气，已经建了好几座的灵木林就会从面板上凭空消失。
+   */
+  unlockedBuildings: Record<string, boolean>;
+  /**
+   * 已永久解锁的秘境 id。
+   *
+   * 和建筑同理：秘境的门槛是「拥有过若干秘境材料」，
+   * 而材料会被炼丹消耗掉。如果按当前持有量实时判断，
+   * 玩家一炼丹，整片秘境就会从探索列表里消失。
+   */
+  unlockedRealms: Record<string, boolean>;
 
   /** 丹药库存 */
   pills: ItemCountMap;
@@ -155,6 +171,27 @@ export function createEmptyBuildings(): Record<string, number> {
   return b;
 }
 
+/**
+ * 初始解锁状态：没有任何解锁条件的建筑（如聚灵阵）开局就可见。
+ * 其余的交由 engine.refreshUnlocks 在游戏过程中逐个解锁。
+ */
+export function createEmptyUnlocked(): Record<string, boolean> {
+  const unlocked: Record<string, boolean> = {};
+  for (const def of BUILDABLES) {
+    if (Object.keys(def.unlock).length === 0) unlocked[def.id] = true;
+  }
+  return unlocked;
+}
+
+/** 初始已发现的秘境：没有任何材料门槛的那几处 */
+export function createEmptyUnlockedRealms(): Record<string, boolean> {
+  const unlocked: Record<string, boolean> = {};
+  for (const def of SECRET_REALMS) {
+    if (Object.keys(def.unlock).length === 0) unlocked[def.id] = true;
+  }
+  return unlocked;
+}
+
 export function createEmptySect(): Sect {
   return {
     founded: false,
@@ -176,6 +213,8 @@ export function createInitialState(now = Date.now()): GameState {
     resources,
     materials: createEmptyMaterials(),
     buildings: createEmptyBuildings(),
+    unlockedBuildings: createEmptyUnlocked(),
+    unlockedRealms: createEmptyUnlockedRealms(),
     pills: {},
     artifacts: {},
     realmIndex: 0,

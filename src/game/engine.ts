@@ -15,6 +15,7 @@ import {
   BREAKTHROUGH_FAIL_BONUS_CAP,
   BREAKTHROUGH_MAX_SUCCESS,
   BREAKTHROUGH_PILL_BONUS,
+  BUILDABLES,
   DAO_YUN_BONUS,
   DAO_YUN_DIVISOR,
   DAO_YUN_EXPONENT,
@@ -30,6 +31,7 @@ import {
   REFINING_SLOT_REQUIREMENT,
   RESOURCE_IDS,
   SECT_LEVELS,
+  SECRET_REALMS,
   STONE_REFINE_COST,
   STONE_REFINE_OUTPUT,
   STRUCTURES,
@@ -39,6 +41,7 @@ import {
   type GeneratorDef,
   type ItemId,
   type RealmDef,
+  type SecretRealmDef,
 } from './content';
 import type { GameState, ResourceMap } from './state';
 
@@ -228,9 +231,96 @@ export function maxAffordable(def: BuildableDef, owned: number, state: GameState
   return Math.max(0, Math.min(Math.floor(max), 1e9));
 }
 
+/**
+ * 是否达成了「首次解锁」条件（只看资源拥有量）。
+ *
+ * 这是解锁的**触发条件**，不是显示条件 —— 达成后会由 refreshUnlocks
+ * 永久记录到 state.unlockedBuildings，之后资源怎么花都不会再隐藏。
+ */
+export function meetsUnlockCondition(def: BuildableDef, state: GameState): boolean {
+  return Object.entries(def.unlock).every(([id, amount]) =>
+    getAmount(state, id as ItemId).gte(amount as number),
+  );
+}
+
+/**
+ * 建筑当前是否可见 / 可建造。
+ *
+ * = 曾经达成过解锁条件（永久记录）
+ *   且 宗门等级满足要求（这个是实时判断，因为它是"资格"而不是"见过"）
+ */
 export function isUnlocked(def: BuildableDef, state: GameState): boolean {
+  if (!state.unlockedBuildings[def.id]) return false;
   if (def.requiresSectLevel && state.sect.level < def.requiresSectLevel) return false;
-  return Object.entries(def.unlock).every(([id, amount]) => getAmount(state, id as ItemId).gte(amount as number));
+  return true;
+}
+
+/** 该建筑的解锁进度（用于界面提示"还差多少"），已解锁返回 null */
+export function getUnlockProgress(
+  def: BuildableDef,
+  state: GameState,
+): { id: ItemId; need: number; have: Decimal } | null {
+  if (state.unlockedBuildings[def.id]) return null;
+  for (const [id, amount] of Object.entries(def.unlock) as [ItemId, number][]) {
+    const have = getAmount(state, id);
+    if (have.lt(amount)) return { id, need: amount, have };
+  }
+  return null;
+}
+
+/**
+ * 把新达成的解锁条件永久记录下来（建筑与秘境通用）。
+ *
+ * 每次状态推进后都会调用（主循环、购买、读档……）。
+ * 没有新解锁时返回**原对象**，避免无谓的重新渲染。
+ */
+export function refreshUnlocks(state: GameState): GameState {
+  let unlockedBuildings: Record<string, boolean> | null = null;
+  for (const def of BUILDABLES) {
+    if (state.unlockedBuildings[def.id]) continue;
+    if (!meetsUnlockCondition(def, state)) continue;
+    unlockedBuildings = unlockedBuildings ?? { ...state.unlockedBuildings };
+    unlockedBuildings[def.id] = true;
+  }
+
+  let unlockedRealms: Record<string, boolean> | null = null;
+  for (const def of SECRET_REALMS) {
+    if (state.unlockedRealms[def.id]) continue;
+    if (!meetsRealmUnlockCondition(def, state)) continue;
+    unlockedRealms = unlockedRealms ?? { ...state.unlockedRealms };
+    unlockedRealms[def.id] = true;
+  }
+
+  if (!unlockedBuildings && !unlockedRealms) return state;
+
+  return {
+    ...state,
+    unlockedBuildings: unlockedBuildings ?? state.unlockedBuildings,
+    unlockedRealms: unlockedRealms ?? state.unlockedRealms,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 秘境解锁                                                            */
+/* ------------------------------------------------------------------ */
+
+/** 是否达成过秘境的发现条件（只看材料持有量，是触发条件不是显示条件） */
+export function meetsRealmUnlockCondition(def: SecretRealmDef, state: GameState): boolean {
+  return Object.entries(def.unlock).every(([id, amount]) =>
+    getAmount(state, id as ItemId).gte(amount as number),
+  );
+}
+
+/**
+ * 秘境当前是否已发现。
+ *
+ * = 曾经达成过材料条件（永久记录）
+ *   且 宗门等级达标（实时判断）
+ */
+export function isRealmUnlocked(def: SecretRealmDef, state: GameState): boolean {
+  if (!state.unlockedRealms[def.id]) return false;
+  if (def.requiresSectLevel && state.sect.level < def.requiresSectLevel) return false;
+  return true;
 }
 
 export function getBuildingCount(state: GameState, id: string): number {
@@ -238,6 +328,9 @@ export function getBuildingCount(state: GameState, id: string): number {
 }
 
 export function buyBuilding(state: GameState, def: BuildableDef, count: number): GameState {
+  // 尚未解锁的建筑一律不能买（界面上也看不到），当作最后一道保险
+  if (!isUnlocked(def, state)) return state;
+
   const owned = getBuildingCount(state, def.id);
   const actual = Math.min(count, maxAffordable(def, owned, state));
   if (actual <= 0) return state;

@@ -98,7 +98,7 @@ section('[1] 界面渲染');
     check('组件树渲染成功', false, String(error));
   }
 
-  const expected = ['仙途', '打坐', '洞府设施', '宗门建筑', '境界', '灵石合成', '修行', '宗门', '秘境', '丹器', '洞府'];
+  const expected = ['仙途', '打坐', '洞府建设', '资源设施', '境界', '灵石合成', '修行', '宗门', '秘境', '丹器', '洞府'];
   for (const text of expected) {
     check(`包含「${text}」`, html.includes(text));
   }
@@ -160,6 +160,51 @@ section('[3] 建筑与价格');
   const withRooms = forceBuild(state, 'alchemyRoom', 2);
   check('丹房提供炼丹位', engine.getAlchemySlots(withRooms) === 2);
   check('炼丹位决定品阶上限', engine.getMaxAlchemyTierBySlots(withRooms) === 3, `实际 ${engine.getMaxAlchemyTierBySlots(withRooms)}`);
+
+  /* ---- 建筑解锁的持久性（bug 回归测试） ----
+     早期版本用「当前资源是否达标」判断可见性，导致玩家一花掉灵气，
+     已经建了好几座的灵木林就从建造面板上消失了。 */
+  const woodGrove = BUILDABLE_MAP.woodGrove;
+
+  let fresh = engine.refreshUnlocks(createInitialState(0));
+  check('开局可见无门槛的聚灵阵', engine.isUnlocked(BUILDABLE_MAP.spiritArray, fresh));
+  check('开局灵木林尚未解锁', !engine.isUnlocked(woodGrove, fresh));
+
+  fresh = engine.refreshUnlocks(grant(fresh, { qi: '60' }));
+  check('灵气达到 60 后解锁灵木林', engine.isUnlocked(woodGrove, fresh));
+
+  // 关键回归点：把灵气花光之后
+  fresh = { ...fresh, resources: { ...fresh.resources, qi: D(0) } };
+  check(
+    '灵气花光后灵木林仍然可见（本次修复的 bug）',
+    engine.isUnlocked(woodGrove, fresh),
+  );
+  check(
+    '对照：原始解锁条件确实已不再满足',
+    !engine.meetsUnlockCondition(woodGrove, fresh),
+  );
+
+  // 已经建过的建筑，即使解锁记录丢失也要保住
+  const builtState = forceBuild(createInitialState(0), 'woodGrove', 3);
+  const reloaded = deserialize(JSON.parse(JSON.stringify(serialize(builtState))));
+  check('建过的建筑读档后依然可见', reloaded !== null && engine.isUnlocked(woodGrove, reloaded));
+
+  // 未解锁的建筑不能购买
+  const blocked = engine.buyBuilding(grant(createInitialState(0), { qi: '1e6' }), woodGrove, 1);
+  check('未解锁的建筑无法购买', engine.getBuildingCount(blocked, 'woodGrove') === 0);
+
+  // 解锁状态随存档往返
+  const restoredUnlock = deserialize(JSON.parse(JSON.stringify(serialize(fresh))));
+  check('解锁状态能存档还原', restoredUnlock !== null && engine.isUnlocked(woodGrove, restoredUnlock));
+
+  // 宗门等级门槛是实时判断，不吃永久解锁
+  const grotto = BUILDABLE_MAP.grotto;
+  const unlockedGrotto = engine.refreshUnlocks(grant(createInitialState(0), { stone: '1e6', qi: '1e7', herb: '1e4' }));
+  check(
+    '宗门等级不足时洞天仍不可见',
+    !engine.isUnlocked(grotto, unlockedGrotto),
+    `需 ${grotto.requiresSectLevel} 品宗门`,
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -506,6 +551,27 @@ section('[9] 秘境探索（需求 5）');
   // 未解锁的秘境不能派遣
   const hidden = SECRET_REALM_MAP.gateOfHeaven;
   check('未解锁的秘境不可派遣', !expeditions.canStartExpedition(strong, hidden.id, ids.slice(0, hidden.partySize)).ok);
+
+  /* ---- 秘境发现的持久性（与建筑同一类 bug） ----
+     黑风岭的发现条件是「拥有过 10 颗妖丹」，而妖丹会被炼丹消耗掉。
+     按当前持有量实时判断的话，玩家一炼丹整片秘境就消失了。 */
+  const blackWind = SECRET_REALM_MAP.blackWindRidge;
+
+  let realmState = engine.refreshUnlocks(createInitialState(0));
+  check('材料不足时黑风岭未发现', !engine.isRealmUnlocked(blackWind, realmState));
+
+  realmState = engine.refreshUnlocks(grant(realmState, { demonCore: '10' }));
+  check('妖丹达到 10 后发现黑风岭', engine.isRealmUnlocked(blackWind, realmState));
+
+  realmState = { ...realmState, materials: { ...realmState.materials, demonCore: D(0) } };
+  check('妖丹花光后黑风岭仍然存在（本次修复的 bug）', engine.isRealmUnlocked(blackWind, realmState));
+  check(
+    '对照：原始发现条件确实已不满足',
+    !engine.meetsRealmUnlockCondition(blackWind, realmState),
+  );
+
+  const realmRestored = deserialize(JSON.parse(JSON.stringify(serialize(realmState))));
+  check('秘境发现状态能存档还原', realmRestored !== null && engine.isRealmUnlocked(blackWind, realmRestored));
 }
 
 /* ------------------------------------------------------------------ */

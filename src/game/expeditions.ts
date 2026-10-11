@@ -31,20 +31,13 @@ import {
   type LootEntry,
   type SecretRealmDef,
 } from './content';
-import { addItem, getAmount, getArtifactBonuses } from './engine';
+import { addItem, getArtifactBonuses, isRealmUnlocked } from './engine';
 import { getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
 import type { Disciple, Expedition, GameState } from './state';
 
 /* ------------------------------------------------------------------ */
 /* 解锁与校验                                                          */
 /* ------------------------------------------------------------------ */
-
-export function isRealmUnlocked(def: SecretRealmDef, state: GameState): boolean {
-  if (def.requiresSectLevel && state.sect.level < def.requiresSectLevel) return false;
-  return Object.entries(def.unlock).every(([id, amount]) =>
-    getAmount(state, id as ItemId).gte(amount as number),
-  );
-}
 
 export function getUnlockedRealms(state: GameState): SecretRealmDef[] {
   return SECRET_REALMS.filter((def) => isRealmUnlocked(def, state));

@@ -19,9 +19,9 @@ import {
   getExpeditionProgress,
   getExpeditionSpeed,
   getIdleDisciples,
-  isRealmUnlocked,
   autoSelectParty,
 } from '../game/expeditions';
+import { isRealmUnlocked } from '../game/engine';
 import { getPartyPower } from '../game/disciples';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';

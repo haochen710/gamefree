@@ -6,16 +6,38 @@
  */
 import type { ItemId, ResourceId } from './resources';
 
+/** 建筑分组，用于界面归类 */
+export type BuildGroupId = 'resource' | 'housing' | 'workshop';
+
+export interface BuildGroupDef {
+  id: BuildGroupId;
+  title: string;
+  hint: string;
+}
+
+export const BUILD_GROUPS: BuildGroupDef[] = [
+  { id: 'resource', title: '资源设施', hint: '持续产出各类资源' },
+  { id: 'housing', title: '弟子居所', hint: '每位弟子都需要一个住处' },
+  { id: 'workshop', title: '丹器工坊', hint: '决定炼丹炼器的品阶上限' },
+];
+
 export interface BuildableBase {
   id: string;
   name: string;
   icon: string;
   desc: string;
+  /** 界面上归到哪一组 */
+  group: BuildGroupId;
   /** 第一个的价格 */
   baseCost: Partial<Record<ItemId, number>>;
   /** 每多买一个，价格乘以该系数 */
   costGrowth: number;
-  /** 拥有多少资源后才出现在面板上 */
+  /**
+   * 解锁条件：拥有过这么多资源后永久解锁。
+   *
+   * 注意是「拥有过」而不是「当前拥有」—— 解锁状态一旦达成就永久记录，
+   * 否则玩家一花掉灵气，已经建过的建筑就会从面板上消失。
+   */
   unlock: Partial<Record<ItemId, number>>;
   /** 需要宗门达到该等级才能建造（默认 0，即不限制） */
   requiresSectLevel?: number;
@@ -50,6 +72,7 @@ export const GENERATORS: GeneratorDef[] = [
   {
     id: 'spiritArray',
     kind: 'generator',
+    group: 'resource',
     name: '聚灵阵',
     icon: '☯',
     desc: '引天地灵气入洞府，修行起步的根本。',
@@ -62,6 +85,7 @@ export const GENERATORS: GeneratorDef[] = [
   {
     id: 'woodGrove',
     kind: 'generator',
+    group: 'resource',
     name: '灵木林',
     icon: '🌳',
     desc: '栽种灵木，可伐取建造所需的木料。',
@@ -74,6 +98,7 @@ export const GENERATORS: GeneratorDef[] = [
   {
     id: 'oreVein',
     kind: 'generator',
+    group: 'resource',
     name: '灵矿脉',
     icon: '⛰',
     desc: '开凿山腹灵脉，采掘蕴灵之矿，可炼器亦可合炼灵石。',
@@ -86,6 +111,7 @@ export const GENERATORS: GeneratorDef[] = [
   {
     id: 'herbField',
     kind: 'generator',
+    group: 'resource',
     name: '灵田',
     icon: '🍀',
     desc: '引灵泉灌溉，种植炼丹所需的灵草。',
@@ -98,6 +124,7 @@ export const GENERATORS: GeneratorDef[] = [
   {
     id: 'stoneMine',
     kind: 'generator',
+    group: 'resource',
     name: '灵石矿',
     icon: '💎',
     desc: '开采蕴灵石脉。灵石是修仙界的通货，招收弟子必需。',
@@ -117,6 +144,7 @@ export const STRUCTURES: StructureDef[] = [
   {
     id: 'thatchHut',
     kind: 'structure',
+    group: 'housing',
     name: '茅屋',
     icon: '🛖',
     desc: '最简陋的居所，仅能容纳 3 名弟子。',
@@ -128,6 +156,7 @@ export const STRUCTURES: StructureDef[] = [
   {
     id: 'alchemyRoom',
     kind: 'structure',
+    group: 'workshop',
     name: '丹房',
     icon: '⚗',
     desc: '炼丹之所。丹房越多，能掌握的炼丹品阶越高。',
@@ -139,6 +168,7 @@ export const STRUCTURES: StructureDef[] = [
   {
     id: 'refinery',
     kind: 'structure',
+    group: 'workshop',
     name: '炼器房',
     icon: '🔨',
     desc: '锻造器物之所。炼器房越多，能掌握的炼器品阶越高。',
@@ -150,6 +180,7 @@ export const STRUCTURES: StructureDef[] = [
   {
     id: 'courtyard',
     kind: 'structure',
+    group: 'housing',
     name: '院落',
     icon: '🏯',
     desc: '有山有水的独立院落，可容纳 10 名弟子。',
@@ -161,6 +192,7 @@ export const STRUCTURES: StructureDef[] = [
   {
     id: 'grotto',
     kind: 'structure',
+    group: 'housing',
     name: '洞天',
     icon: '⛩',
     desc: '以大法力开辟的洞天福地，可容纳 30 名弟子。',

@@ -3,6 +3,10 @@
  *
  * 每个动作都是「读当前 state → 用 game/ 里的纯函数算出新 state → set」，
  * 游戏逻辑与 React 因此完全解耦。
+ *
+ * 所有会改变状态的动作都经过 nextGame() 收口，它统一做一件事：
+ * 刷新建筑解锁。这样无论资源是被动涨上来的、还是一颗丹药瞬间给的，
+ * 都不会漏掉解锁时机。
  */
 import { create } from 'zustand';
 import { fmt } from './decimal';
@@ -77,6 +81,15 @@ function boot(): { game: GameState; offline: OfflineReport | null } {
 
 const booted = boot();
 
+/**
+ * 生成状态变更。状态没变就返回空对象（避免无谓重渲染），
+ * 变了则顺带刷新建筑解锁。
+ */
+function nextGame(previous: GameState, next: GameState): { game?: GameState } {
+  if (next === previous) return {};
+  return { game: engine.refreshUnlocks(next) };
+}
+
 export const useGame = create<GameStore>()((set, get) => ({
   game: booted.game,
   offline: booted.offline,
@@ -84,28 +97,28 @@ export const useGame = create<GameStore>()((set, get) => ({
   lastSavedAt: Date.now(),
 
   tick: (dt) => {
-    set((s) => ({ game: applyTick(s.game, dt) }));
+    set((s) => nextGame(s.game, applyTick(s.game, dt)));
   },
 
   /* ------------------------------------------------------------ 修行 */
 
   meditate: () => {
-    set((s) => ({ game: engine.meditate(s.game) }));
+    set((s) => nextGame(s.game, engine.meditate(s.game)));
   },
 
   buy: (id, count) => {
-    const def = BUILDABLE_MAP[id];
-    if (!def) return;
     set((s) => {
+      const def = BUILDABLE_MAP[id];
+      if (!def) return {};
       const owned = engine.getBuildingCount(s.game, id);
       const amount = count === 'max' ? engine.maxAffordable(def, owned, s.game) : count;
       if (amount <= 0) return {};
-      return { game: engine.buyBuilding(s.game, def, amount) };
+      return nextGame(s.game, engine.buyBuilding(s.game, def, amount));
     });
   },
 
   advanceLayer: () => {
-    set((s) => (engine.canAdvanceLayer(s.game) ? { game: engine.advanceLayer(s.game) } : {}));
+    set((s) => (engine.canAdvanceLayer(s.game) ? nextGame(s.game, engine.advanceLayer(s.game)) : {}));
   },
 
   breakthrough: (usePill) => {
@@ -114,7 +127,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       if (!result) return {};
       const realm = engine.getRealm(result.state);
       return {
-        game: result.state,
+        ...nextGame(s.game, result.state),
         notice: result.success
           ? `突破成功，已入${realm.name}！`
           : `突破失败（成功率 ${Math.round(result.rate * 100)}%），灵气返还一半，下次成功率提升`,
@@ -124,9 +137,8 @@ export const useGame = create<GameStore>()((set, get) => ({
 
   refineStone: (times) => {
     set((s) => {
-      const next = engine.refineStone(s.game, times);
-      if (next === s.game) return {};
-      return { game: next, notice: '灵石合成完成' };
+      const updated = nextGame(s.game, engine.refineStone(s.game, times));
+      return updated.game ? { ...updated, notice: '灵石合成完成' } : {};
     });
   },
 
@@ -137,7 +149,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       const next = createAscendedState(s.game, gain, Date.now());
       saveToLocal(next);
       return {
-        game: next,
+        ...nextGame(s.game, next),
         notice: `飞升成功！获得 ${fmt(gain)} 点道韵`,
         lastSavedAt: Date.now(),
       };
@@ -155,20 +167,20 @@ export const useGame = create<GameStore>()((set, get) => ({
 
   foundSect: () => {
     set((s) => {
-      const next = engine.foundSect(s.game);
-      if (next === s.game) return {};
-      return { game: next, notice: '开宗立派！' };
+      const updated = nextGame(s.game, engine.foundSect(s.game));
+      return updated.game ? { ...updated, notice: '开宗立派！' } : {};
     });
   },
 
   upgradeSect: () => {
     set((s) => {
       const status = engine.getSectUpgradeStatus(s.game);
-      if (!status.possible) {
-        return { notice: status.reason ?? '暂不可晋升' };
-      }
+      if (!status.possible) return { notice: status.reason ?? '暂不可晋升' };
       const next = engine.upgradeSect(s.game);
-      return { game: next, notice: `宗门晋升为${engine.getSectLevelDef(next.sect.level).name}` };
+      return {
+        ...nextGame(s.game, next),
+        notice: `宗门晋升为${engine.getSectLevelDef(next.sect.level).name}`,
+      };
     });
   },
 
@@ -176,7 +188,10 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       const result = disciples.recruitDisciple(s.game);
       if (!result.disciple) return { notice: result.reason ?? '招收失败' };
-      return { game: result.state, notice: `${result.disciple.name} 拜入宗门` };
+      return {
+        ...nextGame(s.game, result.state),
+        notice: `${result.disciple.name} 拜入宗门`,
+      };
     });
   },
 
@@ -185,7 +200,10 @@ export const useGame = create<GameStore>()((set, get) => ({
       const target = s.game.sect.disciples.find((d) => d.id === id);
       if (!target) return {};
       if (target.status === 'exploring') return { notice: `${target.name} 正在探索，无法逐出` };
-      return { game: disciples.dismissDisciple(s.game, id), notice: `${target.name} 已被逐出宗门` };
+      return {
+        ...nextGame(s.game, disciples.dismissDisciple(s.game, id)),
+        notice: `${target.name} 已被逐出宗门`,
+      };
     });
   },
 
@@ -193,7 +211,10 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       const result = disciples.dismissBelowAptitude(s.game, rank);
       if (result.count === 0) return { notice: '没有符合条件的弟子' };
-      return { game: result.state, notice: `已逐出 ${result.count} 名低资质弟子` };
+      return {
+        ...nextGame(s.game, result.state),
+        notice: `已逐出 ${result.count} 名低资质弟子`,
+      };
     });
   },
 
@@ -203,7 +224,10 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       const check = expeditions.canStartExpedition(s.game, realmId, ids);
       if (!check.ok) return { notice: check.reason ?? '无法派遣' };
-      return { game: expeditions.startExpedition(s.game, realmId, ids), notice: '已派遣弟子前往探索' };
+      return {
+        ...nextGame(s.game, expeditions.startExpedition(s.game, realmId, ids)),
+        notice: '已派遣弟子前往探索',
+      };
     });
   },
 
@@ -215,7 +239,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       if (!check.ok) return { notice: check.reason ?? '无法炼制' };
       const next = crafting.craftPill(s.game, id, count);
       if (next === s.game) return { notice: '材料不足' };
-      return { game: next, notice: '丹药炼成' };
+      return { ...nextGame(s.game, next), notice: '丹药炼成' };
     });
   },
 
@@ -225,7 +249,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       if (!check.ok) return { notice: check.reason ?? '无法炼制' };
       const next = crafting.craftArtifact(s.game, id, count);
       if (next === s.game) return { notice: '材料不足' };
-      return { game: next, notice: '器物出炉' };
+      return { ...nextGame(s.game, next), notice: '器物出炉' };
     });
   },
 
@@ -234,7 +258,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       const status = crafting.getAlchemyUpgradeStatus(s.game);
       if (!status.possible) return { notice: status.reason ?? '无法提升' };
       const next = crafting.upgradeAlchemy(s.game);
-      return { game: next, notice: `炼丹术精进至 ${next.alchemyTier} 品` };
+      return { ...nextGame(s.game, next), notice: `炼丹术精进至 ${next.alchemyTier} 品` };
     });
   },
 
@@ -243,14 +267,14 @@ export const useGame = create<GameStore>()((set, get) => ({
       const status = crafting.getRefiningUpgradeStatus(s.game);
       if (!status.possible) return { notice: status.reason ?? '无法提升' };
       const next = crafting.upgradeRefining(s.game);
-      return { game: next, notice: `炼器术精进至 ${next.refiningTier} 品` };
+      return { ...nextGame(s.game, next), notice: `炼器术精进至 ${next.refiningTier} 品` };
     });
   },
 
   usePill: (id) => {
     set((s) => {
       const result = crafting.usePill(s.game, id);
-      return { game: result.state, notice: result.message };
+      return { ...nextGame(s.game, result.state), notice: result.message };
     });
   },
 

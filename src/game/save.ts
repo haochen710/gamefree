@@ -10,12 +10,14 @@
 import Decimal, { D } from './decimal';
 import {
   APTITUDE_ORDER,
+  BUILDABLES,
   FINAL_REALM_INDEX,
   ITEM_MAP,
   MATERIAL_IDS,
   PILL_MAP,
   REALMS,
   RESOURCE_IDS,
+  SECRET_REALMS,
   SECRET_REALM_MAP,
   createEmptyBuffs,
   type ActiveBuffs,
@@ -25,6 +27,7 @@ import {
   type ResourceId,
 } from './content';
 import { applyTick } from './tick';
+import { refreshUnlocks } from './engine';
 import {
   JOURNAL_LIMIT,
   SAVE_VERSION,
@@ -32,6 +35,8 @@ import {
   createEmptyMaterials,
   createEmptyResources,
   createEmptySect,
+  createEmptyUnlocked,
+  createEmptyUnlockedRealms,
   createInitialState,
   type Disciple,
   type Expedition,
@@ -66,6 +71,10 @@ export interface SerializedGame {
   m: Record<string, string>;
   /** buildings */
   b: Record<string, number>;
+  /** unlockedBuildings */
+  ub: Record<string, boolean>;
+  /** unlockedRealms */
+  ur: Record<string, boolean>;
   /** pills */
   pl: Record<string, number>;
   /** artifacts */
@@ -110,6 +119,8 @@ export function serialize(state: GameState): SerializedGame {
     r,
     m,
     b: { ...state.buildings },
+    ub: { ...state.unlockedBuildings },
+    ur: { ...state.unlockedRealms },
     pl: { ...state.pills },
     ar: { ...state.artifacts },
     ri: state.realmIndex,
@@ -344,6 +355,34 @@ export function deserialize(raw: unknown): GameState | null {
     }
   }
 
+  /* ---- 已解锁建筑 ---- */
+  // 三种来源都算解锁：存档里明确记着的、已经建过的（兼容没有 ub 字段的旧存档）、
+  // 以及当前资源就满足条件的（下面 refreshUnlocks 会补上）
+  const unlockedBuildings = createEmptyUnlocked();
+  const rawUnlocked = (data.ub ?? {}) as Record<string, unknown>;
+  for (const def of BUILDABLES) {
+    if (rawUnlocked[def.id] === true || (buildings[def.id] ?? 0) > 0) {
+      unlockedBuildings[def.id] = true;
+    }
+  }
+
+  /* ---- 已解锁秘境 ---- */
+  // 和建筑同理：存档里明确记着的算，兼容旧存档时只要还留着任何一项所需材料
+  // 就认为曾经发现过（材料可能已经被炼成丹药花掉了）
+  const unlockedRealms = createEmptyUnlockedRealms();
+  const rawRealms = (data.ur ?? {}) as Record<string, unknown>;
+  for (const def of SECRET_REALMS) {
+    if (rawRealms[def.id] === true) {
+      unlockedRealms[def.id] = true;
+      continue;
+    }
+    const touched = Object.keys(def.unlock).some((id) => {
+      const amount = (resources as Record<string, Decimal>)[id] ?? (materials as Record<string, Decimal>)[id];
+      return amount !== undefined && amount.gt(0);
+    });
+    if (touched) unlockedRealms[def.id] = true;
+  }
+
   /* ---- 丹药与器物 ---- */
   const pills = toCountMap(data.pl);
   const artifacts = toCountMap(data.ar);
@@ -389,6 +428,8 @@ export function deserialize(raw: unknown): GameState | null {
     resources,
     materials,
     buildings,
+    unlockedBuildings,
+    unlockedRealms,
     pills,
     artifacts,
     realmIndex,
@@ -412,7 +453,7 @@ export function deserialize(raw: unknown): GameState | null {
     nextDiscipleId: toInt(data.nid, disciples.length + 1, 1, Number.MAX_SAFE_INTEGER),
   };
 
-  return repairState(state);
+  return refreshUnlocks(repairState(state));
 }
 
 /* ------------------------------------------------------------------ */

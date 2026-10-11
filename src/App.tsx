@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useGame } from './game/store';
 import { useGameLoop } from './game/useGameLoop';
-import { GENERATORS, STRUCTURES } from './game/content';
 import { getIdleDisciples } from './game/expeditions';
-import { isUnlocked } from './game/engine';
 
 import Header from './components/Header';
 import ResourceBar from './components/ResourceBar';
 import ActionPanel from './components/ActionPanel';
-import BuildPanel from './components/BuildPanel';
+import BuildingsPanel from './components/BuildingsPanel';
 import RealmPanel from './components/RealmPanel';
 import AscendPanel from './components/AscendPanel';
 import StonePanel from './components/StonePanel';
@@ -62,28 +60,11 @@ function TabBadge({ tab }: { tab: TabId }) {
 }
 
 function CultivationTab() {
-  const game = useGame((s) => s.game);
-  const visibleStructures = STRUCTURES.filter((def) => isUnlocked(def, game));
-
   return (
     <main className="layout">
       <div className="layout__left">
         <ActionPanel />
-        <BuildPanel
-          title="洞府设施"
-          hint="持续产出资源"
-          defs={GENERATORS}
-          emptyHint="暂无可建造的设施。"
-        />
-        <BuildPanel
-          title="宗门建筑"
-          hint="居所 · 丹房 · 炼器房"
-          defs={STRUCTURES}
-          emptyHint="继续积累灵木与灵矿，即可解锁居所与丹房。"
-        />
-        {visibleStructures.length === 0 && (
-          <p className="panel__note">提示：建造灵木林后，灵木达到 100 就能盖第一座丹房。</p>
-        )}
+        <BuildingsPanel />
       </div>
       <div className="layout__right">
         <RealmPanel />

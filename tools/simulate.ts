@@ -247,7 +247,7 @@ function simulate(): void {
       if (state.expeditions.length < expeditions.getMaxExpeditions(state)) {
         let started = false;
         for (const realm of [...SECRET_REALMS].reverse()) {
-          if (!expeditions.isRealmUnlocked(realm, state)) continue;
+          if (!engine.isRealmUnlocked(realm, state)) continue;
           const party = expeditions.autoSelectParty(state, realm.id);
           if (party.length < realm.partySize) continue;
           const next = expeditions.startExpedition(state, realm.id, party);
@@ -357,6 +357,7 @@ function simulate(): void {
         seconds += dt;
         state = engine.tickMind(state, dt);
         state = engine.meditate(state);
+        state = engine.refreshUnlocks(state);
         continue;
       }
       // 有自动产出但暂时买不起任何东西（往往是缺秘境材料）：
