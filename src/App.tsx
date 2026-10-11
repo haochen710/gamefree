@@ -93,9 +93,10 @@ function CultivationTab() {
         {/*
           需求 1：钻研 / 合成 / 图纸三道栏搬到修行页。
           修行页**不再**有灵石合成 —— 那一条只保留在洞府里（见 CaveTab）。
+          需求 7：这几块也都能折叠（面板外壳统一走 Panel 组件）。
         */}
-        <ResearchPanel />
-        <RefinePanel />
+        <ResearchPanel collapsible />
+        <RefinePanel collapsible />
         <AscendPanel />
       </div>
     </main>
@@ -106,8 +107,12 @@ function CaveTab() {
   return (
     <main className="layout">
       <div className="layout__left">
-        {/* 需求 7：洞府的各个子门类都可以展开收起 */}
-        <BuildingsPanel />
+        {/*
+          需求 7：洞府界面各个子门类都可以展开收起。
+          ⚠️ 组件写好了 `collapsible` 却忘了在这里传 —— 那样它永远是展开的，
+          需求 7 只生效了一半。所以这一处必须显式传参。
+        */}
+        <BuildingsPanel collapsible />
       </div>
       <div className="layout__right">
         <BuildQueuePanel collapsible />

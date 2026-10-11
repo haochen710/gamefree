@@ -13,6 +13,7 @@ import { ITEM_MAP, MATERIAL_IDS, MATERIAL_MAP, REFINE_RECIPES, type ItemId } fro
 import { getRefineGate, maxRefine, refineCostMap } from '../game/engine';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
+import Panel from './Panel';
 
 /** 每条配方通向哪里（纯文案，帮玩家建立"合它做什么"的直觉） */
 const DOWNSTREAM: Record<string, string> = {
@@ -22,18 +23,17 @@ const DOWNSTREAM: Record<string, string> = {
   arrayCoreRefine: '阵法 —— 护山大阵 / 周天星斗大阵 / 混元无极阵的核心件',
 };
 
-export function RefinePanel() {
+export function RefinePanel({ collapsible = false }: { collapsible?: boolean } = {}) {
   const game = useGame((s) => s.game);
   const doRefine = useGame((s) => s.refine);
 
   return (
-    <section className="panel">
-      <div className="panel__head">
-        <h2>合成 · 精炼</h2>
-        <span className="panel__hint">
-          进阶资源 {refinedOwned(game)} 种
-        </span>
-      </div>
+    <Panel
+      title="合成 · 精炼"
+      hint={`进阶资源 ${refinedOwned(game)} 种`}
+      collapsible={collapsible}
+      storageKey="refine"
+    >
       <p className="panel__note">
         基础资源在这里加工成<strong>进阶资源</strong>。进阶资源<strong>不能种、也不会从秘境掉落</strong> ——
         想要就得自己合。合成是立刻完成的，不占时间。
@@ -92,7 +92,7 @@ export function RefinePanel() {
           );
         })}
       </div>
-    </section>
+    </Panel>
   );
 }
 

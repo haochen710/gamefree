@@ -147,6 +147,13 @@ export const SOLO_REALM_RARE_WEIGHT_MULT = 4;
 export const SOLO_SURVEY_DURATION_MULT = 1.25;
 /** 掌门亲自普通探索：产出只有派队的一部分（一个人翻不了多少地方） */
 export const SOLO_SURVEY_YIELD_MULT = 0.5;
+/**
+ * 掌门亲探时"额外带回一样稀有材料"的概率。
+ *
+ * 和派队伍的 30% 对齐：一个人的好处是**不折损弟子**，不是更容易出稀有 ——
+ * 否则"派队伍"这条线在产出上就没有存在理由了。
+ */
+export const SOLO_SURVEY_RARE_CHANCE = 0.3;
 
 export function getSoloRealmDuration(_state: GameState, realmId: string): number {
   const def = SECRET_REALM_MAP[realmId];
@@ -333,21 +340,28 @@ export function resolveSoloSurvey(
 
   const tier = regionTier(travel.regionId);
   const { base, rare } = getSurveyLoot(tier);
-  /*
-   * 一个人翻不动多少地方：基础那一档按一半算，
-   * 稀有那一档只有"撞运气"抽一条（抽不到就是没有）——
-   * 这也让掌门亲探与派队伍的分工很清楚：弟子负责产量，掌门负责探路与稀有机会。
-   */
   type SurveyEntry = ReturnType<typeof getSurveyLoot>['base'][number];
+  /*
+   * 一个人翻不动多少地方：基础那一档按一半算；
+   * 稀有那一档**按概率**额外抽一条（`SOLO_SURVEY_RARE_CHANCE`）。
+   *
+   * ⚠️ 这里最初写的是 `weightedDraw(rare, 1, random)`，注释却说"撞运气，抽不到就是没有" ——
+   * 而 `weightedDraw` 是**不放回抽 count 项**：稀有池非空时它必定返回 1 条，
+   * 而九档秘境每一档的池子里都有稀有材料。于是掌门亲往变成了"100% 带一样稀有回来"，
+   * 比派队伍的 30% 还高，正好和"人多力量大"的直觉相反。
+   * 现在先掷一次概率，中了才抽 —— 注释与实现对得上了。
+   */
   const picked: SurveyEntry[] = [
     ...base.map((entry) => ({
       ...entry,
       amount: Math.max(1, Math.round(entry.amount * SOLO_SURVEY_YIELD_MULT)),
     })),
-    ...weightedDraw(rare, 1, random).map((entry) => ({
-      ...entry,
-      amount: Math.max(1, Math.round(entry.amount * SOLO_SURVEY_YIELD_MULT)),
-    })),
+    ...(random() < SOLO_SURVEY_RARE_CHANCE
+      ? weightedDraw(rare, 1, random).map((entry) => ({
+          ...entry,
+          amount: Math.max(1, Math.round(entry.amount * SOLO_SURVEY_YIELD_MULT)),
+        }))
+      : []),
   ];
 
   let working = state;

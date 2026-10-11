@@ -4494,6 +4494,18 @@ section('[41] 界面布局 / 普通探索 / 唯一建筑 / 满仓倒计时');
     check('资源栏出现了满仓倒计时', out.includes('resource__eta'));
   }
 
+  /* ---- 需求 7：折叠开关真的接线了吗 ---- */
+  {
+    /*
+     * 这一条是补的：组件写好了 `collapsible` 参数，`App.tsx` 里却忘了传 ——
+     * 于是"可折叠"在界面上完全看不出来（不报错、不崩、类型也过，
+     * 因为 prop 是可选的）。所以直接断言渲染结果里真有折叠标题栏。
+     */
+    const out = renderToString(<App />);
+    check('渲染结果里有可折叠的标题栏', out.includes('panel__head--toggle'));
+    check('折叠按钮带 aria-expanded', out.includes('aria-expanded'));
+  }
+
   /* ---- 需求 5：普通探索 ---- */
   {
     // 门槛按**大区域**算，而不是小区域档次
