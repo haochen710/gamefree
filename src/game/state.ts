@@ -123,6 +123,12 @@ export interface GameState {
   /** 距离下一点心神回复的秒数进度 */
   mindProgress: number;
 
+  /* ---- 仆人与道伤 ---- */
+  /** 各工种的仆人数（id -> 人数） */
+  servants: Record<string, number>;
+  /** 道伤剩余秒数。大于 0 时无法突破，且全局产量下降 */
+  injurySeconds: number;
+
   /* ---- 转世 ---- */
   daoYun: Decimal;
   ascensions: number;
@@ -223,6 +229,8 @@ export function createInitialState(now = Date.now()): GameState {
     globalBreakthroughBonus: 0,
     mind: 20,
     mindProgress: 0,
+    servants: {},
+    injurySeconds: 0,
     daoYun: D(0),
     ascensions: 0,
     totalQi: D(0),

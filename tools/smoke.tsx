@@ -18,8 +18,11 @@ import { D, fmt } from '../src/game/decimal';
 import {
   APTITUDE_MAP,
   BUILDABLE_MAP,
+  INJURY_PRODUCTION_PENALTY,
+  INJURY_SECONDS,
   MIND_MAX,
   PILLS,
+  SERVANT_BONUS_PER_HEAD,
   REALMS,
   SECRET_REALM_MAP,
   BASE_STORAGE,
@@ -34,6 +37,7 @@ import * as disciples from '../src/game/disciples';
 import * as expeditions from '../src/game/expeditions';
 import * as crafting from '../src/game/crafting';
 import { applyTick } from '../src/game/tick';
+import { gameRandom } from '../src/game/random';
 import { applyOffline, deserialize, exportCode, importCode, serialize } from '../src/game/save';
 
 /* ------------------------------------------------------------------ */
@@ -134,6 +138,127 @@ section('[2] 打坐限流（需求 1）');
   const clicksPerMinute = 60 / 6;
   const boostRatio = (clicksPerMinute * 1.5) / 60;
   check('手点收益被限制在产量的 25% 以内', boostRatio <= 0.25, `${Math.round(boostRatio * 100)}%`);
+}
+
+/* ------------------------------------------------------------------ */
+/* 2b. 随机源：游戏必须用真随机                                          */
+/* ------------------------------------------------------------------ */
+section('[2b] 随机源');
+{
+  check('游戏随机源就是 Math.random（无种子）', gameRandom === Math.random);
+
+  // 连续取值应当互不相同 —— 固定种子的实现会在这里暴露
+  const samples = new Set<number>();
+  for (let i = 0; i < 200; i += 1) samples.add(gameRandom());
+  check('连续取值不重复（说明不是固定序列）', samples.size > 190, `${samples.size}/200 个不同值`);
+
+  // 招收弟子/突破等入口默认都用 gameRandom，不传参也能正常工作
+  const state = grant(forceBuild(createInitialState(0), 'thatchHut', 5), { stone: '1e6' });
+  const withSect: GameState = { ...state, sect: { ...state.sect, founded: true } };
+  const a = disciples.recruitDisciple(withSect).disciple;
+  const b = disciples.recruitDisciple(withSect).disciple;
+  check('招收弟子默认走真随机', a !== null && b !== null);
+  check('两次招收得到的弟子不同', a!.name !== b!.name || a!.aptitude !== b!.aptitude, `${a!.name}/${a!.aptitude} vs ${b!.name}/${b!.aptitude}`);
+}
+
+/* ------------------------------------------------------------------ */
+/* 2c. 仆役（杂役）                                                     */
+/* ------------------------------------------------------------------ */
+section('[2c] 仆役（杂役）');
+{
+  // 没有居所时不能招收
+  const bare = createInitialState(0);
+  check('没有居所时无法招收仆人', !engine.canRecruitServant(bare).ok, engine.canRecruitServant(bare).reason ?? '');
+
+  // 建了茅屋：居所够了，此时只差灵气（开局只有 10 灵气，而仆人要 80）
+  const housed = forceBuild(createInitialState(0), 'thatchHut', 2); // 6 个床位
+  check('仆人上限等于居所容量', engine.getServantCapacity(housed) === 6);
+  check(
+    '建了茅屋后只差灵气',
+    !engine.canRecruitServant(housed).ok && engine.canRecruitServant(housed).reason === '灵气不足',
+    engine.canRecruitServant(housed).reason ?? '',
+  );
+
+  // 灵气不足时招不了
+  const poor: GameState = { ...housed, resources: { ...housed.resources, qi: D(0) } };
+  check('灵气不足时无法招收仆人', !engine.canRecruitServant(poor).ok);
+
+  // 招收：消耗灵气、人数增加
+  const rich = grant(housed, { qi: '1e6' });
+  const afterOne = engine.recruitServant(rich, 'ore');
+  check('有居所且有灵气时可以招收仆人', engine.canRecruitServant(rich).ok);
+  check('招收仆人消耗灵气', afterOne.resources.qi.lt(rich.resources.qi));
+  check('仆人计入对应工种', (afterOne.servants.ore ?? 0) === 1);
+  check('总仆人数正确', engine.getServantCount(afterOne) === 1);
+
+  // 加成：只作用于对应资源
+  const producing = forceBuild(afterOne, 'oreVein', 10);
+  const noServant = forceBuild(grant(housed, { qi: '1e6' }), 'oreVein', 10);
+  const withBonus = engine.getProduction(producing).ore.toNumber();
+  const without = engine.getProduction(noServant).ore.toNumber();
+  check(
+    '仆人给对应资源提供加成',
+    Math.abs(withBonus / without - (1 + SERVANT_BONUS_PER_HEAD)) < 1e-9,
+    `${without.toFixed(3)} → ${withBonus.toFixed(3)}`,
+  );
+  check(
+    '仆人不影响其它资源',
+    Math.abs(engine.getProduction(producing).wood.toNumber() - engine.getProduction(noServant).wood.toNumber()) < 1e-9,
+  );
+
+  // 调派
+  const moved = engine.assignServant(afterOne, 'ore', 'herb');
+  check('仆人可以在工种间调派', (moved.servants.ore ?? 0) === 0 && (moved.servants.herb ?? 0) === 1);
+  check('调派不改变总人数', engine.getServantCount(moved) === 1);
+
+  // 遣散
+  const fired = engine.dismissServant(moved, 'herb');
+  check('可以遣散仆人', engine.getServantCount(fired) === 0);
+
+  // 招收价格随人数上涨
+  const many = grant(forceBuild(createInitialState(0), 'grotto', 5), { qi: '1e12' });
+  const costAt0 = engine.getServantCost(many).toNumber();
+  let grown = many;
+  for (let i = 0; i < 10; i += 1) grown = engine.recruitServant(grown, 'chores');
+  const costAt10 = engine.getServantCost(grown).toNumber();
+  check('招收价格随人数上涨', costAt10 > costAt0, `${costAt0} → ${costAt10}`);
+
+  // 居所满了就招不了
+  const full: GameState = { ...many, servants: { chores: engine.getServantCapacity(many) } };
+  check('居所满员后无法再招收', !engine.canRecruitServant(full).ok, engine.canRecruitServant(full).reason ?? '');
+
+  // 关键取舍：仆人与弟子共用居所名额
+  // （把宗门品阶调高，让「居所」而不是「宗门等级」成为瓶颈，才能看出共用效果）
+  const sectState: GameState = {
+    ...grant(forceBuild(createInitialState(0), 'thatchHut', 10), { stone: '1e9', qi: '1e9' }),
+    sect: { founded: true, level: 5, disciples: [], totalRecruited: 0, lifespanBonus: 0 },
+  };
+  check('测试场景：居所容量 30', engine.getHousingCapacity(sectState) === 30);
+  const beforeServants = engine.getDiscipleCapacity(sectState);
+  const withServants: GameState = { ...sectState, servants: { chores: 6 } };
+  check(
+    '多收仆人就会少收弟子（共用居所）',
+    engine.getDiscipleCapacity(withServants) === beforeServants - 6,
+    `${beforeServants} → ${engine.getDiscipleCapacity(withServants)}`,
+  );
+
+  // 遣散仆人能给弟子腾出名额
+  const freed = engine.dismissAllServants(withServants);
+  check('遣散仆人可腾出弟子名额', engine.getDiscipleCapacity(freed) === beforeServants);
+
+  // 存档往返
+  const saved = deserialize(JSON.parse(JSON.stringify(serialize(withServants))));
+  check('仆人数量能存档还原', saved !== null && (saved.servants.chores ?? 0) === 6);
+
+  // 非法工种在读档时被丢弃
+  const dirty = deserialize({
+    ...serialize(sectState),
+    sv: { chores: 2, '@@bogus': 5, ore: -3 },
+  });
+  check(
+    '读档丢弃非法工种与非法数量',
+    dirty !== null && (dirty.servants.chores ?? 0) === 2 && dirty.servants['@@bogus'] === undefined && dirty.servants.ore === undefined,
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -344,15 +469,18 @@ section('[5] 突破成功率与境界丹（需求 5）');
     `${highBase.toFixed(2)} → ${highBoosted.toFixed(2)}`,
   );
 
-  // 强制失败
+  // 强制失败（炼气期属于「低境界」，失败应毫无代价）
   const failed = engine.breakthrough(withPill, true, fixedRandom(0.999));
   check('失败时境界不变', failed !== null && !failed.success && failed.state.realmIndex === 0);
   check('失败时消耗了丹药', (failed?.state.pills.foundationPill ?? 0) === 0);
   check('失败累积保底加成', (failed?.state.breakthroughPity[0] ?? 0) > 0, `+${failed?.state.breakthroughPity[0]}`);
   check(
-    '失败返还一半灵气',
-    Math.abs(failed!.state.resources.qi.toNumber() - (1e6 - REALMS[0].breakthroughQi * 0.5)) < 1,
+    '低境界失败：灵气全额返还',
+    Math.abs(failed!.state.resources.qi.toNumber() - 1e6) < 1,
+    `${failed!.state.resources.qi.toString()}`,
   );
+  check('低境界失败：不产生道伤', failed!.state.injurySeconds === 0 && failed!.injurySeconds === 0);
+  check('低境界标记为 safe', engine.getBreakthroughStatus(state).safe);
 
   // 保底让下次更容易
   const nextRate = engine.getSuccessRate(failed!.state, false);
@@ -362,6 +490,58 @@ section('[5] 突破成功率与境界丹（需求 5）');
   const ok = engine.breakthrough(failed!.state, false, fixedRandom(0));
   check('成功时进入下一境界', ok !== null && ok.success && ok.state.realmIndex === 1);
   check('成功后小境界层数归零', ok?.state.layer === 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* 5b. 高境界突破失败的代价（道伤）                                      */
+/* ------------------------------------------------------------------ */
+section('[5b] 高境界突破失败：道伤');
+{
+  // 元婴期（下标 3）是第一个会产生道伤的境界
+  let state = grant(createInitialState(0), { qi: '1e12' });
+  state = { ...state, realmIndex: 3, layer: REALMS[3].layerCount };
+  const status = engine.getBreakthroughStatus(state);
+  check('元婴期属于高境界（非 safe）', !status.safe);
+
+  // 强制失败
+  const failed = engine.breakthrough(state, false, fixedRandom(0.999));
+  check('高境界失败仍保留当前境界', failed !== null && failed.state.realmIndex === 3);
+  check(
+    '高境界失败：只返还一半灵气',
+    Math.abs(failed!.state.resources.qi.toNumber() - (1e12 - REALMS[3].breakthroughQi * 0.5)) < 1e6,
+  );
+  check('高境界失败：留下道伤', failed!.state.injurySeconds > 0, `${failed!.injurySeconds} 秒`);
+  check(
+    '道伤时长随境界递增',
+    INJURY_SECONDS[3] < INJURY_SECONDS[5] && INJURY_SECONDS[5] < INJURY_SECONDS[8],
+    `${INJURY_SECONDS[3]} < ${INJURY_SECONDS[5]} < ${INJURY_SECONDS[8]}`,
+  );
+
+  // 道伤期间无法突破
+  const injured = failed!.state;
+  const blocked = engine.getBreakthroughStatus(injured);
+  check('道伤期间无法突破', !blocked.possible && blocked.reason === '道伤未愈');
+  check('道伤期间突破调用无效果', engine.breakthrough(injured, false, fixedRandom(0)) === null);
+
+  // 道伤期间产量下降
+  const producing = forceBuild(injured, 'spiritArray', 100);
+  const healthy: GameState = { ...producing, injurySeconds: 0 };
+  const injuredOutput = engine.getProduction(producing).qi.toNumber();
+  const healthyOutput = engine.getProduction(healthy).qi.toNumber();
+  check(
+    '道伤期间产量下降',
+    Math.abs(injuredOutput / healthyOutput - (1 - INJURY_PRODUCTION_PENALTY)) < 1e-6,
+    `${healthyOutput.toFixed(1)} → ${injuredOutput.toFixed(1)}`,
+  );
+
+  // 计时会走完
+  const ticked = applyTick(injured, INJURY_SECONDS[3] + 1, makeRandom(1));
+  check('道伤会随时间消退', ticked.injurySeconds === 0);
+  check('道伤消退后可以突破', engine.getBreakthroughStatus(ticked).possible || engine.getBreakthroughStatus(ticked).reason !== '道伤未愈');
+
+  // 「萎靡」不会因为再次失败而叠加变长
+  const twice = engine.breakthrough(injured, false, fixedRandom(0.999));
+  check('道伤不会因连败而无限叠加', twice === null, '（道伤期间本就无法突破）');
 }
 
 /* ------------------------------------------------------------------ */

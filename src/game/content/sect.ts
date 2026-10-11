@@ -5,6 +5,7 @@
  * 这两条合起来让"逐出低资质弟子、招收高资质弟子"成为一个真实的长期决策。
  */
 import type { ItemId } from './resources';
+import { gameRandom, type RandomSource } from '../random';
 
 /* ------------------------------------------------------------------ */
 /* 弟子资质                                                            */
@@ -240,14 +241,14 @@ const GIVEN_NAMES = [
 ];
 
 /** 随机生成一个道号 */
-export function randomDiscipleName(random: () => number = Math.random): string {
+export function randomDiscipleName(random: RandomSource = gameRandom): string {
   const surname = SURNAMES[Math.floor(random() * SURNAMES.length)];
   const given = GIVEN_NAMES[Math.floor(random() * GIVEN_NAMES.length)];
   return `${surname}${given}`;
 }
 
 /** 按权重随机抽一个资质 */
-export function rollAptitude(sectLevel: number, random: () => number = Math.random): AptitudeId {
+export function rollAptitude(sectLevel: number, random: RandomSource = gameRandom): AptitudeId {
   const weights = RECRUIT_WEIGHTS[Math.min(Math.max(sectLevel, 1), 9)] ?? RECRUIT_WEIGHTS[1];
   const total = weights.reduce((a, b) => a + b, 0);
   let roll = random() * total;

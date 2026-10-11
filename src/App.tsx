@@ -6,6 +6,7 @@ import { getIdleDisciples } from './game/expeditions';
 import Header from './components/Header';
 import ResourceBar from './components/ResourceBar';
 import ActionPanel from './components/ActionPanel';
+import ServantPanel from './components/ServantPanel';
 import BuildingsPanel from './components/BuildingsPanel';
 import RealmPanel from './components/RealmPanel';
 import AscendPanel from './components/AscendPanel';
@@ -64,6 +65,7 @@ function CultivationTab() {
     <main className="layout">
       <div className="layout__left">
         <ActionPanel />
+        <ServantPanel />
         <BuildingsPanel />
       </div>
       <div className="layout__right">

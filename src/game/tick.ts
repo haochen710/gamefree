@@ -11,9 +11,10 @@
  *   tick.ts        ← 依赖以上全部
  */
 import { tickBuffs } from './content';
-import { clampResources, produceResources, refreshUnlocks, tickMind } from './engine';
+import { clampResources, produceResources, refreshUnlocks, tickInjury, tickMind } from './engine';
 import { tickDisciples } from './disciples';
 import { tickExpeditions } from './expeditions';
+import { gameRandom, type RandomSource } from './random';
 import type { GameState } from './state';
 
 /** 单次 tick 最多推进的秒数，防止休眠唤醒后数值跳变 */
@@ -31,12 +32,13 @@ export const MAX_TICK_SECONDS = 300;
  *   6. 刷新建筑解锁（资源涨够了就永久解锁）
  *   7. 最后统一把资源砍回储存上限（秘境掉落也可能顶破上限）
  */
-export function applyTick(state: GameState, dt: number, random: () => number = Math.random): GameState {
+export function applyTick(state: GameState, dt: number, random: RandomSource = gameRandom): GameState {
   if (dt <= 0) return state;
 
   let next = state;
   next = produceResources(next, dt);
   next = tickMind(next, dt);
+  next = tickInjury(next, dt);
   next = tickDisciples(next, dt);
   next = tickExpeditions(next, dt, random);
   next = { ...next, buffs: tickBuffs(next.buffs, dt) };

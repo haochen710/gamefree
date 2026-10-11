@@ -22,6 +22,10 @@ import {
   DAO_YUN_EXPONENT,
   FINAL_REALM_INDEX,
   GENERATORS,
+  INJURY_FALLBACK_SECONDS,
+  INJURY_FROM_REALM,
+  INJURY_PRODUCTION_PENALTY,
+  INJURY_SECONDS,
   ITEM_MAP,
   MEDITATE_COST,
   MEDITATE_MIN_QI,
@@ -33,18 +37,23 @@ import {
   RESOURCE_IDS,
   SECT_LEVELS,
   SECRET_REALMS,
+  SERVANT_BONUS_PER_HEAD,
+  SERVANT_JOBS,
   STONE_REFINE_COST,
   STONE_REFINE_OUTPUT,
   STRUCTURES,
   discipleCapBySect,
   isResourceId,
+  servantCost,
   type BuildableDef,
   type GeneratorDef,
   type ItemId,
   type RealmDef,
   type ResourceId,
   type SecretRealmDef,
+  type ServantJobId,
 } from './content';
+import { gameRandom, type RandomSource } from './random';
 import type { GameState, ResourceMap } from './state';
 
 /** 一份消耗清单：资源与材料混用 */
@@ -179,7 +188,106 @@ export function getGlobalMultiplier(state: GameState): Decimal {
   return getRealmMultiplier(state)
     .mul(getDaoYunMultiplier(state))
     .mul(1 + artifact)
-    .mul(state.buffs.productionMultiplier);
+    .mul(state.buffs.productionMultiplier)
+    .mul(getInjuryMultiplier(state));
+}
+
+/** 道伤未愈时的产量惩罚（「萎靡不振」的具象化） */
+export function getInjuryMultiplier(state: GameState): number {
+  return state.injurySeconds > 0 ? 1 - INJURY_PRODUCTION_PENALTY : 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* 仆人（杂役）                                                        */
+/* ------------------------------------------------------------------ */
+
+export function getServantCount(state: GameState): number {
+  let total = 0;
+  for (const job of SERVANT_JOBS) total += state.servants[job.id] ?? 0;
+  return total;
+}
+
+/** 某工种当前的仆人加成（加算比例，0.05 = +5%） */
+export function getServantBonus(state: GameState, resource: ResourceId): number {
+  let bonus = 0;
+  for (const job of SERVANT_JOBS) {
+    if (job.resource !== resource) continue;
+    bonus += (state.servants[job.id] ?? 0) * SERVANT_BONUS_PER_HEAD;
+  }
+  return bonus;
+}
+
+/** 居所已被占用多少名额（仆人与弟子共用） */
+export function getHousingUsed(state: GameState): number {
+  return getServantCount(state) + state.sect.disciples.length;
+}
+
+export function getFreeHousing(state: GameState): number {
+  return Math.max(0, getHousingCapacity(state) - getHousingUsed(state));
+}
+
+/** 仆人的招收花费，随已有仆人数递增 */
+export function getServantCost(state: GameState): Decimal {
+  return D(servantCost(getServantCount(state)));
+}
+
+export interface RecruitCheck {
+  ok: boolean;
+  reason: string | null;
+}
+
+export function canRecruitServant(state: GameState): RecruitCheck {
+  if (getHousingCapacity(state) === 0) {
+    return { ok: false, reason: '尚无居所，先建一座茅屋' };
+  }
+  if (getFreeHousing(state) <= 0) {
+    return { ok: false, reason: '居所已满，需先扩建或腾出房间' };
+  }
+  if (state.resources.qi.lt(getServantCost(state))) {
+    return { ok: false, reason: '灵气不足' };
+  }
+  return { ok: true, reason: null };
+}
+
+export function recruitServant(state: GameState, job: ServantJobId = 'chores'): GameState {
+  if (!canRecruitServant(state).ok) return state;
+  return {
+    ...state,
+    resources: { ...state.resources, qi: state.resources.qi.sub(getServantCost(state)) },
+    servants: { ...state.servants, [job]: (state.servants[job] ?? 0) + 1 },
+  };
+}
+
+/** 把一个仆人从某工种调到另一工种 */
+export function assignServant(state: GameState, from: ServantJobId, to: ServantJobId): GameState {
+  if (from === to) return state;
+  const fromCount = state.servants[from] ?? 0;
+  if (fromCount <= 0) return state;
+
+  const servants = { ...state.servants };
+  if (fromCount > 1) servants[from] = fromCount - 1;
+  else delete servants[from];
+  servants[to] = (servants[to] ?? 0) + 1;
+
+  return { ...state, servants };
+}
+
+/** 遣散一名某工种的仆人（用来给弟子腾房间） */
+export function dismissServant(state: GameState, job: ServantJobId): GameState {
+  const count = state.servants[job] ?? 0;
+  if (count <= 0) return state;
+
+  const servants = { ...state.servants };
+  if (count > 1) servants[job] = count - 1;
+  else delete servants[job];
+
+  return { ...state, servants };
+}
+
+/** 遣散全部仆人 */
+export function dismissAllServants(state: GameState): GameState {
+  if (getServantCount(state) === 0) return state;
+  return { ...state, servants: {} };
 }
 
 /* ------------------------------------------------------------------ */
@@ -196,6 +304,14 @@ export function getProduction(state: GameState): ResourceMap {
     if (count <= 0) continue;
     out[def.produces] = out[def.produces].add(D(count).mul(def.baseOutput).mul(mult));
   }
+
+  // 仆人加成：只作用于他们所从事的那种资源
+  for (const job of SERVANT_JOBS) {
+    const count = state.servants[job.id] ?? 0;
+    if (count <= 0) continue;
+    out[job.resource] = out[job.resource].mul(1 + count * SERVANT_BONUS_PER_HEAD);
+  }
+
   return out;
 }
 
@@ -439,12 +555,21 @@ export function getHousingCapacity(state: GameState): number {
 }
 
 /**
- * 实际弟子上限 = min(居所容量, 宗门等级上限)。
- * 两个条件都得满足，所以"盖房"和"升宗门"缺一不可。
+ * 弟子总数上限 = min(居所容纳 - 仆人占用, 宗门等级上限)。
+ *
+ * 居所名额是和仆人**共用**的：多收一个仆人，就少收一个弟子。
+ * 于是「盖房 → 收仆人换产量」和「盖房 → 收弟子换战力/材料」之间
+ * 始终存在取舍，居所在整局游戏里都有意义。
  */
 export function getDiscipleCapacity(state: GameState): number {
   if (!state.sect.founded) return 0;
-  return Math.min(getHousingCapacity(state), discipleCapBySect(state.sect.level));
+  const forDisciples = Math.max(0, getHousingCapacity(state) - getServantCount(state));
+  return Math.min(forDisciples, discipleCapBySect(state.sect.level));
+}
+
+/** 仆人总数上限 = 居所容纳 - 弟子占用 */
+export function getServantCapacity(state: GameState): number {
+  return Math.max(0, getHousingCapacity(state) - state.sect.disciples.length);
 }
 
 export function getAlchemySlots(state: GameState): number {
@@ -517,15 +642,24 @@ export interface BreakthroughStatus {
   pillId: string;
   /** 是否持有该丹药 */
   hasPill: boolean;
+  /** 道伤剩余秒数（大于 0 时无法突破） */
+  injurySeconds: number;
+  /** 本次突破是否属于「低境界」（失败无任何负面影响） */
+  safe: boolean;
 }
 
 export function getBreakthroughStatus(state: GameState): BreakthroughStatus {
   const realm = getRealm(state);
   const pillId = realm.breakthroughPill;
   const hasPill = Boolean(pillId) && (state.pills[pillId] ?? 0) > 0;
+  const injurySeconds = state.injurySeconds;
+  const safe = state.realmIndex < INJURY_FROM_REALM;
 
   if (isFinalRealm(state)) {
-    return { possible: false, reason: '已至修行尽头', pillId: '', hasPill: false };
+    return { possible: false, reason: '已至修行尽头', pillId: '', hasPill: false, injurySeconds, safe };
+  }
+  if (injurySeconds > 0) {
+    return { possible: false, reason: '道伤未愈', pillId, hasPill, injurySeconds, safe };
   }
   if (state.layer < realm.layerCount) {
     return {
@@ -533,12 +667,14 @@ export function getBreakthroughStatus(state: GameState): BreakthroughStatus {
       reason: '须先参悟圆满本境界所有小境界',
       pillId,
       hasPill,
+      injurySeconds,
+      safe,
     };
   }
   if (state.resources.qi.lt(realm.breakthroughQi)) {
-    return { possible: false, reason: '灵气不足', pillId, hasPill };
+    return { possible: false, reason: '灵气不足', pillId, hasPill, injurySeconds, safe };
   }
-  return { possible: true, reason: null, pillId, hasPill };
+  return { possible: true, reason: null, pillId, hasPill, injurySeconds, safe };
 }
 
 /** 突破成功率（0~1），usePill 表示这次是否服用境界丹 */
@@ -559,18 +695,24 @@ export interface BreakthroughResult {
   state: GameState;
   success: boolean;
   rate: number;
+  /** 本次失败造成的道伤秒数（0 表示没有惩罚） */
+  injurySeconds: number;
 }
 
 /**
  * 突破大境界。
  *
- * 失败不会让你卡死：每次失败累积 +5% 保底成功率（上限 +50%），
- * 并且返还一半灵气。境界丹是可选的，但能一次性 +35%。
+ * 失败的代价按境界分级：
+ *   - **低境界（炼气 / 筑基 / 金丹）失败没有任何负面影响** ——
+ *     灵气全额返还，没有冷却。前期是教学阶段，不该惩罚玩家。
+ *   - **元婴期起失败会留下「道伤」**：一段时间内无法再次突破，
+ *     且全局产量下降。失败仍返还一半灵气，并累积保底成功率，
+ *     所以最坏情况也只是等一会儿，不会卡死。
  */
 export function breakthrough(
   state: GameState,
   usePill: boolean,
-  random: () => number = Math.random,
+  random: RandomSource = gameRandom,
 ): BreakthroughResult | null {
   const status = getBreakthroughStatus(state);
   if (!status.possible) return null;
@@ -586,12 +728,19 @@ export function breakthrough(
     else delete pills[status.pillId];
   }
 
-  // 失败返还一半灵气，避免"连败把家底赔光"的挫败感
-  const qiSpent = success ? realm.breakthroughQi : realm.breakthroughQi * 0.5;
+  // 失败时的灵气消耗：
+  //   成功        → 全额消耗
+  //   低境界失败  → 全额返还（无任何代价）
+  //   高境界失败  → 返还一半
+  const qiSpent = success ? realm.breakthroughQi : status.safe ? 0 : realm.breakthroughQi * 0.5;
+
   const pity = [...state.breakthroughPity];
   pity[state.realmIndex] = success
     ? 0
     : Math.min((pity[state.realmIndex] ?? 0) + BREAKTHROUGH_FAIL_BONUS, BREAKTHROUGH_FAIL_BONUS_CAP);
+
+  const injurySeconds =
+    success || status.safe ? 0 : (INJURY_SECONDS[state.realmIndex] ?? INJURY_FALLBACK_SECONDS);
 
   const next: GameState = {
     ...state,
@@ -600,9 +749,17 @@ export function breakthrough(
     breakthroughPity: pity,
     realmIndex: success ? state.realmIndex + 1 : state.realmIndex,
     layer: success ? 0 : state.layer,
+    // 新的道伤会覆盖旧的（取较长者，避免连败反而缩短惩罚）
+    injurySeconds: Math.max(state.injurySeconds, injurySeconds),
   };
 
-  return { state: next, success, rate };
+  return { state: next, success, rate, injurySeconds };
+}
+
+/** 道伤计时 */
+export function tickInjury(state: GameState, dt: number): GameState {
+  if (state.injurySeconds <= 0 || dt <= 0) return state;
+  return { ...state, injurySeconds: Math.max(0, state.injurySeconds - dt) };
 }
 
 /* ------------------------------------------------------------------ */

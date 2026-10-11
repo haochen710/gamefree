@@ -9,8 +9,8 @@
  * 都不会漏掉解锁时机。
  */
 import { create } from 'zustand';
-import { fmt } from './decimal';
-import { BUILDABLE_MAP } from './content';
+import { fmt, fmtDuration } from './decimal';
+import { BUILDABLE_MAP, SERVANT_JOB_MAP, type ServantJobId } from './content';
 import * as engine from './engine';
 import * as disciples from './disciples';
 import * as expeditions from './expeditions';
@@ -43,6 +43,12 @@ export interface GameStore {
   refineStone(times: number): void;
   ascend(): void;
   hardReset(): void;
+
+  /* 仆人 */
+  recruitServant(job: string): void;
+  assignServant(from: string, to: string): void;
+  dismissServant(job: string): void;
+  dismissAllServants(): void;
 
   /* 宗门 */
   foundSect(): void;
@@ -129,12 +135,22 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       const result = engine.breakthrough(s.game, usePill);
       if (!result) return {};
+
       const realm = engine.getRealm(result.state);
+      if (result.success) {
+        return { ...nextGame(s.game, result.state), notice: `突破成功，已入${realm.name}！` };
+      }
+      if (result.injurySeconds > 0) {
+        return {
+          ...nextGame(s.game, result.state),
+          notice: `突破失败（成功率 ${Math.round(result.rate * 100)}%），道伤缠身，${fmtDuration(
+            result.injurySeconds,
+          )}内无法再度突破`,
+        };
+      }
       return {
         ...nextGame(s.game, result.state),
-        notice: result.success
-          ? `突破成功，已入${realm.name}！`
-          : `突破失败（成功率 ${Math.round(result.rate * 100)}%），灵气返还一半，下次成功率提升`,
+        notice: `突破失败（成功率 ${Math.round(result.rate * 100)}%）。境界尚浅，并无大碍，可即刻再试`,
       };
     });
   },
@@ -165,6 +181,50 @@ export const useGame = create<GameStore>()((set, get) => ({
     clearLocal();
     saveToLocal(fresh);
     set({ game: fresh, offline: null, notice: '已重开修行', lastSavedAt: Date.now() });
+  },
+
+  /* ------------------------------------------------------------ 仆人 */
+
+  recruitServant: (job) => {
+    set((s) => {
+      const check = engine.canRecruitServant(s.game);
+      if (!check.ok) return { notice: check.reason ?? '无法招收' };
+      const next = engine.recruitServant(s.game, job as ServantJobId);
+      if (next === s.game) return {};
+      const def = SERVANT_JOB_MAP[job as ServantJobId];
+      return {
+        ...nextGame(s.game, next),
+        notice: `一名仆人来到洞府，安排去${def?.name ?? '做事'}`,
+      };
+    });
+  },
+
+  assignServant: (from, to) => {
+    set((s) => {
+      const next = engine.assignServant(s.game, from as ServantJobId, to as ServantJobId);
+      if (next === s.game) return {};
+      const def = SERVANT_JOB_MAP[to as ServantJobId];
+      return { ...nextGame(s.game, next), notice: `一名仆人改派去${def?.name ?? '做事'}` };
+    });
+  },
+
+  dismissServant: (job) => {
+    set((s) => {
+      const next = engine.dismissServant(s.game, job as ServantJobId);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '已遣散一名仆人，腾出一间居所' };
+    });
+  },
+
+  dismissAllServants: () => {
+    set((s) => {
+      const count = engine.getServantCount(s.game);
+      if (count === 0) return { notice: '当前没有仆人' };
+      return {
+        ...nextGame(s.game, engine.dismissAllServants(s.game)),
+        notice: `已遣散全部 ${count} 名仆人`,
+      };
+    });
   },
 
   /* ------------------------------------------------------------ 宗门 */

@@ -26,6 +26,7 @@ import {
   RESOURCE_IDS,
   SECT_LEVELS,
   SECRET_REALMS,
+  SERVANT_JOBS,
   STRUCTURES,
   isResourceId,
 } from '../src/game/content';
@@ -122,7 +123,8 @@ function payback(state: GameState, id: string, prices: Record<string, number>): 
   }
 
   if (def.capacity) {
-    const need = state.sect.disciples.length >= engine.getHousingCapacity(state);
+    // 空房间少于 4 间就该扩建了（弟子和仆人都要住）
+    const need = engine.getFreeHousing(state) < 4;
     return need ? qiCost / (mult * 0.5) : Infinity;
   }
   if (def.alchemySlots) {
@@ -160,6 +162,7 @@ function runSimulation(seed: number): SimResult {
   let iterations = 0;
   let deadlock = false;
   let seenStorage = false;
+  let seenServant = false;
 
   const milestones: Milestone[] = [];
   const realmTimes = new Map<string, number>();
@@ -196,6 +199,8 @@ function runSimulation(seed: number): SimResult {
           const to = engine.getRealm(state).name;
           realmTimes.set(to, seconds);
           record(`${from} → ${to}`);
+        } else if (result.injurySeconds > 0) {
+          record(`突破失败，道伤 ${fmtDuration(result.injurySeconds)}`);
         }
       }
       continue;
@@ -298,6 +303,48 @@ function runSimulation(seed: number): SimResult {
             continue;
           }
         }
+      }
+    }
+
+    /* ---------------- 2b. 仆役 ----------------
+       仆人和弟子共用居所名额，AI 的策略是：
+         - 开宗前：有多少空房就收多少仆人换产量
+         - 开宗后：始终给弟子留 8 个空位，其余照收；
+                   真的一个空位都没有时才腾退仆人 */
+    const freeHousing = engine.getFreeHousing(state);
+    const servantReserve = state.sect.founded ? 4 : 0;
+
+    if (freeHousing <= 0 && state.sect.founded && engine.getServantCount(state) > 0) {
+      // 从人数最多的工种里遣散一个，给弟子腾位置
+      const busiest = SERVANT_JOBS.map((job) => ({ job, count: state.servants[job.id] ?? 0 }))
+        .sort((a, b) => b.count - a.count)[0];
+      if (busiest.count > 0) {
+        const next = engine.dismissServant(state, busiest.job.id);
+        if (next !== state) {
+          state = next;
+          continue;
+        }
+      }
+    } else if (freeHousing > servantReserve && engine.canRecruitServant(state).ok) {
+      // 派去影子价格最高的资源（也就是最紧缺的那种）
+      const prices = shadowPrices(state);
+      let best = SERVANT_JOBS[0];
+      let bestValue = -1;
+      for (const job of SERVANT_JOBS) {
+        const value = prices[job.resource] ?? 1;
+        if (value > bestValue) {
+          bestValue = value;
+          best = job;
+        }
+      }
+      const next = engine.recruitServant(state, best.id);
+      if (next !== state) {
+        state = next;
+        if (!seenServant) {
+          seenServant = true;
+          record(`首位仆役入府（${best.name}）`);
+        }
+        continue;
       }
     }
 
@@ -450,6 +497,18 @@ function printDetail(result: SimResult): void {
   console.log(`  灵气产量：${fmt(production.qi)}/秒 · 全局倍率 ×${fmt(engine.getGlobalMultiplier(state))}`);
   console.log(`  宗门：${state.sect.founded ? SECT_LEVELS[state.sect.level - 1].name : '未开宗'}`);
   console.log(`  弟子：${state.sect.disciples.length} 人，累计招收 ${state.sect.totalRecruited} 人`);
+
+  const servantTotal = engine.getServantCount(state);
+  const servantDetail = SERVANT_JOBS.filter((job) => (state.servants[job.id] ?? 0) > 0)
+    .map((job) => `${job.name} ${state.servants[job.id]}`)
+    .join('，');
+  console.log(
+    `  仆役：${servantTotal} 人 / 上限 ${engine.getServantCapacity(state)}${servantTotal > 0 ? `（${servantDetail}）` : ''}`,
+  );
+  if (state.injurySeconds > 0) {
+    console.log(`  道伤：剩余 ${fmtDuration(state.injurySeconds)}`);
+  }
+
   console.log(`  炼丹术 ${state.alchemyTier} 品 · 炼器术 ${state.refiningTier} 品`);
 
   console.log(

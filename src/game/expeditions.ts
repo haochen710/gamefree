@@ -13,6 +13,7 @@
  * 派太弱的队伍，收益腰斩且死伤惨重；派最强的队伍，又可能耽误别的探索。
  */
 import { D } from './decimal';
+import { gameRandom, randomId, type RandomSource } from './random';
 import {
   ITEM_MAP,
   LOOT_ROLLS,
@@ -101,13 +102,20 @@ export function autoSelectParty(state: GameState, realmId: string): string[] {
 /* 开始探索                                                            */
 /* ------------------------------------------------------------------ */
 
-export function startExpedition(state: GameState, realmId: string, ids: string[]): GameState {
+export function startExpedition(
+  state: GameState,
+  realmId: string,
+  ids: string[],
+  random: RandomSource = gameRandom,
+): GameState {
   const check = canStartExpedition(state, realmId, ids);
   if (!check.ok) return state;
 
   const def = SECRET_REALM_MAP[realmId];
   const expedition: Expedition = {
-    id: `e${state.playTime.toFixed(2)}_${realmId}`,
+    // 用随机 id 而不是 playTime：同一时刻派出两支队伍时，
+    // 基于时间的 id 会撞车，结算时就会误删另一支队伍
+    id: randomId('e', random),
     realmId,
     discipleIds: [...ids],
     progress: 0,
@@ -171,7 +179,7 @@ export interface ExpeditionOutcome {
 export function resolveExpedition(
   state: GameState,
   expedition: Expedition,
-  random: () => number = Math.random,
+  random: RandomSource = gameRandom,
 ): { state: GameState; outcome: ExpeditionOutcome | null } {
   const def = SECRET_REALM_MAP[expedition.realmId];
   if (!def) {
@@ -290,7 +298,7 @@ export function getExpeditionSpeed(state: GameState): number {
   return state.buffs.speedMultiplier * (1 + artifacts.expeditionSpeed);
 }
 
-export function tickExpeditions(state: GameState, dt: number, random: () => number = Math.random): GameState {
+export function tickExpeditions(state: GameState, dt: number, random: RandomSource = gameRandom): GameState {
   if (state.expeditions.length === 0 || dt <= 0) return state;
 
   const gained = dt * getExpeditionSpeed(state);
@@ -311,7 +319,7 @@ export function tickExpeditions(state: GameState, dt: number, random: () => numb
 }
 
 /** 立即完成所有探索（灭魔丹） */
-export function completeAllExpeditions(state: GameState, random: () => number = Math.random): GameState {
+export function completeAllExpeditions(state: GameState, random: RandomSource = gameRandom): GameState {
   let working = state;
   for (const expedition of [...state.expeditions]) {
     working = resolveExpedition(working, { ...expedition, progress: expedition.duration }, random).state;

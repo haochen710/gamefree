@@ -1,7 +1,13 @@
 /** 顶部：境界、小境界层数、全局倍率、道韵、心神 */
-import { fmt, fmtMultiplier } from '../game/decimal';
+import { fmt, fmtDuration, fmtMultiplier } from '../game/decimal';
 import { MIND_MAX } from '../game/content';
-import { getGlobalMultiplier, getRealm, isFinalRealm, getDiscipleCapacity } from '../game/engine';
+import {
+  getDiscipleCapacity,
+  getGlobalMultiplier,
+  getRealm,
+  getServantCount,
+  isFinalRealm,
+} from '../game/engine';
 import { useGame } from '../game/store';
 
 const CN_NUM = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
@@ -17,6 +23,7 @@ export function Header() {
   const mindRatio = game.mind / MIND_MAX;
   const discipleCount = game.sect.disciples.length;
   const discipleCap = getDiscipleCapacity(game);
+  const servants = getServantCount(game);
 
   return (
     <header className="header">
@@ -67,6 +74,26 @@ export function Header() {
             {game.ascensions > 0 && <em className="stat__layer">飞升 {game.ascensions} 次</em>}
           </span>
         </div>
+
+        {servants > 0 && (
+          <div className="stat">
+            <span className="stat__label">仆役</span>
+            <span className="stat__value">
+              {servants}
+              <em className="stat__layer">人</em>
+            </span>
+          </div>
+        )}
+
+        {game.injurySeconds > 0 && (
+          <div className="stat stat--injury">
+            <span className="stat__label">道伤</span>
+            <span className="stat__value stat__value--injury">
+              {fmtDuration(game.injurySeconds)}
+              <em className="stat__layer">产量下降</em>
+            </span>
+          </div>
+        )}
       </div>
     </header>
   );

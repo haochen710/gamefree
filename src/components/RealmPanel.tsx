@@ -4,8 +4,8 @@
  * 突破现在是概率事件（需求 5）：可以选择服用对应的境界丹把成功率拉高，
  * 失败也不会卡死 —— 每次失败累积保底加成，并返还一半灵气。
  */
-import { fmt } from '../game/decimal';
-import { BREAKTHROUGH_FAIL_BONUS, PILL_MAP } from '../game/content';
+import { fmt, fmtDuration } from '../game/decimal';
+import { BREAKTHROUGH_FAIL_BONUS, INJURY_FROM_REALM, INJURY_PRODUCTION_PENALTY, PILL_MAP, REALMS } from '../game/content';
 import {
   canAdvanceLayer,
   getBreakthroughStatus,
@@ -39,12 +39,15 @@ export function RealmPanel() {
     if (!status.possible) return;
     const rate = usePill ? rateWith : rateWithout;
     const extra = usePill && pillDef ? `\n将服用 ${pillDef.name}（剩余 ${game.pills[status.pillId] ?? 0} 颗）` : '';
+    const risk = status.safe
+      ? `\n失败无任何负面影响：灵气全额返还，可立即再试。`
+      : `\n失败将道伤缠身，一段时间内无法再度突破，且期间产量下降。\n失败返还一半灵气，并累积 +${Math.round(
+          BREAKTHROUGH_FAIL_BONUS * 100,
+        )}% 保底成功率。`;
     const ok = window.confirm(
       `确定突破至${realm.name}之后的境界？\n\n` +
         `消耗 ${fmt(realm.breakthroughQi)} 灵气${extra}\n` +
-        `成功率 ${Math.round(rate * 100)}%　失败返还一半灵气，并累积 +${Math.round(
-          BREAKTHROUGH_FAIL_BONUS * 100,
-        )}% 保底成功率`,
+        `成功率 ${Math.round(rate * 100)}%${risk}`,
     );
     if (ok) breakthrough(usePill);
   };
@@ -86,6 +89,21 @@ export function RealmPanel() {
 
         {!layerCost && !final && (
           <div className="realm__action">
+            {status.injurySeconds > 0 && (
+              <div className="injury">
+                <span className="injury__icon">🩸</span>
+                <div>
+                  <strong>道伤未愈</strong>
+                  <span className="injury__time">
+                    还需 {fmtDuration(status.injurySeconds)} 才能再次突破
+                  </span>
+                  <span className="injury__note">
+                    期间全局产量 −{Math.round(INJURY_PRODUCTION_PENALTY * 100)}%
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="realm__req">
               突破消耗：☯ {fmt(realm.breakthroughQi)} 灵气
               {pity > 0 && <span className="realm__pity"> · 保底加成 +{Math.round(pity * 100)}%</span>}
@@ -101,6 +119,12 @@ export function RealmPanel() {
                   <em>（{game.pills[status.pillId] ?? 0} 颗）</em>
                 </span>
               )}
+            </div>
+
+            <div className={status.safe ? 'realm__risk realm__risk--safe' : 'realm__risk realm__risk--hard'}>
+              {status.safe
+                ? `境界尚浅，突破失败没有任何负面影响（灵气全额返还，可立即再试）——从${REALMS[INJURY_FROM_REALM].name}起才会留下道伤`
+                : `突破失败将道伤缠身，一段时间内无法再度突破，且期间产量下降`}
             </div>
 
             <div className="btn-row">
@@ -122,7 +146,9 @@ export function RealmPanel() {
               </button>
             </div>
 
-            {!status.possible && status.reason && <div className="realm__req">{status.reason}</div>}
+            {!status.possible && status.reason && status.reason !== '道伤未愈' && (
+              <div className="realm__req">{status.reason}</div>
+            )}
           </div>
         )}
 

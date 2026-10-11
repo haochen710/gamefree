@@ -8,6 +8,7 @@
  * 3. 读档后要跑一次一致性修复（弟子状态与探索列表对齐等）。
  */
 import Decimal, { D } from './decimal';
+import { gameRandom, type RandomSource } from './random';
 import {
   APTITUDE_ORDER,
   BUILDABLES,
@@ -19,6 +20,7 @@ import {
   RESOURCE_IDS,
   SECRET_REALMS,
   SECRET_REALM_MAP,
+  SERVANT_JOB_MAP,
   createEmptyBuffs,
   type ActiveBuffs,
   type AptitudeId,
@@ -85,6 +87,10 @@ export interface SerializedGame {
   gb: number;
   mi: number;
   mp: number;
+  /** servants：各工种的仆人数 */
+  sv: Record<string, number>;
+  /** injurySeconds：道伤剩余秒数 */
+  inj: number;
   dy: string;
   asc: number;
   tq: string;
@@ -129,6 +135,8 @@ export function serialize(state: GameState): SerializedGame {
     gb: state.globalBreakthroughBonus,
     mi: state.mind,
     mp: state.mindProgress,
+    sv: { ...state.servants },
+    inj: state.injurySeconds,
     dy: state.daoYun.toString(),
     asc: state.ascensions,
     tq: state.totalQi.toString(),
@@ -423,6 +431,16 @@ export function deserialize(raw: unknown): GameState | null {
   }
 
   const now = Date.now();
+
+  /* ---- 仆人：只保留已知工种，且数量必须为正整数 ---- */
+  const servants: Record<string, number> = {};
+  const rawServants = (data.sv ?? {}) as Record<string, unknown>;
+  for (const [job, count] of Object.entries(rawServants)) {
+    if (!(job in SERVANT_JOB_MAP)) continue;
+    if (typeof count !== 'number' || !Number.isFinite(count) || count <= 0) continue;
+    servants[job] = Math.min(Math.floor(count), 1e6);
+  }
+
   const state: GameState = {
     version: SAVE_VERSION,
     resources,
@@ -438,6 +456,8 @@ export function deserialize(raw: unknown): GameState | null {
     globalBreakthroughBonus: toFloat(data.gb, 0, 0, 10),
     mind: toFloat(data.mi, fresh.mind, 0, 1e6),
     mindProgress: toFloat(data.mp, 0, 0, 1e6),
+    servants,
+    injurySeconds: toFloat(data.inj, 0, 0, 1e9),
     daoYun: toDec(data.dy, 0),
     ascensions: toInt(data.asc, 0, 0, Number.MAX_SAFE_INTEGER),
     totalQi: toDec(data.tq, 0),
@@ -548,7 +568,7 @@ export interface OfflineReport {
 export function applyOffline(
   state: GameState,
   now = Date.now(),
-  random: () => number = Math.random,
+  random: RandomSource = gameRandom,
 ): { state: GameState; report: OfflineReport | null } {
   const elapsed = (now - state.savedAt) / 1000;
   const seconds = Math.min(Math.max(Number.isFinite(elapsed) ? elapsed : 0, 0), MAX_OFFLINE_SECONDS);

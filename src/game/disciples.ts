@@ -10,6 +10,7 @@
  * 凡品灵根弟子也会慢慢变强，但永远追不上天灵根，而且会先老死。
  */
 import Decimal, { D } from './decimal';
+import { gameRandom, type RandomSource } from './random';
 import {
   APTITUDE_MAP,
   APTITUDE_ORDER,
@@ -50,7 +51,7 @@ export function getDiscipleCapReason(
 /* 生成与招收                                                          */
 /* ------------------------------------------------------------------ */
 
-export function rollDisciple(sectLevel: number, id: number, random: () => number = Math.random): Disciple {
+export function rollDisciple(sectLevel: number, id: number, random: RandomSource = gameRandom): Disciple {
   return {
     id: `d${id}`,
     name: randomDiscipleName(random),
@@ -84,7 +85,7 @@ export function canRecruit(state: GameState): { ok: boolean; reason: string | nu
   return { ok: true, reason: null };
 }
 
-export function recruitDisciple(state: GameState, random: () => number = Math.random): RecruitResult {
+export function recruitDisciple(state: GameState, random: RandomSource = gameRandom): RecruitResult {
   const check = canRecruit(state);
   if (!check.ok) return { state, disciple: null, reason: check.reason };
 

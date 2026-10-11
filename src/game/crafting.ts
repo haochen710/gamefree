@@ -8,6 +8,7 @@
  * 形成一个自我强化的循环。
  */
 import Decimal from './decimal';
+import { gameRandom, type RandomSource } from './random';
 import {
   ALCHEMY_SLOT_REQUIREMENT,
   ALCHEMY_TIER_COST,
@@ -363,7 +364,7 @@ function applyEffect(state: GameState, effect: Effect, random: () => number): Us
   }
 }
 
-export function usePill(state: GameState, pillId: string, random: () => number = Math.random): UsePillResult {
+export function usePill(state: GameState, pillId: string, random: RandomSource = gameRandom): UsePillResult {
   const check = canUsePill(state, pillId);
   if (!check.ok) return { state, message: check.reason ?? '无法服用' };
 
