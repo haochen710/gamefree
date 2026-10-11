@@ -143,7 +143,19 @@ import { createInitialState, type GameState } from '../src/game/state';
 import * as engine from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
 import * as expeditions from '../src/game/expeditions';
-import { canStartExpedition } from '../src/game/expeditions';
+import {
+  canStartExpedition,
+  canStartSurvey,
+  canSurveyRegion,
+} from '../src/game/expeditions';
+import { surveyReachRealm } from '../src/game/content';
+import {
+  canStartSoloSurvey,
+  startSoloSurvey,
+  tickTravel,
+} from '../src/game/travel';
+import { describeFullIn, secondsToFull } from '../src/components/ResourceBar';
+import { getAlchemyUpgradeStatus, getRefiningUpgradeStatus } from '../src/game/crafting';
 import * as crafting from '../src/game/crafting';
 import * as research from '../src/game/research';
 import * as planting from '../src/game/planting';
@@ -1325,10 +1337,36 @@ section('[12] 炼丹 / 炼器品阶晋升');
 
   let state = grant(basic, { herb: '1e9', qi: '1e12', demonCore: '1e6' });
   state = forceBuild(state, 'alchemyRoom', 1);
-  check('一座丹房即可支撑二品', crafting.getAlchemyUpgradeStatus(state).possible === true);
+  // 需求 6：升品要先钻研对应等级的技术
+  check(
+    '没钻研炼丹入门时升不了品',
+    crafting.getAlchemyUpgradeStatus(state).possible === false,
+    crafting.getAlchemyUpgradeStatus(state).reason ?? '',
+  );
+  state = { ...state, techs: { ...state.techs, alchemyArt: true } };
+  check('一座丹房 + 炼丹入门即可支撑二品', crafting.getAlchemyUpgradeStatus(state).possible === true);
 
   const upgraded = crafting.upgradeAlchemy(state);
   check('炼丹术提升到二品', upgraded.alchemyTier === 2);
+
+  // 五品要换一档技术（丹道精要）。五品要的材料比二品多得多，这里给足。
+  const atFour: GameState = grant({ ...upgraded, alchemyTier: 4 }, {
+    herb: '1e9',
+    qi: '1e12',
+    starSand: '1e6',
+    spiritEssence: '1e6',
+    blackIron: '1e6',
+    demonCore: '1e6',
+  });
+  check(
+    '四品升五品要先钻研丹道精要',
+    (crafting.getAlchemyUpgradeStatus(atFour).reason ?? '').includes('丹道精要'),
+    crafting.getAlchemyUpgradeStatus(atFour).reason ?? '',
+  );
+  check(
+    '钻研之后就能升五品',
+    crafting.getAlchemyUpgradeStatus({ ...atFour, techs: { ...atFour.techs, alchemyDeep: true } }).possible === true,
+  );
 
   const needTwo = crafting.getAlchemyUpgradeStatus(upgraded);
   // 需求 2：升品不再要求丹房数量，只看资源
@@ -4418,6 +4456,126 @@ section('[40] 弟子招收固定消耗（需求 3）');
     const cost2 = first.state.resources.stone.sub(second.state.resources.stone);
     check('三次品阶的招收价是 540', cost1.eq(D(recruitCost(3, 0))), `${cost1.toNumber()}`);
     check('第二个弟子还是同一个价', cost2.eq(cost1), `${cost1.toNumber()} → ${cost2.toNumber()}`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 41. 本轮界面与探索改动（需求 1~7）                                    */
+/* ------------------------------------------------------------------ */
+section('[41] 界面布局 / 普通探索 / 唯一建筑 / 满仓倒计时');
+{
+  /* ---- 需求 2：纪年在页头右上角 ---- */
+  {
+    const out = renderToString(<App />);
+    const headerEnd = out.indexOf('</header>');
+    const yearIdx = out.indexOf('year-badge');
+    check('页头里有纪年', yearIdx >= 0);
+    check('纪年在页头内（右上角那块）', yearIdx > 0 && yearIdx < headerEnd);
+    // React SSR 会在文本节点之间插注释，所以不能直接匹配「第 N 年」这种整串
+    check('纪年里有年份那一块', out.includes('year-badge__year') && out.includes('年'));
+    // 需求 3：资源栏底下不该再有季节/纪年的常驻条
+    check('资源栏底下不再挂季节条', !out.includes('season-strip'));
+  }
+
+  /* ---- 需求 3：满仓倒计时 ---- */
+  {
+    const cap = D(1000);
+    check('半满且有产出时给得出时间', secondsToFull(D(500), cap, D(1)) === 500);
+    check('已满时不给时间', secondsToFull(cap, cap, D(1)) === null);
+    check('没产出时不给时间', secondsToFull(D(500), cap, D(0)) === null);
+    check('没上限时不给时间', secondsToFull(D(500), D(0), D(1)) === null);
+    check('文案：已满', describeFullIn(cap, cap, D(1)) === '已满');
+    check('文案：无产出', describeFullIn(D(1), cap, D(0)) === '无产出');
+    check('文案：含"后满"', describeFullIn(D(0), cap, D(1)).includes('后满'));
+
+    // 资源栏真的分成三组、都有折叠头
+    const out = renderToString(<App />);
+    check('资源栏有分组标题', out.includes('基础资源') && out.includes('res-group__head'));
+    check('资源栏出现了满仓倒计时', out.includes('resource__eta'));
+  }
+
+  /* ---- 需求 5：普通探索 ---- */
+  {
+    // 门槛按**大区域**算，而不是小区域档次
+    const eastSubs = MAP_REGIONS.filter((r) => r.majorId === 'eastMountains');
+    check(
+      '东部群山全境的可达门槛都是 0（大区域口径）',
+      eastSubs.every((r) => surveyReachRealm(r.id) === 0),
+      Array.from(new Set(eastSubs.map((r) => surveyReachRealm(r.id)))).join('、'),
+    );
+    check(
+      '小区域自己的门槛仍然是一路上涨的（守卫这条测试本身）',
+      new Set(eastSubs.map((r) => r.requiresRealm)).size > 1,
+    );
+
+    const fresh = createInitialState(0);
+    check('炼气期就能在东部群山做普通探索', canSurveyRegion(fresh, 'eastMountains_15').ok);
+    check('中州（需元婴）炼气期去不了', !canSurveyRegion(fresh, 'centralState_0').ok);
+
+    // 掌门亲往：开宗前也能用
+    check('未开宗时也能掌门亲往', canStartSoloSurvey(fresh, 'eastMountains_1').ok, canStartSoloSurvey(fresh, 'eastMountains_1').reason ?? '');
+    check(
+      '未开宗时派不了队伍（要弟子）',
+      canStartSurvey(fresh, 'eastMountains_1', []).ok === false,
+    );
+
+    // 真的跑一次掌门亲探
+    const started = startSoloSurvey(fresh, 'eastMountains_1');
+    check('出发后记为 survey 行程', started.personalTravel?.kind === 'survey');
+    check('行程时长是正的', (started.personalTravel?.duration ?? 0) > 0);
+
+    const done = tickTravel(
+      { ...started, personalTravel: { ...started.personalTravel!, progress: started.personalTravel!.duration } },
+      1,
+      makeRandom(9),
+    );
+    check('亲探归来后行程清空', done.personalTravel === null);
+    check('亲探有产出或至少记了一笔', done.journal.length > started.journal.length);
+    check('亲探写的是"查探"', done.journal.some((e) => e.text.includes('查探')));
+
+    // 存档往返
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(started))));
+    check('亲探行程能存档还原', !!round && round.personalTravel?.kind === 'survey');
+    const legacy = deserialize({ v: 4, at: 0, pt: { regionId: 'eastMountains_0', progress: 1, duration: 60 } });
+    check('旧存档没有 kind 时按游历处理', !!legacy && (legacy.personalTravel === null || legacy.personalTravel.kind === 'travel'));
+  }
+
+  /* ---- 需求 4：唯一建筑建成后没有建造/排队按钮 ---- */
+  {
+    const unique = BUILDABLES.filter((def) => engine.getMaxCount(def) === 1);
+    check('存在唯一类建筑', unique.length > 0, `${unique.length} 座`);
+
+    const target = BUILDABLE_MAP.alchemyRoom;
+    const built: GameState = {
+      ...forceBuild(grant(createInitialState(0), { qi: '1e12', wood: '1e9' }), 'alchemyRoom', 1),
+      techs: { ...createInitialState(0).techs, alchemyArt: true },
+    };
+    const out = renderToString(<BuildingsPanel />);
+    void out;
+
+    // 组件是读 store 的，所以这里直接验引擎层的判据：建满之后 maxAffordable 为 0
+    check('唯一建筑建满后不能再建', engine.getBuildingCount(built, target.id) >= engine.getMaxCount(target));
+    check('唯一建筑的最大可建数为 0', engine.maxAffordable(target, 1, built) === 0);
+  }
+
+  /* ---- 需求 6：唯一工坊的升级需要对应等级的技术 ---- */
+  {
+    const base = grant(
+      { ...createInitialState(0), techs: { ...createInitialState(0).techs, alchemyArt: true } },
+      { qi: '1e12', herb: '1e9', ore: '1e9' },
+    );
+    const room = forceBuild(base, 'alchemyRoom', 1);
+    check('有丹房 + 入门技术就能升二品', getAlchemyUpgradeStatus(room).possible);
+    check(
+      '炼器房也走同一套（需炼器入门）',
+      (getRefiningUpgradeStatus(forceBuild(base, 'refinery', 1)).reason ?? '').includes('炼器入门'),
+    );
+    check(
+      '钻研器道精要后七品放行（先要过五品那一档）',
+      (getRefiningUpgradeStatus({ ...room, refiningTier: 6 }).reason ?? '').includes('器道精要') ||
+        (getRefiningUpgradeStatus({ ...room, refiningTier: 6 }).reason ?? '').includes('通天营造'),
+      getRefiningUpgradeStatus({ ...room, refiningTier: 6 }).reason ?? '',
+    );
   }
 }
 

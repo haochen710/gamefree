@@ -370,6 +370,25 @@ export function regionTier(regionId: string): number {
 /** 玩家在某个区域前是否已「看得见」它：提前一个境界显示，便于规划 */
 export const REGION_PREVIEW_REALMS = 1;
 
+/**
+ * 普通探索的可达门槛（需求 5）。
+ *
+ * 用**大区域**的门槛，而不是小区域自己的 `requiresRealm` ——
+ * 后者在同一个大区域内部是一路涨上去的（东部群山里从需 0 一直到需 4），
+ * 于是"除了最前面几个小区域，其它都点不动"。
+ *
+ * 普通探索是"去附近转转"，不该要求玩家先强到能闯那一带最深处的秘境；
+ * 那些秘境各自还有解锁境界与队伍战力要求，并不会因此白送。
+ *
+ * 放在 content 层是为了让 `expeditions` 与 `travel` 都能用同一个口径，
+ * 而不必互相 import（那会绕出一个环）。
+ */
+export function surveyReachRealm(regionId: string): number {
+  const region = MAP_REGION_MAP[regionId];
+  if (!region) return 0;
+  return MAJOR_REGION_MAP[region.majorId]?.requiresRealm ?? region.requiresRealm;
+}
+
 /* ------------------------------------------------------------------ */
 /* 特产                                                                */
 /* ------------------------------------------------------------------ */

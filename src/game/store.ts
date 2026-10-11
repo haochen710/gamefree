@@ -110,6 +110,8 @@ export interface GameStore {
   startExpedition(realmId: string, ids: string[]): void;
   /** 掌门独自前往已发现的秘境（需求 5） */
   startSoloRealm(realmId: string): void;
+  /** 掌门亲自做普通探索（需求 5）：开宗前也能用 */
+  startSoloSurvey(regionId: string): void;
   /** 选择随机遭遇里的某个选项（需求 2） */
   chooseEncounter(optionIndex: number): void;
   /** 合成 / 精炼（需求 4） */
@@ -550,8 +552,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   },
 
   /** 花资源开启资源富集区的秘境（需求 1） */
-  openRealm: (realmId) => {
-    set((s) => {
+  openRealm: (realmId) => {    set((s) => {
       const def = SECRET_REALM_MAP[realmId];
       if (!def) return {};
       const check = engine.canOpenRealm(s.game, def);
@@ -626,6 +627,18 @@ export const useGame = create<GameStore>()((set, get) => ({
       return {
         ...nextGame(s.game, travel.startSoloRealm(s.game, realmId)),
         notice: '掌门已独自前往秘境（洞府产量下降）',
+      };
+    });
+  },
+
+  /** 掌门亲自做普通探索（需求 5） */
+  startSoloSurvey: (regionId) => {
+    set((s) => {
+      const check = travel.canStartSoloSurvey(s.game, regionId);
+      if (!check.ok) return { notice: check.reason ?? '无法前往' };
+      return {
+        ...nextGame(s.game, travel.startSoloSurvey(s.game, regionId)),
+        notice: '掌门已亲自出发（洞府产量下降）',
       };
     });
   },

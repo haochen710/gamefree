@@ -19,6 +19,8 @@ import {
   ITEM_MAP,
   MAP_REGIONS,
   MAP_REGION_MAP,
+  regionTier,
+  getSurveyLoot,
   MATERIAL_MAP,
   REALMS,
   SEED_MAP,
@@ -51,6 +53,7 @@ import {
   isRegionVisible,
   recordDiscoveryFailure,
 } from './engine';
+import { canSurveyRegion, getSurveyDuration } from './expeditions';
 import { addInsight, pushJournal } from './disciples';
 import { getEnvironmentMaterialBonus } from './season';
 import { getKarmaExploreBonus } from './encounter';
@@ -140,6 +143,10 @@ export function startTravel(state: GameState, regionId: string): GameState {
 export const SOLO_REALM_DURATION_MULT = 1.4;
 export const SOLO_REALM_YIELD_MULT = 0.45;
 export const SOLO_REALM_RARE_WEIGHT_MULT = 4;
+/** 掌门亲自普通探索：慢一点（一个人走得慢） */
+export const SOLO_SURVEY_DURATION_MULT = 1.25;
+/** 掌门亲自普通探索：产出只有派队的一部分（一个人翻不了多少地方） */
+export const SOLO_SURVEY_YIELD_MULT = 0.5;
 
 export function getSoloRealmDuration(_state: GameState, realmId: string): number {
   const def = SECRET_REALM_MAP[realmId];
@@ -260,6 +267,124 @@ export interface SoloRealmOutcome {
   gains: TravelGain[];
 }
 
+/* ------------------------------------------------------------------ */
+/* 掌门亲自做普通探索（需求 5）                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 需求原文：「**普通探索玩家应当也能探索**，目前看来除了第一个小区域，其它都不行」。
+ *
+ * 两件事都要修：
+ *   1. **玩家本人也能去** —— 原来普通探索必须派弟子，而弟子要开宗之后才有，
+ *      于是"开宗前"和"手头没人"的玩家完全碰不到这条线。现在掌门可以自己去，
+ *      代价照旧（人不在洞府，产量下降），好处是**不会折损弟子**。
+ *   2. **范围太窄** —— 原来按"小区域的档次"卡（东部群山内部从需 0 一路到需 4），
+ *      所以除了最前面几个小区域，别的都点不动。现在按**大区域**的门槛卡：
+ *      整个东部群山自炼气就可去，南疆要筑基…… 见 `canSurveyRegion`。
+ */
+export function getSoloSurveyDuration(_state: GameState, regionId: string): number {
+  const region = MAP_REGION_MAP[regionId];
+  if (!region) return 0;
+  // 一个人走得慢，比派一队人长一点
+  return Math.round(getSurveyDuration(_state, regionId) * SOLO_SURVEY_DURATION_MULT);
+}
+
+export function canStartSoloSurvey(state: GameState, regionId: string): TravelCheck {
+  const region = MAP_REGION_MAP[regionId];
+  if (!region) return { ok: false, reason: '此处不存在' };
+  if (state.personalTravel) return { ok: false, reason: '掌门正在外' };
+  const gate = canSurveyRegion(state, regionId);
+  if (!gate.ok) return gate;
+  return { ok: true, reason: null };
+}
+
+export function startSoloSurvey(state: GameState, regionId: string): GameState {
+  if (!canStartSoloSurvey(state, regionId).ok) return state;
+  const region = MAP_REGION_MAP[regionId];
+  return {
+    ...state,
+    personalTravel: {
+      kind: 'survey',
+      regionId,
+      progress: 0,
+      duration: getSoloSurveyDuration(state, regionId),
+    },
+    journal: pushJournal(state.journal, {
+      time: state.playTime,
+      kind: 'info',
+      text: `掌门独自前往${region.name}一带查探，洞府无人监管，产量下降`,
+    }),
+  };
+}
+
+/**
+ * 掌门亲自普通探索的结算。
+ *
+ * 产出走 `getSurveyLoot`（和派弟子的普通探索同一张表），但只取一部分 ——
+ * 一个人翻不了多少地方。作为交换，它**没有任何伤亡风险**。
+ */
+export function resolveSoloSurvey(
+  state: GameState,
+  travel: PersonalTravel,
+  random: RandomSource = gameRandom,
+): { state: GameState; outcome: SoloRealmOutcome | null } {
+  const region = MAP_REGION_MAP[travel.regionId];
+  if (!region) return { state: { ...state, personalTravel: null }, outcome: null };
+
+  const tier = regionTier(travel.regionId);
+  const { base, rare } = getSurveyLoot(tier);
+  /*
+   * 一个人翻不动多少地方：基础那一档按一半算，
+   * 稀有那一档只有"撞运气"抽一条（抽不到就是没有）——
+   * 这也让掌门亲探与派队伍的分工很清楚：弟子负责产量，掌门负责探路与稀有机会。
+   */
+  type SurveyEntry = ReturnType<typeof getSurveyLoot>['base'][number];
+  const picked: SurveyEntry[] = [
+    ...base.map((entry) => ({
+      ...entry,
+      amount: Math.max(1, Math.round(entry.amount * SOLO_SURVEY_YIELD_MULT)),
+    })),
+    ...weightedDraw(rare, 1, random).map((entry) => ({
+      ...entry,
+      amount: Math.max(1, Math.round(entry.amount * SOLO_SURVEY_YIELD_MULT)),
+    })),
+  ];
+
+  let working = state;
+  const gains: TravelGain[] = [];
+  for (const entry of picked) {
+    const seasonal = isBasicMaterial(entry.item)
+      ? (1 + getEnvironmentMaterialBonus(working, entry.item)) * (1 + getElementMaterialBonus(working, entry.item))
+      : 1;
+    const variance = YIELD_VARIANCE_MIN + random() * (YIELD_VARIANCE_MAX - YIELD_VARIANCE_MIN);
+    const amount = Math.max(
+      1,
+      Math.floor(entry.amount * Math.max(0, seasonal) * variance * (1 + getKarmaExploreBonus(working) + getSpaceExploreBonus(working))),
+    );
+    working = addItem(working, entry.item, D(amount));
+    const existing = gains.find((g) => g.id === entry.item);
+    if (existing) existing.amount += amount;
+    else {
+      gains.push({
+        id: entry.item,
+        amount,
+        name: ITEM_MAP[entry.item as ItemId]?.name ?? entry.item,
+        icon: ITEM_MAP[entry.item as ItemId]?.icon ?? '❓',
+      });
+    }
+  }
+
+  const journal = pushJournal(working.journal, {
+    time: working.playTime,
+    kind: 'good',
+    text: `掌门自${region.name}归来：${gains.map((g) => `${g.icon}${g.name}×${g.amount}`).join(' ') || '一无所获'}`,
+  });
+
+  return {
+    state: { ...working, personalTravel: null, journal },
+    outcome: { realmName: `${region.name}（亲自查探）`, gains },
+  };
+}
 
 export function cancelTravel(state: GameState): GameState {
   const travel = state.personalTravel;
@@ -441,10 +566,16 @@ export function tickTravel(state: GameState, dt: number, random: RandomSource = 
   const running = { ...state, personalTravel: { ...travel, progress } };
   if (progress < travel.duration) return running;
 
-  // 需求 5：掌门独自探秘境走同一条时间线，只是结算不同
-  return travel.kind === 'realm'
-    ? resolveSoloRealm(running, running.personalTravel as PersonalTravel, random).state
-    : resolveTravel(running, random).state;
+  /*
+   * 三种出行走同一条时间线，只是结算不同：
+   *   travel → 个人游历（需求 1）
+   *   realm  → 掌门独自探秘境（需求 5）
+   *   survey → 掌门亲自普通探索（本轮需求 5）
+   */
+  const current = running.personalTravel as PersonalTravel;
+  if (travel.kind === 'realm') return resolveSoloRealm(running, current, random).state;
+  if (travel.kind === 'survey') return resolveSoloSurvey(running, current, random).state;
+  return resolveTravel(running, random).state;
 }
 
 /** 界面上显示「还有多久回来」 */

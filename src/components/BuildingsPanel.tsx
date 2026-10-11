@@ -35,9 +35,12 @@ import {
   maxAffordable,
 } from '../game/engine';
 import { getQueueSlots } from '../game/engine';
+// 需求 6：唯一工坊的升级就是炼丹 / 炼器品阶，复用同一套判定
+import { getAlchemyUpgradeStatus, getRefiningUpgradeStatus } from '../game/crafting';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
 import CostList from './CostList';
+import Panel from './Panel';
 
 /** 建筑效果的一行短说明（只用于不产出资源的建筑） */
 function describeEffect(def: StructureDef): string {
@@ -143,8 +146,19 @@ function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
   const output = def.kind === 'generator' ? getGeneratorOutput(state, def) : null;
   const target = def.kind === 'generator' ? RESOURCE_MAP[def.produces] : null;
 
+  /*
+   * 需求 4：「唯一类建筑已完成建造后不应当还有建造和排队按钮」。
+   *
+   * 所以唯一建筑（max === 1）建好之后整块按钮区都不渲染，
+   * 而不是把按钮灰掉 —— 灰按钮会让人以为是"资源不够，再攒攒就能建第二座"。
+   */
+  const isUnique = maxCount === 1;
+  const builtUnique = isUnique && owned >= 1;
+  // 需求 6：丹房 / 炼器房唯一，它们的"升级"就是炼丹 / 炼器品阶
+  const tierUpgrade = def.id === 'alchemyRoom' ? 'alchemy' : def.id === 'refinery' ? 'refining' : null;
+
   return (
-    <article className={canBuy1 ? 'generator' : 'generator generator--locked'}>
+    <article className={canBuy1 || builtUnique ? 'generator' : 'generator generator--locked'}>
       <div className="generator__main">
         <span className="generator__icon">{def.icon}</span>
         <div className="generator__text">
@@ -155,7 +169,8 @@ function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
               {Number.isFinite(maxCount) && <em className="generator__max">/ {maxCount}</em>}
             </span>
             {gate && <span className="generator__gate">{gate}</span>}
-            {atMax && <span className="generator__gate generator__gate--done">已建满</span>}
+            {atMax && !isUnique && <span className="generator__gate generator__gate--done">已建满</span>}
+            {builtUnique && <span className="generator__gate generator__gate--done">已建成 · 唯一</span>}
           </div>
           <div className="generator__output">
             {def.kind === 'generator' && target
@@ -166,36 +181,91 @@ function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
           </div>
           <div className="generator__desc">{def.desc}</div>
           <GateTags def={def} state={state} />
+
+          {/* 需求 6：唯一工坊的"升级"就在这里，不需要再跑一趟丹器页 */}
+          {tierUpgrade && builtUnique && <TierUpgradeRow kind={tierUpgrade} state={state} />}
         </div>
       </div>
 
-      <div className="generator__buy">
-        <div className="generator__price">
-          <CostList cost={cost1} state={state} />
+      {!builtUnique && (
+        <div className="generator__buy">
+          <div className="generator__price">
+            <CostList cost={cost1} state={state} />
+          </div>
+          <div className="btn-row">
+            <button type="button" className="btn" disabled={!canBuy1} onClick={() => buy(def.id, 1)}>
+              建造 1
+            </button>
+            {!isUnique && (
+              <button type="button" className="btn" disabled={!canBuy10} onClick={() => buy(def.id, 10)}>
+                建造 10
+              </button>
+            )}
+            {!isUnique && (
+              <button type="button" className="btn" disabled={maxN <= 0} onClick={() => buy(def.id, 'max')}>
+                最大 {maxN > 0 ? `(${fmt(maxN, 0)})` : ''}
+              </button>
+            )}
+            {/* 需求 2：也可以排进建造队列，资源一到就自动盖 */}
+            <button
+              type="button"
+              className="btn"
+              disabled={gate !== null || queue.length >= queueSlots}
+              onClick={() => enqueueBuild(def.id)}
+              title="加入建造队列后，资源够了会自动开工"
+            >
+              排队
+            </button>
+          </div>
         </div>
-        <div className="btn-row">
-          <button type="button" className="btn" disabled={!canBuy1} onClick={() => buy(def.id, 1)}>
-            建造 1
-          </button>
-          <button type="button" className="btn" disabled={!canBuy10} onClick={() => buy(def.id, 10)}>
-            建造 10
-          </button>
-          <button type="button" className="btn" disabled={maxN <= 0} onClick={() => buy(def.id, 'max')}>
-            最大 {maxN > 0 ? `(${fmt(maxN, 0)})` : ''}
-          </button>
-          {/* 需求 2：也可以排进建造队列，资源一到就自动盖 */}
+      )}
+    </article>
+  );
+}
+
+/**
+ * 唯一工坊的升级行（需求 6）
+ *
+ * 需求原文：「丹房和炼器房可以升级……这俩升级需要钻研对应等级的技术」。
+ *
+ * 品阶既在丹器页能升，也在这里能升 —— 同一件事、同一个引擎函数，
+ * 只是让玩家在"看着这座建筑"的时候也能直接推进，不必来回切页。
+ */
+function TierUpgradeRow({ kind, state }: { kind: 'alchemy' | 'refining'; state: GameState }) {
+  const upgradeAlchemy = useGame((s) => s.upgradeAlchemy);
+  const upgradeRefining = useGame((s) => s.upgradeRefining);
+
+  const status = kind === 'alchemy' ? getAlchemyUpgradeStatus(state) : getRefiningUpgradeStatus(state);
+  const currentTier = kind === 'alchemy' ? state.alchemyTier : state.refiningTier;
+  const label = kind === 'alchemy' ? '炼丹术' : '炼器术';
+
+  return (
+    <div className="tier-upgrade">
+      <div className="tier-upgrade__head">
+        <span>
+          {label} <strong>{currentTier} 品</strong>
+          {status.nextTier !== null && ` → ${status.nextTier} 品`}
+        </span>
+        {status.nextTier === null ? (
+          <span className="panel__hint">已至九品</span>
+        ) : (
           <button
             type="button"
-            className="btn"
-            disabled={gate !== null || queue.length >= queueSlots}
-            onClick={() => enqueueBuild(def.id)}
-            title="加入建造队列后，资源够了会自动开工"
+            className="btn btn--tiny"
+            disabled={!status.possible}
+            onClick={() => (kind === 'alchemy' ? upgradeAlchemy() : upgradeRefining())}
           >
-            排队
+            晋升 {status.nextTier} 品
+            {!status.possible && status.reason && <span className="btn__sub">{status.reason}</span>}
           </button>
-        </div>
+        )}
       </div>
-    </article>
+      {status.nextTier !== null && (
+        <div className="tier-upgrade__cost">
+          需 <CostList cost={status.cost} state={state} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -227,7 +297,7 @@ function LockedHint({ state }: { state: GameState }) {
   );
 }
 
-export function BuildingsPanel() {
+export function BuildingsPanel({ collapsible = false }: { collapsible?: boolean } = {}) {
   const game = useGame((s) => s.game);
 
   const visibleByGroup = BUILD_GROUPS.map((group) => ({
@@ -236,12 +306,7 @@ export function BuildingsPanel() {
   })).filter((entry) => entry.defs.length > 0);
 
   return (
-    <section className="panel">
-      <div className="panel__head">
-        <h2>洞府建设</h2>
-        <span className="panel__hint">设施 · 居所 · 工坊</span>
-      </div>
-
+    <Panel title="洞府建设" hint="设施 · 居所 · 工坊" collapsible={collapsible} storageKey="buildings">
       {visibleByGroup.length === 0 && <p className="panel__note">暂无可建造的项目。</p>}
 
       {visibleByGroup.map(({ group, defs }) => (
@@ -259,7 +324,7 @@ export function BuildingsPanel() {
       ))}
 
       <LockedHint state={game} />
-    </section>
+    </Panel>
   );
 }
 

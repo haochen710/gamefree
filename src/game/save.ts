@@ -55,6 +55,7 @@ import {
 } from './content';
 import { ARENA_INTERVAL_SECONDS } from './sectActivity';
 import { getSurveyDuration } from './expeditions';
+import { SOLO_SURVEY_DURATION_MULT } from './travel';
 import { SOLO_REALM_DURATION_MULT } from './travel';
 import { ENCOUNTER_INTERVAL, ENCOUNTER_SECONDS, KARMA_MAX, KARMA_MIN } from './encounter';
 import { applyTick } from './tick';
@@ -526,14 +527,26 @@ function sanitizeTravel(raw: unknown): PersonalTravel | null {
   if (typeof t.regionId !== 'string') return null;
 
   /*
-   * 需求 5 之后掌门出门有两种：游历目的地（travel）与独自探秘境（realm）。
-   * 旧存档没有 kind 字段，一律当作游历；两种都要校验目标还在不在。
+   * 需求 5 之后掌门出门有**三种**：游历目的地（travel）、独自探秘境（realm）、
+   * 亲自普通探索（survey）。旧存档没有 kind 字段，一律当作游历；
+   * 三种都要校验目标还在不在。
    */
-  const kind: PersonalTravel['kind'] = t.kind === 'realm' ? 'realm' : 'travel';
-  const def = kind === 'realm' ? SECRET_REALM_MAP[t.regionId] : TRAVEL_REGION_MAP[t.regionId];
+  const kind: PersonalTravel['kind'] =
+    t.kind === 'realm' ? 'realm' : t.kind === 'survey' ? 'survey' : 'travel';
+  const def =
+    kind === 'realm'
+      ? SECRET_REALM_MAP[t.regionId]
+      : kind === 'survey'
+        ? MAP_REGION_MAP[t.regionId]
+        : TRAVEL_REGION_MAP[t.regionId];
   if (!def) return null;
 
-  const fallback = kind === 'realm' ? Math.round(def.duration * SOLO_REALM_DURATION_MULT) : def.duration;
+  const fallback =
+    kind === 'realm'
+      ? Math.round((SECRET_REALM_MAP[t.regionId]?.duration ?? 60) * SOLO_REALM_DURATION_MULT)
+      : kind === 'survey'
+        ? Math.round(getSurveyDuration({} as GameState, t.regionId) * SOLO_SURVEY_DURATION_MULT)
+        : (TRAVEL_REGION_MAP[t.regionId]?.duration ?? 60);
   return {
     kind,
     regionId: t.regionId,

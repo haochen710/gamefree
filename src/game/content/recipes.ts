@@ -23,6 +23,7 @@ import {
   type ItemId,
   type MaterialId,
 } from './resources';
+// 技术 id 在 content/techs.ts 里就是普通 string（没有窄化的联合类型），所以这里也用 string
 
 /* ------------------------------------------------------------------ */
 /* 效果                                                                */
@@ -1009,6 +1010,41 @@ export const REFINING_TIER_COST: Record<number, Partial<Record<ItemId, number>>>
 };
 
 export const MAX_CRAFT_TIER = 9;
+
+/**
+ * 升到第 N 品需要先钻研的技术（需求 6）。
+ *
+ * 需求原文：「丹房和炼器房可以升级……这俩升级需要钻研**对应等级的技术**」。
+ *
+ * 现有的技术里没有"炼丹术·三品"这种逐品技术，只有三段式的道术进阶，
+ * 所以这里把品阶**归到最近的那一段**：
+ *   入门（炼丹入门 / 炼器入门） → 2~4 品
+ *   精要（丹道精要 / 器道精要） → 5~6 品
+ *   极致（药王之道 / 通天营造） → 7~9 品
+ * 这样"想练高品丹，先得把这条道术读上去"，而且用的都是本来就在树里的技术，
+ * 不必为两座建筑凭空长出十六个技术来。
+ */
+export const ALCHEMY_TIER_TECH: Record<number, string> = {
+  2: 'alchemyArt',
+  3: 'alchemyArt',
+  4: 'alchemyArt',
+  5: 'alchemyDeep',
+  6: 'alchemyDeep',
+  7: 'gardenArt',
+  8: 'gardenArt',
+  9: 'gardenArt',
+};
+
+export const REFINING_TIER_TECH: Record<number, string> = {
+  2: 'refiningArt',
+  3: 'refiningArt',
+  4: 'refiningArt',
+  5: 'refiningDeep',
+  6: 'refiningDeep',
+  7: 'towerArt',
+  8: 'towerArt',
+  9: 'towerArt',
+};
 
 /* ------------------------------------------------------------------ */
 /* 炼制成功率（需求 2）                                                 */

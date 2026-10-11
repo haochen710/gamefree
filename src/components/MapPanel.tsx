@@ -54,6 +54,7 @@ import {
   autoSelectSurveyParty,
   canStartExpedition,
   canStartSurvey,
+  canSurveyRegion,
   getExpeditionProgress,
   getLootRolls,
   getMaxExpeditions,
@@ -66,6 +67,7 @@ import {
 import { canStartSoloRealm, canStartTravel, getTravelRemaining } from '../game/travel';
 import { getPartyPower } from '../game/disciples';
 import { useGame } from '../game/store';
+import { canStartSoloSurvey, getSoloSurveyDuration } from '../game/travel';
 import type { GameState } from '../game/state';
 
 /* ------------------------------------------------------------------ */
@@ -314,11 +316,13 @@ function TravelCard({ def, state }: { def: TravelRegionDef; state: GameState }) 
  */
 function SurveyCard({ region, state }: { region: MapRegionDef; state: GameState }) {
   const startSurvey = useGame((s) => s.startSurvey);
+  const startSoloSurvey = useGame((s) => s.startSoloSurvey);
   const [selected, setSelected] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
 
   const { min, max } = getSurveyPartyRange();
   const check = canStartSurvey(state, region.id, selected);
+  const soloCheck = canStartSoloSurvey(state, region.id);
   const idle = getIdleDisciples(state);
   const minRealm = Math.max(0, region.requiresRealm - 1);
   const eligible = idle.filter((d) => d.realmIndex >= minRealm);
@@ -416,6 +420,34 @@ function SurveyCard({ region, state }: { region: MapRegionDef; state: GameState 
           {!check.ok && check.reason && <span className="btn__sub">{check.reason}</span>}
         </button>
       </div>
+
+      {/*
+        需求 5：掌门可以自己去。
+        派队伍要开宗、要有弟子、还只走"小区域档次"这一步；
+        掌门亲自去则不分这些 —— 代价是产量下降、收获只有一半，
+        好处是**不会折损弟子**，而且还没开宗时就能出门。
+      */}
+      <div className="realm-card__solo">
+        <div className="realm-card__solo-head">
+          <strong>掌门亲自查探</strong>
+          <span className="panel__hint">
+            无伤亡 · 产出约一半 · 约 {Math.round(getSoloSurveyDuration(state, region.id) / 60)} 分钟 ·
+            期间洞府产量下降
+          </span>
+        </div>
+        <div className="btn-row">
+          <button
+            type="button"
+            className="btn"
+            disabled={!soloCheck.ok}
+            onClick={() => startSoloSurvey(region.id)}
+            title="掌门本人出去转一圈：拿到的基础材料约为派队的一半，稀有材料只能碰运气，但绝不会折损弟子"
+          >
+            掌门亲往
+            {!soloCheck.ok && soloCheck.reason && <span className="btn__sub">{soloCheck.reason}</span>}
+          </button>
+        </div>
+      </div>
     </article>
   );
 }
@@ -436,6 +468,16 @@ function SubRegionCell({
   onToggle: () => void;
 }) {
   const reachable = canReachRegion(state, region);
+  /*
+   * 需求 5：能"去附近转转"的地方，格子也得点得开。
+   *
+   * 原来 `disabled={!reachable}` 用的是**小区域档次**（东部群山里从需 0 到需 4），
+   * 于是后面那些小区域连点都点不开 —— 可里面本来还有普通探索这条线。
+   * 现在只要"这一带能普通探索"就允许展开：能看到里面的秘境列表，
+   * 各秘境会各自显示自己还差什么（境界 / 队伍战力 / 是否已开启）。
+   */
+  const surveyable = canSurveyRegion(state, region.id).ok;
+  const openable = reachable || surveyable;
   const visible = reachable || isRegionVisible(state, region);
   const all = realmsOfRegion(region.id);
   const found = all.filter((r) => state.discoveredRealms[r.id] === true).length;
@@ -444,6 +486,7 @@ function SubRegionCell({
   const classes = [
     'subregion',
     reachable ? 'subregion--on' : visible ? 'subregion--off' : 'subregion--far',
+    !reachable && surveyable ? 'subregion--surveyable' : '',
     region.isRich ? 'subregion--rich' : '',
     expanded ? 'subregion--open' : '',
   ]
@@ -454,7 +497,7 @@ function SubRegionCell({
     <button
       type="button"
       className={classes}
-      disabled={!reachable}
+      disabled={!openable}
       onClick={onToggle}
       title={region.desc}
     >
@@ -465,7 +508,9 @@ function SubRegionCell({
           ? full
             ? `秘境 ${found}/${all.length} ✓`
             : `秘境 ${found}/${all.length}`
-          : `需${REALMS[region.requiresRealm].name}`}
+          : surveyable
+            ? `可探查 · 秘境需${REALMS[region.requiresRealm].name}`
+            : `需${REALMS[region.requiresRealm].name}`}
       </span>
       {region.isRich && <span className="subregion__badge">富集</span>}
     </button>
@@ -477,7 +522,13 @@ function SubRegionDetail({ region, state }: { region: MapRegionDef; state: GameS
   const discovered = all.filter((r) => state.discoveredRealms[r.id] === true);
   const hidden = all.length - discovered.length;
   const travelTargets = TRAVEL_REGIONS.filter((t) => t.regionId === region.id);
-  const canSurvey = canStartSurvey(state, region.id, []).ok || hidden > 0;
+  /*
+   * 需求 5：这里原来写的是 `canStartSurvey(state, region.id, []).ok || hidden > 0` ——
+   * 空队伍永远过不了"至少派 1 人"那一关，所以前半句恒为 false，
+   * 实际条件退化成 `hidden > 0`。现在直接问"这一带能不能普通探索"，
+   * 把"有没有没找到的秘境"和"能不能去"分开判断。
+   */
+  const canSurvey = canSurveyRegion(state, region.id).ok;
 
   return (
     <div className="subregion-detail">

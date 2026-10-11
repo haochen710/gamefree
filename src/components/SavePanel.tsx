@@ -3,8 +3,9 @@ import { useState } from 'react';
 import { fmt, fmtDuration } from '../game/decimal';
 import { useGame } from '../game/store';
 import { AUTOSAVE_MS } from '../game/useGameLoop';
+import Panel from './Panel';
 
-export function SavePanel() {
+export function SavePanel({ collapsible = false }: { collapsible?: boolean } = {}) {
   const lastSavedAt = useGame((s) => s.lastSavedAt);
   const game = useGame((s) => s.game);
 
@@ -52,12 +53,7 @@ export function SavePanel() {
   };
 
   return (
-    <section className="panel">
-      <div className="panel__head">
-        <h2>洞府记事</h2>
-        <span className="panel__hint">存档与统计</span>
-      </div>
-
+    <Panel title="洞府记事" hint="存档与统计" collapsible={collapsible} storageKey="save">
       <div className="save__stats">
         <div>
           <span className="save__label">累计修行</span>
@@ -126,7 +122,7 @@ export function SavePanel() {
           </button>
         </div>
       </div>
-    </section>
+    </Panel>
   );
 }
 

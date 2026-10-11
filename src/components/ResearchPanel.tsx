@@ -20,6 +20,7 @@ import {
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
 import CostList from './CostList';
+import Panel from './Panel';
 
 /** 该技术解锁了哪些建筑（直接从建筑表反查，避免两处维护） */
 function unlockedBuildings(techId: string): string[] {
@@ -70,12 +71,19 @@ function TechRow({ def, state }: { def: TechDef; state: GameState }) {
   );
 }
 
-export function ResearchPanel() {
+export function ResearchPanel({ collapsible = false }: { collapsible?: boolean } = {}) {
   const game = useGame((s) => s.game);
   const cancel = useGame((s) => s.cancelResearch);
 
   const visible = TECHS.filter((def) => isTechVisible(game, def));
-  const done = TECHS.filter((def) => isTechResearched(game, def.id)).length;
+  /*
+   * 需求 7：「钻研门类里面，已经完成的项目移动到已完成栏内（图纸也是）」。
+   *
+   * 所以未完成的排在上面（那是玩家要挑的），已掌握的收进下面一个折叠栏 ——
+   * 十几项技术平铺着看，"下一个该钻研什么"反而难找。
+   */
+  const pending = visible.filter((def) => !isTechResearched(game, def.id));
+  const mastered = TECHS.filter((def) => isTechResearched(game, def.id));
   const active = game.research;
 
   const ownedBlueprints = BLUEPRINTS.filter((bp) => game.blueprints[bp.id] === true);
@@ -83,14 +91,12 @@ export function ResearchPanel() {
 
   return (
     <>
-      <section className="panel">
-        <div className="panel__head">
-          <h2>钻研</h2>
-          <span className="panel__hint">
-            已掌握 {done} / {TECHS.length}
-          </span>
-        </div>
-
+      <Panel
+        title="钻研"
+        hint={`已掌握 ${mastered.length} / ${TECHS.length}`}
+        collapsible={collapsible}
+        storageKey="research"
+      >
         <p className="panel__note">
           除基础资源设施外，所有建筑都要先钻研出对应技术。同一时间只能钻研一项，
           改钻研别的技术会放弃当前进度且<strong>材料不退</strong>。
@@ -117,20 +123,35 @@ export function ResearchPanel() {
         )}
 
         <div className="recipe-list">
-          {visible.map((def) => (
+          {pending.map((def) => (
             <TechRow key={def.id} def={def} state={game} />
           ))}
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel__head">
-          <h2>图纸</h2>
-          <span className="panel__hint">
-            已得 {ownedBlueprints.length} / {BLUEPRINTS.length}
-          </span>
+          {pending.length === 0 && <p className="panel__note">该钻研的都钻研完了。</p>}
         </div>
 
+        {/* 需求 7：已完成的收进这一栏 */}
+        {mastered.length > 0 && (
+          <details className="done-box">
+            <summary>
+              已完成（{mastered.length}）
+            </summary>
+            <div className="done-box__list">
+              {mastered.map((def) => (
+                <span key={def.id} className="done-chip" title={def.desc}>
+                  {def.icon} {def.name}
+                </span>
+              ))}
+            </div>
+          </details>
+        )}
+      </Panel>
+
+      <Panel
+        title="图纸"
+        hint={`已得 ${ownedBlueprints.length} / ${BLUEPRINTS.length}`}
+        collapsible={collapsible}
+        storageKey="blueprints"
+      >
         <p className="panel__note">
           图纸钻研不出来，只能从秘境探索中寻获，或等商行随机上架。它们解锁的都是
           加成类稀有建筑，不会卡住主线进度。
@@ -147,14 +168,22 @@ export function ResearchPanel() {
 
         {missingBlueprints.length === 0 && <p className="panel__note">图纸已收集齐全。</p>}
 
-        {ownedBlueprints.map((bp) => (
-          <div key={bp.id} className="inv-row">
-            <span className="inv-row__icon">{bp.icon}</span>
-            <span className="inv-row__name">{bp.name}</span>
-            <span className="inv-row__effect">{bp.desc}</span>
-          </div>
-        ))}
-      </section>
+        {/* 需求 7：已得的图纸同样收进「已完成」栏 */}
+        {ownedBlueprints.length > 0 && (
+          <details className="done-box">
+            <summary>已完成（{ownedBlueprints.length}）</summary>
+            <div className="done-box__list done-box__list--column">
+              {ownedBlueprints.map((bp) => (
+                <div key={bp.id} className="inv-row">
+                  <span className="inv-row__icon">{bp.icon}</span>
+                  <span className="inv-row__name">{bp.name}</span>
+                  <span className="inv-row__effect">{bp.desc}</span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </Panel>
     </>
   );
 }

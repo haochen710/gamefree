@@ -15,10 +15,11 @@ import {
 } from '../game/engine';
 import { useGame } from '../game/store';
 import CostList from './CostList';
+import Panel from './Panel';
 
 const RATE_LABELS = ['关闭', '慢', '中', '快'];
 
-export function StonePanel() {
+export function StonePanel({ collapsible = false }: { collapsible?: boolean } = {}) {
   const game = useGame((s) => s.game);
   const refineStone = useGame((s) => s.refineStone);
   const setAutoRefine = useGame((s) => s.setAutoRefine);
@@ -29,12 +30,7 @@ export function StonePanel() {
   const autoMax = maxAutoRefineBatches(game);
 
   return (
-    <section className="panel">
-      <div className="panel__head">
-        <h2>灵石合成</h2>
-        <span className="panel__hint">灵气 + 灵矿</span>
-      </div>
-
+    <Panel title="灵石合成" hint="灵气 + 灵矿" collapsible={collapsible} storageKey="stone">
       <p className="panel__note">
         每份消耗 <CostList cost={cost} state={game} /> ，产出 💎 {STONE_REFINE_OUTPUT} 灵石。
         招收弟子、宗门晋升、商行交易都要用灵石；建灵石矿是更省事的路子，早期可以先靠合成应急。
@@ -77,7 +73,7 @@ export function StonePanel() {
           </button>
         ))}
       </div>
-    </section>
+    </Panel>
   );
 }
 

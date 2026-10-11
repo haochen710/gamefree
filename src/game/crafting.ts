@@ -12,6 +12,7 @@ import { gameRandom, type RandomSource } from './random';
 import {
   ALCHEMY_SLOT_REQUIREMENT,
   ALCHEMY_TIER_COST,
+  ALCHEMY_TIER_TECH,
   ARTIFACTS,
   ARTIFACT_MAP,
   CRAFT_BASE_SUCCESS,
@@ -23,6 +24,8 @@ import {
   PILL_MAP,
   REFINING_SLOT_REQUIREMENT,
   REFINING_TIER_COST,
+  REFINING_TIER_TECH,
+  TECH_MAP,
   REALMS,
   nextAptitude,
   type Effect,
@@ -83,6 +86,7 @@ function tierUpgradeStatus(
   currentTier: number,
   slotRequirement: number[],
   tierCost: Record<number, Partial<Record<ItemId, number>>>,
+  tierTech: Record<number, string>,
   slotsHave: number,
   state: GameState,
   label: string,
@@ -94,6 +98,23 @@ function tierUpgradeStatus(
   const nextTier = currentTier + 1;
   const slotsNeeded = slotRequirement[nextTier] ?? 0;
   const cost = toCostMap(tierCost[nextTier] ?? {});
+
+  /*
+   * 需求 6：升品要先钻研**对应等级的技术**。
+   * 这一条排在最前面 —— 玩家最该先看到的阻碍是"道术没读到"，而不是"材料不够"，
+   * 因为前者才是他要去做的下一件事。
+   */
+  const needTech = tierTech[nextTier];
+  if (needTech && state.techs[needTech] !== true) {
+    return {
+      possible: false,
+      reason: `需先钻研「${TECH_MAP[needTech]?.name ?? needTech}」`,
+      nextTier,
+      cost,
+      slotsNeeded,
+      slotsHave,
+    };
+  }
 
   if (slotsHave < slotsNeeded) {
     return {
@@ -116,6 +137,7 @@ export function getAlchemyUpgradeStatus(state: GameState): TierUpgradeStatus {
     state.alchemyTier,
     ALCHEMY_SLOT_REQUIREMENT,
     ALCHEMY_TIER_COST,
+    ALCHEMY_TIER_TECH,
     getAlchemySlots(state),
     state,
     '炼丹术',
@@ -127,6 +149,7 @@ export function getRefiningUpgradeStatus(state: GameState): TierUpgradeStatus {
     state.refiningTier,
     REFINING_SLOT_REQUIREMENT,
     REFINING_TIER_COST,
+    REFINING_TIER_TECH,
     getRefiningSlots(state),
     state,
     '炼器术',

@@ -110,7 +110,7 @@ export interface PersonalTravel {
    * 两者共用同一个"掌门不在家"的槽位与产量惩罚，
    * 所以"要不要亲自出去"始终是同一个取舍。
    */
-  kind: 'travel' | 'realm';
+  kind: 'travel' | 'realm' | 'survey';
   /** kind === 'travel' 时是游历目的地 id，kind === 'realm' 时是秘境 id */
   regionId: string;
   /** 已积累的进度（秒） */

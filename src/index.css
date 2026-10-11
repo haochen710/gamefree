@@ -2667,6 +2667,194 @@ a {
   color: var(--muted);
 }
 
+/* ------------------------------------------------------------------ */
+/* 需求 1~7 的界面改动                                                  */
+/* ------------------------------------------------------------------ */
+
+/* 面板折叠（需求 7） */
+.panel__head--toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.panel__head--toggle:hover h2 {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.panel__chevron {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.panel--collapsed .panel__head {
+  margin-bottom: 0;
+}
+
+/* 页头右上角的纪年（需求 2） */
+.year-badge {
+  margin-left: auto;
+  min-width: 128px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.6);
+  text-align: right;
+}
+
+.year-badge__row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.year-badge__icon { font-size: 15px; }
+.year-badge__year { font-weight: 700; font-size: 15px; }
+
+.year-badge__season {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.year-badge__bar {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.year-badge__fill {
+  display: block;
+  height: 100%;
+  background: rgba(120, 150, 90, 0.7);
+}
+
+/* 资源分组折叠（需求 3） */
+.res-group { margin-bottom: 9px; }
+
+.res-group__head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 3px 2px;
+  border: 0;
+  border-bottom: 1px dashed var(--line);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.res-group__chevron { color: var(--muted); font-size: 10px; }
+.res-group__title { flex: 1; }
+.res-group__count { color: var(--muted); font-weight: 400; }
+.res-group__body { padding-top: 6px; }
+
+/* 「还有多久填满」（需求 3） */
+.resource__eta {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+/* 唯一建筑的升级行（需求 6） */
+.tier-upgrade {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid rgba(196, 150, 60, 0.5);
+  border-radius: var(--radius);
+  background: rgba(196, 150, 60, 0.09);
+}
+
+.tier-upgrade__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.tier-upgrade__cost {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 「已完成」栏（需求 7） */
+.done-box {
+  margin-top: 10px;
+  border-top: 1px dashed var(--line);
+  padding-top: 8px;
+}
+
+.done-box > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.done-box__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.done-box__list--column {
+  flex-direction: column;
+}
+
+.done-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid rgba(38, 102, 63, 0.4);
+  background: rgba(38, 102, 63, 0.08);
+  color: #26663f;
+}
+
+/* 掌门亲自查探（需求 5） */
+.realm-card__solo {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(90, 120, 170, 0.45);
+  border-radius: var(--radius);
+  background: rgba(90, 120, 170, 0.07);
+}
+
+.realm-card__solo-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.subregion--surveyable {
+  border-style: dashed;
+}
+
+.material-tag--refined {
+  border-color: rgba(196, 150, 60, 0.55);
+  color: #8a6a1f;
+  background: rgba(196, 150, 60, 0.12);
+}
+
 /* 资源富集区秘境的「开启」区（需求 1） */
 .realm-card__open {
   margin-top: 8px;

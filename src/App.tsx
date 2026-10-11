@@ -15,7 +15,7 @@ import RefinePanel from './components/RefinePanel';
 import EnlightenmentPanel from './components/EnlightenmentPanel';
 import ResearchPanel from './components/ResearchPanel';
 import RealmPanel from './components/RealmPanel';
-import SeasonPanel, { SeasonStrip } from './components/SeasonPanel';
+import SeasonPanel from './components/SeasonPanel';
 import EncounterPanel, { KarmaStrip } from './components/EncounterPanel';
 import AscendPanel from './components/AscendPanel';
 import StonePanel from './components/StonePanel';
@@ -90,7 +90,12 @@ function CultivationTab() {
         {/* 需求 3：元婴期后解锁的感悟 */}
         <EnlightenmentPanel />
         <SeasonPanel />
-        <StonePanel />
+        {/*
+          需求 1：钻研 / 合成 / 图纸三道栏搬到修行页。
+          修行页**不再**有灵石合成 —— 那一条只保留在洞府里（见 CaveTab）。
+        */}
+        <ResearchPanel />
+        <RefinePanel />
         <AscendPanel />
       </div>
     </main>
@@ -101,13 +106,14 @@ function CaveTab() {
   return (
     <main className="layout">
       <div className="layout__left">
+        {/* 需求 7：洞府的各个子门类都可以展开收起 */}
         <BuildingsPanel />
       </div>
       <div className="layout__right">
-        <BuildQueuePanel />
-        <RefinePanel />
-        <ResearchPanel />
-        <SavePanel />
+        <BuildQueuePanel collapsible />
+        {/* 需求 1：灵石合成只保留在洞府这边 */}
+        <StonePanel collapsible />
+        <SavePanel collapsible />
       </div>
     </main>
   );
@@ -202,9 +208,11 @@ export default function App() {
       */}
       <div className="shell">
         <aside className="shell__side" aria-label="资源">
+          {/*
+            需求 2 / 3：纪年已移到页头右上角，
+            资源栏下面**不再**挂季节与纪年的常驻条 —— 这里只剩资源本身。
+          */}
           <ResourceBar />
-          {/* 季节会改变所有资源产出，所以放在资源栏下面常驻可见（需求 1） */}
-          <SeasonStrip />
           {/* 善恶值与"有遭遇待选"的提示（需求 2） */}
           <KarmaStrip />
         </aside>

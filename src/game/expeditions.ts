@@ -54,6 +54,7 @@ import {
   realmCountOfRegion,
   realmsOfRegion,
   regionTier,
+  surveyReachRealm,
   type ItemId,
   type LootEntry,
   type MaterialId,
@@ -522,17 +523,41 @@ export function resolveExpedition(
 export function canSurveyRegion(state: GameState, regionId: string): StartCheck {
   const region = MAP_REGION_MAP[regionId];
   if (!region) return { ok: false, reason: '此处不存在' };
-  if (!state.sect.founded) return { ok: false, reason: '尚未开宗立派' };
-  if (state.realmIndex < region.requiresRealm) return { ok: false, reason: '境界不足，走不到那里' };
+  /*
+   * 需求 5：门槛按**大区域**算，而不是按小区域自己的档次。
+   *
+   * 原来用的是 `region.requiresRealm`，而它在同一个大区域内部是一路涨上去的
+   * （东部群山里从需 0 到需 4），于是"除了最前面几个小区域，其它都点不动"。
+   * 普通探索本来就是"去附近转转"，不该要求玩家先强到能闯那个区域最深处的秘境 ——
+   * 那些秘境自己还有各自的解锁境界与队伍战力要求。
+   */
+  if (state.realmIndex < surveyReachRealm(regionId)) {
+    return { ok: false, reason: `需${REALMS[surveyReachRealm(regionId)].name}以上才能走到这一带` };
+  }
   const total = realmCountOfRegion(regionId);
   const found = realmsOfRegion(regionId).filter((r) => isRealmDiscovered(state, r)).length;
   if (total > 0 && found >= total) {
     return { ok: false, reason: '此地秘境已全部寻得，直接探秘境即可' };
   }
-  if (state.expeditions.length >= getMaxExpeditions(state)) {
-    return { ok: false, reason: '探索队伍已满，提升宗门品阶可增加队伍' };
-  }
+  /*
+   * ⚠️ 「队伍名额」这一条**不能**放在这里。
+   *
+   * 掌门亲往不占队伍名额，而 `getMaxExpeditions` 在未开宗时是 0 ——
+   * 放在这里会让"开宗前掌门也能出门转转"直接失效（这正是需求 5 要修的）。
+   * 所以名额检查挪进 `canStartSurvey`（派队伍那条路）。
+   */
   return { ok: true, reason: null };
+}
+
+/**
+ * 普通探索的"队伍"版本需要弟子，所以额外要求已开宗。
+ *
+ * 这条单独拿出来，是为了让**掌门亲往**（`canStartSoloSurvey`）不受它限制 ——
+ * 需求 5 要的正是"开宗前/没人手时，玩家本人也能出去看看"。
+ */
+export function canStartSurveyParty(state: GameState, regionId: string, ids: string[]): StartCheck {
+  if (!state.sect.founded) return { ok: false, reason: '尚未开宗立派' };
+  return canStartSurvey(state, regionId, ids);
 }
 
 /** 普通探索的时长（比正经探秘境快一些，因为它就在近处转） */
@@ -552,6 +577,11 @@ export function getSurveyPartyRange(): { min: number; max: number } {
 export function canStartSurvey(state: GameState, regionId: string, ids: string[]): StartCheck {
   const region = canSurveyRegion(state, regionId);
   if (!region.ok) return region;
+
+  // 派队伍才占名额（掌门亲往不占，见 canSurveyRegion 的注释）
+  if (state.expeditions.length >= getMaxExpeditions(state)) {
+    return { ok: false, reason: '探索队伍已满，提升宗门品阶可增加队伍' };
+  }
 
   const { min, max } = getSurveyPartyRange();
   if (ids.length < min) return { ok: false, reason: `至少需派遣 ${min} 名弟子` };

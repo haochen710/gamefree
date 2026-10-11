@@ -33,8 +33,9 @@ import {
   maxAffordable,
 } from '../game/engine';
 import { useGame } from '../game/store';
+import Panel from './Panel';
 
-export function BuildQueuePanel() {
+export function BuildQueuePanel({ collapsible = false }: { collapsible?: boolean } = {}) {
   const game = useGame((s) => s.game);
   const dequeueBuild = useGame((s) => s.dequeueBuild);
   const moveQueueItem = useGame((s) => s.moveQueueItem);
@@ -73,13 +74,12 @@ export function BuildQueuePanel() {
   };
 
   return (
-    <section className="panel">
-      <div className="panel__head">
-        <h2>建造队列</h2>
-        <span className="panel__hint">
-          名额 {queue.length}/{slots} · 上限 {BUILD_QUEUE_MAX_SLOTS}
-        </span>
-      </div>
+    <Panel
+      title="建造队列"
+      hint={`名额 ${queue.length}/${slots} · 上限 ${BUILD_QUEUE_MAX_SLOTS}`}
+      collapsible={collapsible}
+      storageKey="buildQueue"
+    >
       <p className="panel__note">
         把想盖的东西排进队列，<strong>资源一到就自动开工</strong>，不用守着。
         队列里第一项不满足条件时会原地等着，不会跳过 ——
@@ -173,7 +173,7 @@ export function BuildQueuePanel() {
         )}
         {full && <p className="panel__note">名额已开满（{BUILD_QUEUE_MAX_SLOTS} 个）。</p>}
       </div>
-    </section>
+    </Panel>
   );
 }
 
