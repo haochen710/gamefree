@@ -6,8 +6,7 @@ import { AUTOSAVE_MS } from '../game/useGameLoop';
 
 export function SavePanel() {
   const lastSavedAt = useGame((s) => s.lastSavedAt);
-  const playTime = useGame((s) => s.game.playTime);
-  const lifetimeQi = useGame((s) => s.game.lifetimeQi);
+  const game = useGame((s) => s.game);
 
   const saveNow = useGame((s) => s.saveNow);
   const exportSave = useGame((s) => s.exportSave);
@@ -46,7 +45,7 @@ export function SavePanel() {
 
   const handleReset = () => {
     if (!window.confirm('确定要抹去一切，重新开始修行吗？此操作不可撤销。')) return;
-    if (!window.confirm('真的确定？所有境界、道韵与设施都会消失。')) return;
+    if (!window.confirm('真的确定？所有境界、道韵、宗门与弟子都会消失。')) return;
     hardReset();
     setCode('');
     setInput('');
@@ -62,11 +61,19 @@ export function SavePanel() {
       <div className="save__stats">
         <div>
           <span className="save__label">累计修行</span>
-          <span>{fmtDuration(playTime)}</span>
+          <span>{fmtDuration(game.playTime)}</span>
         </div>
         <div>
           <span className="save__label">历世灵气</span>
-          <span>☯ {fmt(lifetimeQi)}</span>
+          <span>☯ {fmt(game.lifetimeQi)}</span>
+        </div>
+        <div>
+          <span className="save__label">本世灵气</span>
+          <span>☯ {fmt(game.totalQi)}</span>
+        </div>
+        <div>
+          <span className="save__label">飞升次数</span>
+          <span>{game.ascensions}</span>
         </div>
         <div>
           <span className="save__label">最近存档</span>
@@ -108,7 +115,7 @@ export function SavePanel() {
         <textarea
           id="import-code"
           className="textarea"
-          placeholder="把之前导出的存档码粘贴到这里"
+          placeholder="把之前导出的存档码粘贴到这里（旧版存档也能导入）"
           value={input}
           rows={3}
           onChange={(e) => setInput(e.target.value)}

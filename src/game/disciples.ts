@@ -1,0 +1,278 @@
+/**
+ * 弟子系统（需求 4 / 7）
+ *
+ * 一名弟子的一生由三件事驱动：
+ *   资质  → 决定修炼速度和能修到的最高境界
+ *   时间  → 每真实秒推进 30 游戏天，按速度累积修为
+ *   寿元  → 到境界对应的寿元上限还没突破，就寿元耗尽而亡
+ *
+ * 这三条合起来，让"招收 → 培养 → 逐出低资质、补入高资质"成为长期决策：
+ * 凡品灵根弟子也会慢慢变强，但永远追不上天灵根，而且会先老死。
+ */
+import Decimal, { D } from './decimal';
+import {
+  APTITUDE_MAP,
+  APTITUDE_ORDER,
+  GAME_DAYS_PER_SECOND,
+  GAME_DAYS_PER_YEAR,
+  REALMS,
+  randomDiscipleName,
+  recruitCost,
+  rollAptitude,
+} from './content';
+import { getArtifactBonuses, getDiscipleCapacity } from './engine';
+import { JOURNAL_LIMIT, type Disciple, type GameState, type JournalEntry } from './state';
+
+/** 弟子一生最多一次跨多少个境界（防止极端离线时间把循环跑爆） */
+const MAX_REALM_JUMPS = 32;
+
+/**
+ * 弟子的境界上限 = min(自身资质上限, 掌门当前境界)。
+ *
+ * 「弟子不得超越掌门」是修仙小说的通行设定，同时也解决了一个真实的平衡问题：
+ * 没有这条限制，天灵根弟子会在两三天内修到仙人，把玩家自己的修行
+ * 和整个宗门养成线彻底架空。加上之后，弟子的成长就跟着主线走。
+ */
+export function getDiscipleRealmCap(state: GameState, disciple: Disciple): number {
+  return Math.min(APTITUDE_MAP[disciple.aptitude].capRealm, state.realmIndex);
+}
+
+/** 弟子停止成长的原因，用于界面提示 */
+export function getDiscipleCapReason(
+  state: GameState,
+  disciple: Disciple,
+): 'aptitude' | 'master' | null {
+  if (disciple.realmIndex < getDiscipleRealmCap(state, disciple)) return null;
+  return APTITUDE_MAP[disciple.aptitude].capRealm <= state.realmIndex ? 'aptitude' : 'master';
+}
+
+/* ------------------------------------------------------------------ */
+/* 生成与招收                                                          */
+/* ------------------------------------------------------------------ */
+
+export function rollDisciple(sectLevel: number, id: number, random: () => number = Math.random): Disciple {
+  return {
+    id: `d${id}`,
+    name: randomDiscipleName(random),
+    aptitude: rollAptitude(sectLevel, random),
+    realmIndex: 0,
+    // 给一点随机初始进度，免得同一批弟子永远整齐划一地一起突破
+    progress: random() * 5,
+    age: 16 + Math.floor(random() * 14),
+    status: 'idle',
+  };
+}
+
+export interface RecruitResult {
+  state: GameState;
+  disciple: Disciple | null;
+  reason: string | null;
+}
+
+export function getRecruitCost(state: GameState): Decimal {
+  return D(recruitCost(state.sect.level, state.sect.disciples.length));
+}
+
+export function canRecruit(state: GameState): { ok: boolean; reason: string | null } {
+  if (!state.sect.founded) return { ok: false, reason: '尚未开宗立派' };
+  if (state.sect.disciples.length >= getDiscipleCapacity(state)) {
+    return { ok: false, reason: '居所已满，需扩建或提升宗门品阶' };
+  }
+  if (state.resources.stone.lt(getRecruitCost(state))) {
+    return { ok: false, reason: '灵石不足' };
+  }
+  return { ok: true, reason: null };
+}
+
+export function recruitDisciple(state: GameState, random: () => number = Math.random): RecruitResult {
+  const check = canRecruit(state);
+  if (!check.ok) return { state, disciple: null, reason: check.reason };
+
+  const cost = getRecruitCost(state);
+  const disciple = rollDisciple(state.sect.level, state.nextDiscipleId, random);
+
+  const next: GameState = {
+    ...state,
+    resources: { ...state.resources, stone: state.resources.stone.sub(cost) },
+    sect: {
+      ...state.sect,
+      disciples: [...state.sect.disciples, disciple],
+      totalRecruited: state.sect.totalRecruited + 1,
+    },
+    nextDiscipleId: state.nextDiscipleId + 1,
+  };
+
+  return { state: next, disciple, reason: null };
+}
+
+/** 逐出弟子（需求 7：后期清理低资质弟子） */
+export function dismissDisciple(state: GameState, id: string): GameState {
+  const disciple = state.sect.disciples.find((d) => d.id === id);
+  if (!disciple || disciple.status === 'exploring') return state;
+
+  return {
+    ...state,
+    sect: { ...state.sect, disciples: state.sect.disciples.filter((d) => d.id !== id) },
+  };
+}
+
+/** 一次性逐出所有低于指定资质的空闲弟子 */
+export function dismissBelowAptitude(state: GameState, keepFrom: number): { state: GameState; count: number } {
+  const kept: Disciple[] = [];
+  let removed = 0;
+  for (const d of state.sect.disciples) {
+    const rank = aptitudeRank(d.aptitude);
+    if (d.status === 'idle' && rank < keepFrom) {
+      removed += 1;
+    } else {
+      kept.push(d);
+    }
+  }
+  if (removed === 0) return { state, count: 0 };
+  return { state: { ...state, sect: { ...state.sect, disciples: kept } }, count: removed };
+}
+
+/* ------------------------------------------------------------------ */
+/* 资质与战力                                                          */
+/* ------------------------------------------------------------------ */
+
+export function aptitudeRank(id: string): number {
+  const index = APTITUDE_ORDER.indexOf(id as never);
+  return index < 0 ? 0 : index;
+}
+
+/** 弟子的战力（受境界与丹药/器物加成影响） */
+export function getDisciplePower(state: GameState, disciple: Disciple): number {
+  const base = REALMS[Math.min(disciple.realmIndex, REALMS.length - 1)].power;
+  const multiplier = state.buffs.powerMultiplier * (1 + getArtifactBonuses(state).combat);
+  return base * multiplier;
+}
+
+/** 探索队伍的总战力 */
+export function getPartyPower(state: GameState, ids: string[]): number {
+  const byId = new Map(state.sect.disciples.map((d) => [d.id, d]));
+  return ids.reduce((sum, id) => {
+    const d = byId.get(id);
+    return d ? sum + getDisciplePower(state, d) : sum;
+  }, 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* 时间推进                                                            */
+/* ------------------------------------------------------------------ */
+
+function pushJournal(journal: JournalEntry[], entry: JournalEntry): JournalEntry[] {
+  const next = [entry, ...journal];
+  return next.length > JOURNAL_LIMIT ? next.slice(0, JOURNAL_LIMIT) : next;
+}
+
+/**
+ * 推进所有弟子的修炼与年龄。
+ *
+ * 返回新 state，同时把寿元耗尽 / 突破境界写进宗门记事。
+ * 死去的弟子会从进行中的探索队伍里一并移除。
+ */
+export function tickDisciples(state: GameState, dt: number): GameState {
+  if (state.sect.disciples.length === 0 || dt <= 0) return state;
+
+  const years = (dt * GAME_DAYS_PER_SECOND) / GAME_DAYS_PER_YEAR;
+  if (years <= 0) return state;
+
+  const lifespanBonus = 1 + state.sect.lifespanBonus;
+  const survivors: Disciple[] = [];
+  const deadIds = new Set<string>();
+  let journal = state.journal;
+  let changed = false;
+
+  for (const disciple of state.sect.disciples) {
+    const aptitude = APTITUDE_MAP[disciple.aptitude];
+    const age = disciple.age + years;
+
+    /* --- 修为推进：可能一次跨越多个境界（离线很久时） --- */
+    const realmCap = getDiscipleRealmCap(state, disciple);
+    let realmIndex = disciple.realmIndex;
+    let progress = disciple.progress;
+    let remaining = years * aptitude.speed;
+    let jumps = 0;
+
+    while (remaining > 0 && realmIndex < realmCap && jumps < MAX_REALM_JUMPS) {
+      const need = REALMS[realmIndex].cultivationYears;
+      if (need <= 0) break;
+
+      const toNext = need - progress;
+      if (remaining >= toNext) {
+        remaining -= toNext;
+        realmIndex += 1;
+        progress = 0;
+        jumps += 1;
+      } else {
+        progress += remaining;
+        remaining = 0;
+      }
+    }
+
+    if (realmIndex !== disciple.realmIndex) {
+      changed = true;
+      journal = pushJournal(journal, {
+        time: state.playTime,
+        kind: 'good',
+        text: `${disciple.name} 突破至${REALMS[realmIndex].name}`,
+      });
+    } else if (progress !== disciple.progress) {
+      changed = true;
+    }
+
+    /* --- 寿元判定 --- */
+    const lifespan = REALMS[realmIndex].lifespan * lifespanBonus;
+    if (age > lifespan) {
+      changed = true;
+      deadIds.add(disciple.id);
+      journal = pushJournal(journal, {
+        time: state.playTime,
+        kind: 'bad',
+        text: `${disciple.name} 寿元耗尽，于${REALMS[realmIndex].name}坐化`,
+      });
+      continue;
+    }
+
+    survivors.push({ ...disciple, age, realmIndex, progress });
+  }
+
+  if (!changed) return state;
+
+  /* --- 清理阵亡弟子所属的探索队伍 --- */
+  let expeditions = state.expeditions;
+  if (deadIds.size > 0) {
+    expeditions = state.expeditions
+      .map((e) => ({ ...e, discipleIds: e.discipleIds.filter((id) => !deadIds.has(id)) }))
+      .filter((e) => e.discipleIds.length > 0);
+  }
+
+  return {
+    ...state,
+    sect: { ...state.sect, disciples: survivors },
+    expeditions,
+    journal,
+  };
+}
+
+/** 把弟子标记为探索中 / 空闲 */
+export function setDiscipleStatus(
+  state: GameState,
+  ids: string[],
+  status: Disciple['status'],
+  expeditionId?: string,
+): GameState {
+  const set = new Set(ids);
+  return {
+    ...state,
+    sect: {
+      ...state.sect,
+      disciples: state.sect.disciples.map((d) =>
+        set.has(d.id) ? { ...d, status, expeditionId: status === 'exploring' ? expeditionId : undefined } : d,
+      ),
+    },
+  };
+}
+
+export { pushJournal };

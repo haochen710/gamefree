@@ -1,79 +1,149 @@
 /**
  * 存档：localStorage 自动存档、导出/导入存档码、离线收益结算。
  *
- * 设计要点：
- * 1. Decimal 不能直接 JSON 化，统一转成字符串保存；
- * 2. 读档一律当作"不可信输入"处理（玩家可能粘贴乱码），
+ * 三条铁律：
+ * 1. Decimal 不能直接 JSON 化，统一转成字符串；
+ * 2. 读档一律当作「不可信输入」（玩家可能粘贴乱码、也可能导入旧版存档），
  *    任何字段非法都退回默认值，绝不让坏存档把游戏卡死；
- * 3. 离线收益按 50% 效率结算，最多结算 8 小时。
+ * 3. 读档后要跑一次一致性修复（弟子状态与探索列表对齐等）。
  */
 import Decimal, { D } from './decimal';
-import { FINAL_REALM_INDEX, GENERATORS, REALMS, RESOURCE_IDS, type ResourceId } from './content';
-import { getProduction } from './engine';
 import {
-  createEmptyGenerators,
-  createEmptyResources,
+  APTITUDE_ORDER,
+  FINAL_REALM_INDEX,
+  ITEM_MAP,
+  MATERIAL_IDS,
+  PILL_MAP,
+  REALMS,
+  RESOURCE_IDS,
+  SECRET_REALM_MAP,
+  createEmptyBuffs,
+  type ActiveBuffs,
+  type AptitudeId,
+  type ItemId,
+  type MaterialId,
+  type ResourceId,
+} from './content';
+import { applyTick } from './tick';
+import {
+  JOURNAL_LIMIT,
   SAVE_VERSION,
+  createEmptyBuildings,
+  createEmptyMaterials,
+  createEmptyResources,
+  createEmptySect,
+  createInitialState,
+  type Disciple,
+  type Expedition,
   type GameState,
+  type JournalEntry,
+  type MaterialMap,
   type ResourceMap,
 } from './state';
 
-export const SAVE_KEY = 'xiantu.save.v1';
+export const SAVE_KEY = 'xiantu.save.v2';
+/** v1 存档的键名，用于平滑升级 */
+export const LEGACY_SAVE_KEY = 'xiantu.save.v1';
 
 /** 离线最多结算 8 小时 */
 export const MAX_OFFLINE_SECONDS = 8 * 3600;
-/** 离线收益效率（打对折，鼓励回来手动经营） */
+/** 离线期间一切按该效率推进（含弟子修炼与增益计时） */
 export const OFFLINE_EFFICIENCY = 0.5;
-/** 离开不足 1 分钟就不弹结算窗了 */
+/** 离开不足 1 分钟就不弹结算窗 */
 export const MIN_OFFLINE_SECONDS = 60;
 
 /* ------------------------------------------------------------------ */
 /* 序列化                                                              */
 /* ------------------------------------------------------------------ */
 
-/** 存档的磁盘格式，键名故意用缩写，导出码更短 */
+/** 键名故意用缩写，导出码更短 */
 export interface SerializedGame {
   v: number;
-  /** savedAt，毫秒 */
   at: number;
   /** resources */
   r: Record<string, string>;
-  /** generators */
-  g: Record<string, number>;
-  /** realmIndex / layer */
+  /** materials */
+  m: Record<string, string>;
+  /** buildings */
+  b: Record<string, number>;
+  /** pills */
+  pl: Record<string, number>;
+  /** artifacts */
+  ar: Record<string, number>;
   ri: number;
   li: number;
-  /** daoYun */
+  bp: number[];
+  gb: number;
+  mi: number;
+  mp: number;
   dy: string;
-  /** ascensions */
   asc: number;
-  /** totalQi / lifetimeQi */
   tq: string;
   lq: string;
-  /** playTime */
+  /** sect */
+  sec: {
+    f: boolean;
+    lv: number;
+    d: Disciple[];
+    tr: number;
+    lb: number;
+  };
+  ex: Expedition[];
+  jr: JournalEntry[];
+  al: number;
+  rf: number;
+  bf: ActiveBuffs;
   pt: number;
+  nid: number;
 }
 
 export function serialize(state: GameState): SerializedGame {
   const r: Record<string, string> = {};
   for (const id of RESOURCE_IDS) r[id] = state.resources[id].toString();
 
+  const m: Record<string, string> = {};
+  for (const id of MATERIAL_IDS) m[id] = state.materials[id].toString();
+
   return {
     v: SAVE_VERSION,
     at: state.savedAt,
     r,
-    g: { ...state.generators },
+    m,
+    b: { ...state.buildings },
+    pl: { ...state.pills },
+    ar: { ...state.artifacts },
     ri: state.realmIndex,
     li: state.layer,
+    bp: [...state.breakthroughPity],
+    gb: state.globalBreakthroughBonus,
+    mi: state.mind,
+    mp: state.mindProgress,
     dy: state.daoYun.toString(),
     asc: state.ascensions,
     tq: state.totalQi.toString(),
     lq: state.lifetimeQi.toString(),
+    sec: {
+      f: state.sect.founded,
+      lv: state.sect.level,
+      d: state.sect.disciples,
+      tr: state.sect.totalRecruited,
+      lb: state.sect.lifespanBonus,
+    },
+    ex: state.expeditions,
+    jr: state.journal,
+    al: state.alchemyTier,
+    rf: state.refiningTier,
+    bf: state.buffs,
     pt: state.playTime,
+    nid: state.nextDiscipleId,
   };
 }
 
-/** 把任意输入安全地转成非负 Decimal，失败则用 fallback */
+/* ------------------------------------------------------------------ */
+/* 读档校验                                                            */
+/* ------------------------------------------------------------------ */
+
+/** 把任意输入安全转成非负 Decimal */
 function toDec(value: unknown, fallback = 0): Decimal {
   let d: Decimal | null = null;
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -83,8 +153,7 @@ function toDec(value: unknown, fallback = 0): Decimal {
   }
   if (d === null) return D(fallback);
 
-  // 注意：这里不能用 toNumber() 判断有效性 —— 合法的大数（1e400）
-  // 转成 number 就是 Infinity，会被误判成坏数据。
+  // 不能靠 toNumber() 判有效性：合法大数（1e400）转 number 就是 Infinity
   const text = d.toString();
   if (text === 'NaN' || text === 'Infinity' || text === '-Infinity') return D(fallback);
   if (d.lt(0)) return D(fallback);
@@ -96,44 +165,254 @@ function toInt(value: unknown, fallback: number, min: number, max: number): numb
   return Math.min(Math.max(Math.floor(value), min), max);
 }
 
-export function deserialize(raw: unknown): GameState | null {
-  if (raw === null || typeof raw !== 'object') return null;
-  const data = raw as Partial<SerializedGame>;
-  if (typeof data.v !== 'number') return null;
+function toFloat(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(value, min), max);
+}
 
-  const resources = createEmptyResources();
-  const rawResources = (data.r ?? {}) as Record<string, unknown>;
-  for (const id of RESOURCE_IDS) {
-    resources[id] = toDec(rawResources[id], 0);
+function toCountMap(raw: unknown, min = 0, max = 1e12): Record<string, number> {
+  if (raw === null || typeof raw !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > min) {
+      out[key] = Math.min(Math.floor(value), max);
+    }
+  }
+  return out;
+}
+
+function sanitizeDisciple(raw: unknown, index: number): Disciple | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const d = raw as Partial<Disciple>;
+  if (typeof d.id !== 'string' || typeof d.name !== 'string') return null;
+
+  const aptitude: AptitudeId = APTITUDE_ORDER.includes(d.aptitude as AptitudeId)
+    ? (d.aptitude as AptitudeId)
+    : 'mortal';
+
+  return {
+    id: d.id,
+    name: d.name.slice(0, 24) || `弟子${index + 1}`,
+    aptitude,
+    realmIndex: toInt(d.realmIndex, 0, 0, FINAL_REALM_INDEX),
+    progress: toFloat(d.progress, 0, 0, 1e9),
+    age: toFloat(d.age, 16, 0, 1e9),
+    // status 交给 repairState 依据探索列表重新推导，这里先一律置空闲
+    status: 'idle',
+  };
+}
+
+function sanitizeExpedition(raw: unknown): Expedition | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const e = raw as Partial<Expedition>;
+  if (typeof e.realmId !== 'string' || !SECRET_REALM_MAP[e.realmId]) return null;
+  if (!Array.isArray(e.discipleIds)) return null;
+
+  const ids = e.discipleIds.filter((id): id is string => typeof id === 'string');
+  if (ids.length === 0) return null;
+
+  const def = SECRET_REALM_MAP[e.realmId];
+  return {
+    id: typeof e.id === 'string' ? e.id : `e_${e.realmId}_${ids[0]}`,
+    realmId: e.realmId,
+    discipleIds: ids,
+    progress: toFloat(e.progress, 0, 0, 1e9),
+    duration: toFloat(e.duration, def.duration, 1, 1e9),
+  };
+}
+
+function sanitizeJournal(raw: unknown): JournalEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: JournalEntry[] = [];
+  for (const entry of raw.slice(0, JOURNAL_LIMIT)) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const e = entry as Partial<JournalEntry>;
+    if (typeof e.text !== 'string') continue;
+    out.push({
+      time: toFloat(e.time, 0, 0, 1e12),
+      text: e.text.slice(0, 120),
+      kind: e.kind === 'good' || e.kind === 'bad' ? e.kind : 'info',
+    });
+  }
+  return out;
+}
+
+function sanitizeBuffs(raw: unknown): ActiveBuffs {
+  const base = createEmptyBuffs();
+  if (raw === null || typeof raw !== 'object') return base;
+  const b = raw as Partial<ActiveBuffs>;
+  return {
+    productionMultiplier: toFloat(b.productionMultiplier, 1, 1, 1e6),
+    productionSeconds: toFloat(b.productionSeconds, 0, 0, 1e9),
+    powerMultiplier: toFloat(b.powerMultiplier, 1, 1, 1e6),
+    powerSeconds: toFloat(b.powerSeconds, 0, 0, 1e9),
+    safetyReduction: toFloat(b.safetyReduction, 0, 0, 1),
+    safetySeconds: toFloat(b.safetySeconds, 0, 0, 1e9),
+    yieldMultiplier: toFloat(b.yieldMultiplier, 1, 1, 1e6),
+    yieldSeconds: toFloat(b.yieldSeconds, 0, 0, 1e9),
+    speedMultiplier: toFloat(b.speedMultiplier, 1, 1, 1e6),
+    speedSeconds: toFloat(b.speedSeconds, 0, 0, 1e9),
+  };
+}
+
+/**
+ * 一致性修复：弟子状态与探索列表互相对齐。
+ *
+ * 手动编辑过存档、或存档在探索途中被中断，都可能出现
+ * "弟子标记为探索中但找不到对应队伍"这类不一致，修好再进入游戏。
+ */
+function repairState(state: GameState): GameState {
+  const exploring = new Map<string, string>();
+  for (const e of state.expeditions) {
+    for (const id of e.discipleIds) exploring.set(id, e.id);
   }
 
-  const generators = createEmptyGenerators();
-  const rawGenerators = (data.g ?? {}) as Record<string, unknown>;
-  for (const def of GENERATORS) {
-    const count = rawGenerators[def.id];
-    if (typeof count === 'number' && Number.isFinite(count) && count >= 0) {
-      generators[def.id] = Math.floor(count);
+  const disciples = state.sect.disciples.map((d) => {
+    const expeditionId = exploring.get(d.id);
+    return expeditionId
+      ? { ...d, status: 'exploring' as const, expeditionId }
+      : { ...d, status: 'idle' as const, expeditionId: undefined };
+  });
+
+  const known = new Set(disciples.map((d) => d.id));
+  const expeditions = state.expeditions
+    .map((e) => ({ ...e, discipleIds: e.discipleIds.filter((id) => known.has(id)) }))
+    .filter((e) => e.discipleIds.length > 0);
+
+  return { ...state, sect: { ...state.sect, disciples }, expeditions };
+}
+
+/** 兼容 v1 存档：那版把丹药当成资源，设施存在 g 字段里 */
+function migrateFromV1(raw: Record<string, unknown>): Record<string, unknown> {
+  const legacyResources = (raw.r ?? {}) as Record<string, unknown>;
+  const legacyBuildings = (raw.g ?? {}) as Record<string, unknown>;
+
+  // v1 的「丹药」是通用资源，v2 已经没有这个资源了，
+  // 折算成等量的聚气丹还给玩家，避免升级后凭空少东西。
+  const legacyPills = Math.max(0, Math.floor(Number(legacyResources.pill) || 0));
+
+  return {
+    v: SAVE_VERSION,
+    at: raw.at,
+    r: {
+      qi: legacyResources.qi,
+      wood: legacyResources.wood,
+      ore: legacyResources.ore,
+      stone: 0,
+      herb: 0,
+    },
+    m: {},
+    b: legacyBuildings,
+    pl: legacyPills > 0 ? { qiGatheringPill: legacyPills } : {},
+    ar: {},
+    ri: raw.ri,
+    li: raw.li,
+    dy: raw.dy,
+    asc: raw.asc,
+    tq: raw.tq,
+    lq: raw.lq,
+    pt: raw.pt,
+  };
+}
+
+export function deserialize(raw: unknown): GameState | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  let data = raw as Record<string, unknown>;
+  if (typeof data.v !== 'number') return null;
+
+  // v1 → v2 迁移
+  if (data.v < SAVE_VERSION) data = migrateFromV1(data);
+
+  const fresh = createInitialState();
+
+  /* ---- 资源与材料 ---- */
+  const resources: ResourceMap = createEmptyResources();
+  const rawResources = (data.r ?? {}) as Record<string, unknown>;
+  for (const id of RESOURCE_IDS) resources[id] = toDec(rawResources[id], 0);
+
+  const materials: MaterialMap = createEmptyMaterials();
+  const rawMaterials = (data.m ?? {}) as Record<string, unknown>;
+  for (const id of MATERIAL_IDS) materials[id] = toDec(rawMaterials[id], 0);
+
+  /* ---- 建筑 ---- */
+  const buildings = createEmptyBuildings();
+  const rawBuildings = (data.b ?? data.g ?? {}) as Record<string, unknown>;
+  for (const key of Object.keys(buildings)) {
+    const value = rawBuildings[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      buildings[key] = Math.min(Math.floor(value), 1e9);
     }
   }
 
+  /* ---- 丹药与器物 ---- */
+  const pills = toCountMap(data.pl);
+  const artifacts = toCountMap(data.ar);
+
+  /* ---- 境界 ---- */
   const realmIndex = toInt(data.ri, 0, 0, FINAL_REALM_INDEX);
-  const layerCount = REALMS[realmIndex].layerCount;
-  const layer = toInt(data.li, 0, 0, layerCount);
+  const layer = toInt(data.li, 0, 0, REALMS[realmIndex].layerCount);
+
+  const pityRaw = Array.isArray(data.bp) ? data.bp : [];
+  const breakthroughPity = pityRaw
+    .slice(0, REALMS.length)
+    .map((value) => toFloat(value, 0, 0, 1));
+
+  /* ---- 宗门 ---- */
+  const rawSect = (data.sec ?? {}) as Record<string, unknown>;
+  const disciplesRaw = Array.isArray(rawSect.d) ? rawSect.d : [];
+  const disciples: Disciple[] = [];
+  for (let i = 0; i < disciplesRaw.length && i < 500; i += 1) {
+    const d = sanitizeDisciple(disciplesRaw[i], i);
+    if (d) disciples.push(d);
+  }
+
+  const sect = {
+    ...createEmptySect(),
+    founded: rawSect.f === true,
+    level: toInt(rawSect.lv, 1, 1, 9),
+    disciples,
+    totalRecruited: toInt(rawSect.tr, disciples.length, 0, 1e9),
+    lifespanBonus: toFloat(rawSect.lb, 0, 0, 1e4),
+  };
+
+  const expeditions: Expedition[] = [];
+  if (Array.isArray(data.ex)) {
+    for (const raw of data.ex.slice(0, 50)) {
+      const e = sanitizeExpedition(raw);
+      if (e) expeditions.push(e);
+    }
+  }
 
   const now = Date.now();
-  return {
+  const state: GameState = {
     version: SAVE_VERSION,
     resources,
-    generators,
+    materials,
+    buildings,
+    pills,
+    artifacts,
     realmIndex,
     layer,
+    breakthroughPity,
+    globalBreakthroughBonus: toFloat(data.gb, 0, 0, 10),
+    mind: toFloat(data.mi, fresh.mind, 0, 1e6),
+    mindProgress: toFloat(data.mp, 0, 0, 1e6),
     daoYun: toDec(data.dy, 0),
     ascensions: toInt(data.asc, 0, 0, Number.MAX_SAFE_INTEGER),
     totalQi: toDec(data.tq, 0),
     lifetimeQi: toDec(data.lq, 0),
+    sect,
+    expeditions,
+    journal: sanitizeJournal(data.jr),
+    alchemyTier: toInt(data.al, 1, 1, 9),
+    refiningTier: toInt(data.rf, 1, 1, 9),
+    buffs: sanitizeBuffs(data.bf),
     playTime: toInt(data.pt, 0, 0, Number.MAX_SAFE_INTEGER),
     savedAt: toInt(data.at, now, 0, Number.MAX_SAFE_INTEGER),
+    nextDiscipleId: toInt(data.nid, disciples.length + 1, 1, Number.MAX_SAFE_INTEGER),
   };
+
+  return repairState(state);
 }
 
 /* ------------------------------------------------------------------ */
@@ -146,7 +425,7 @@ export function saveToLocal(state: GameState): boolean {
     localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
     return true;
   } catch (err) {
-    // 隐私模式、存储配额满等情况会抛异常，不该让游戏崩掉
+    // 隐私模式、配额满等情况会抛异常，不该让游戏崩掉
     console.warn('[仙途] 存档失败：', err);
     return false;
   }
@@ -154,7 +433,7 @@ export function saveToLocal(state: GameState): boolean {
 
 export function loadFromLocal(): GameState | null {
   try {
-    const text = localStorage.getItem(SAVE_KEY);
+    const text = localStorage.getItem(SAVE_KEY) ?? localStorage.getItem(LEGACY_SAVE_KEY);
     if (!text) return null;
     return deserialize(JSON.parse(text));
   } catch (err) {
@@ -166,6 +445,7 @@ export function loadFromLocal(): GameState | null {
 export function clearLocal(): void {
   try {
     localStorage.removeItem(SAVE_KEY);
+    localStorage.removeItem(LEGACY_SAVE_KEY);
   } catch (err) {
     console.warn('[仙途] 清档失败：', err);
   }
@@ -175,11 +455,7 @@ export function clearLocal(): void {
 /* 导出 / 导入存档码                                                    */
 /* ------------------------------------------------------------------ */
 
-/**
- * 导出成一串可复制的文本。
- * 先 encodeURIComponent 再 btoa，是为了让中文和特殊字符也能安全编码
- * （encodeURIComponent 的输出是纯 ASCII，正好喂给 btoa）。
- */
+/** 先 encodeURIComponent 再 btoa，让中文和特殊字符也能安全编码 */
 export function exportCode(state: GameState): string {
   try {
     return btoa(encodeURIComponent(JSON.stringify(serialize({ ...state, savedAt: Date.now() }))));
@@ -205,14 +481,33 @@ export function importCode(code: string): GameState | null {
 /* 离线收益                                                            */
 /* ------------------------------------------------------------------ */
 
-export interface OfflineReport {
-  seconds: number;
-  gains: ResourceMap;
+export interface OfflineLoot {
+  id: string;
+  name: string;
+  icon: string;
+  amount: number;
 }
 
+export interface OfflineReport {
+  seconds: number;
+  gains: { id: ResourceId; amount: Decimal }[];
+  materialGains: { id: MaterialId; amount: Decimal }[];
+  pillGains: OfflineLoot[];
+  /** 离线期间发生的事件（弟子突破、陨落、探索归来等） */
+  journal: JournalEntry[];
+}
+
+/**
+ * 结算离线收益。
+ *
+ * 直接复用 applyTick，只是把时间乘以离线效率 ——
+ * 这样弟子修炼、秘境推进、增益消耗全都会自动正确处理，
+ * 不需要在这里重写一遍逻辑（也就不会出现"线上和离线算得不一样"的 bug）。
+ */
 export function applyOffline(
   state: GameState,
   now = Date.now(),
+  random: () => number = Math.random,
 ): { state: GameState; report: OfflineReport | null } {
   const elapsed = (now - state.savedAt) / 1000;
   const seconds = Math.min(Math.max(Number.isFinite(elapsed) ? elapsed : 0, 0), MAX_OFFLINE_SECONDS);
@@ -221,25 +516,43 @@ export function applyOffline(
     return { state: { ...state, savedAt: now }, report: null };
   }
 
-  const production = getProduction(state);
-  const resources = { ...state.resources };
-  const gains = createEmptyResources();
+  const before = state;
+  const advanced = applyTick(state, seconds * OFFLINE_EFFICIENCY, random);
+  const after: GameState = { ...advanced, savedAt: now };
 
-  for (const id of RESOURCE_IDS) {
-    const gain = production[id as ResourceId].mul(seconds * OFFLINE_EFFICIENCY);
-    gains[id] = gain;
-    resources[id] = resources[id].add(gain);
+  const gains = RESOURCE_IDS.map((id) => ({ id, amount: after.resources[id].sub(before.resources[id]) })).filter(
+    (entry) => entry.amount.gt(0),
+  );
+  const materialGains = MATERIAL_IDS.map((id) => ({
+    id,
+    amount: after.materials[id].sub(before.materials[id]),
+  })).filter((entry) => entry.amount.gt(0));
+
+  const pillGains: OfflineLoot[] = [];
+  for (const [id, count] of Object.entries(after.pills)) {
+    const beforeCount = before.pills[id] ?? 0;
+    if (count > beforeCount) {
+      const def = PILL_MAP[id];
+      pillGains.push({
+        id,
+        name: def?.name ?? id,
+        icon: def?.icon ?? '⚗',
+        amount: count - beforeCount,
+      });
+    }
   }
 
-  const gainedQi = gains.qi;
+  // 离线期间新增的记事（journal 是最新在前，取多出来的部分）
+  const newCount = Math.max(0, after.journal.length - before.journal.length);
+  const journal = after.journal.slice(0, newCount);
+
   return {
-    state: {
-      ...state,
-      resources,
-      totalQi: state.totalQi.add(gainedQi),
-      lifetimeQi: state.lifetimeQi.add(gainedQi),
-      savedAt: now,
-    },
-    report: { seconds, gains },
+    state: after,
+    report: { seconds, gains, materialGains, pillGains, journal },
   };
+}
+
+/** 供界面显示用：把 ItemId 转成名字和图标 */
+export function describeItem(id: ItemId): { name: string; icon: string } {
+  return ITEM_MAP[id] ?? { name: id, icon: '?' };
 }

@@ -679,3 +679,810 @@ a {
 .footer a {
   margin-left: 4px;
 }
+
+/* ==========================================================================
+   标签页
+   ========================================================================== */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line-strong);
+  padding-bottom: 0;
+}
+
+.tab {
+  position: relative;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  padding: 8px 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tab:hover {
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--ink);
+}
+
+.tab--active {
+  background: var(--paper-2);
+  border-color: var(--line-strong);
+  color: var(--accent);
+  font-weight: 700;
+  margin-bottom: -1px;
+}
+
+.tab__icon {
+  font-size: 14px;
+}
+
+.tab__hint {
+  font-size: 10px;
+  color: var(--ink-faint);
+  font-family: var(--font-body);
+  letter-spacing: 0;
+}
+
+.tab__badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff9f4;
+  font-size: 10px;
+  font-family: var(--font-body);
+  line-height: 17px;
+  text-align: center;
+}
+
+.tab__badge--soft {
+  background: var(--jade);
+}
+
+.layout--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* ==========================================================================
+   头部补充
+   ========================================================================== */
+
+.mind-bar {
+  display: block;
+  width: 74px;
+  height: 4px;
+  margin-top: 3px;
+  border-radius: 3px;
+  background: rgba(122, 96, 60, 0.18);
+  overflow: hidden;
+}
+
+.mind-bar__fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #6aa78c, var(--jade));
+  transition: width 0.25s ease;
+}
+
+.resource--material {
+  background: linear-gradient(180deg, #fffdf7, #f6f0e2);
+  border-style: dashed;
+}
+
+.panel__note--warn {
+  color: #8a5a1e;
+  background: rgba(184, 134, 11, 0.1);
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+.panel__head--sub {
+  margin-top: 16px;
+  border-bottom-style: dotted;
+}
+
+.panel__head--sub h2 {
+  font-size: 14px;
+}
+
+/* ==========================================================================
+   境界面板补充
+   ========================================================================== */
+
+.realm__pity {
+  color: var(--jade);
+}
+
+.realm__rates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 10px;
+}
+
+.realm__rates strong {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.realm__rate--pill strong {
+  color: var(--jade);
+}
+
+.realm__rate--nopill {
+  opacity: 0.45;
+}
+
+.realm__rate--nopill strong {
+  color: var(--ink-faint);
+}
+
+.realm__rates em {
+  font-style: normal;
+  color: var(--ink-faint);
+}
+
+/* ==========================================================================
+   宗门
+   ========================================================================== */
+
+.sect__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  font-size: 12px;
+  margin: 10px 0;
+}
+
+.sect__stats > div {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.sect__stats strong {
+  font-family: var(--font-serif);
+  font-size: 16px;
+}
+
+.sect__stats em {
+  font-style: normal;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+/* ==========================================================================
+   弟子
+   ========================================================================== */
+
+.disciple-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.disciple-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.disciple-toolbar select {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.disciple-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 640px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.disciple {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.disciple--busy {
+  background: rgba(61, 122, 99, 0.07);
+  border-color: rgba(61, 122, 99, 0.35);
+}
+
+.disciple__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.disciple__name {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.disciple__aptitude {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.disciple__realm {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.disciple__tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(61, 122, 99, 0.18);
+  color: var(--jade);
+}
+
+.disciple__bars {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+
+.mini-bar {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(122, 96, 60, 0.15);
+  overflow: hidden;
+}
+
+.mini-bar__fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.mini-bar__fill--cultivation {
+  background: linear-gradient(90deg, #6aa78c, var(--jade));
+}
+
+.mini-bar__fill--age {
+  background: linear-gradient(90deg, #c9a86a, #b8860b);
+}
+
+.disciple__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+/* ==========================================================================
+   秘境
+   ========================================================================== */
+
+.realm-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.realm-card {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.realm-card__head {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.realm-card__icon {
+  font-size: 24px;
+}
+
+.realm-card__name {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.realm-card__desc {
+  font-size: 11px;
+  color: var(--ink-faint);
+  line-height: 1.5;
+}
+
+.realm-card__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 11px;
+  color: var(--ink-soft);
+  margin-bottom: 6px;
+}
+
+.realm-card__stats strong {
+  color: var(--ink);
+}
+
+.realm-card__loot {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-bottom: 8px;
+}
+
+.realm-card__power {
+  font-size: 12px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.realm-card__power em {
+  font-style: normal;
+  opacity: 0.8;
+}
+
+.realm-card__power--good {
+  background: rgba(61, 122, 99, 0.12);
+  color: #2c5c4a;
+}
+
+.realm-card__power--ok {
+  background: rgba(58, 110, 168, 0.12);
+  color: #2c5480;
+}
+
+.realm-card__power--warn {
+  background: rgba(184, 134, 11, 0.14);
+  color: #7d5a12;
+}
+
+.realm-card__power--bad {
+  background: rgba(147, 64, 74, 0.16);
+  color: #7d2b34;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 14px;
+  border: 1px solid var(--line-strong);
+  background: var(--paper-2);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.chip__sub {
+  font-size: 10px;
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 230px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 7px;
+  padding: 6px;
+}
+
+.picker__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.picker__item:hover {
+  border-color: var(--line-strong);
+}
+
+.picker__item--on {
+  background: rgba(61, 122, 99, 0.16);
+  border-color: var(--jade);
+}
+
+.picker__name {
+  font-weight: 700;
+  min-width: 62px;
+}
+
+.picker__apt {
+  font-size: 11px;
+  min-width: 62px;
+}
+
+.picker__realm {
+  color: var(--ink-faint);
+  font-size: 11px;
+  min-width: 56px;
+}
+
+.picker__power {
+  margin-left: auto;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.running {
+  border: 1px solid rgba(61, 122, 99, 0.3);
+  background: rgba(61, 122, 99, 0.06);
+  border-radius: 8px;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+}
+
+.running__head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.running__time {
+  color: var(--jade);
+  font-size: 12px;
+}
+
+.running__party {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-top: 5px;
+}
+
+.locked-realm {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--line);
+  color: var(--ink-faint);
+}
+
+.locked-realm__need {
+  text-align: right;
+}
+
+/* ==========================================================================
+   丹器
+   ========================================================================== */
+
+.tier-upgrade {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(184, 134, 11, 0.06);
+  margin-bottom: 14px;
+}
+
+.tier-upgrade__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.tier-upgrade__head strong {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  color: var(--gold);
+}
+
+.tier-upgrade__slots {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.tier-upgrade__cost {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.recipe-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recipe {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 11px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.recipe--locked {
+  opacity: 0.5;
+}
+
+.recipe__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+
+.recipe__icon {
+  font-size: 17px;
+}
+
+.recipe__name {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.recipe__owned {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--jade);
+}
+
+.tier-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(122, 96, 60, 0.14);
+  color: var(--ink-soft);
+}
+
+.tier-badge--7,
+.tier-badge--8,
+.tier-badge--9 {
+  background: rgba(184, 134, 11, 0.2);
+  color: #7d5a12;
+}
+
+.cat-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.cat-badge--combat {
+  background: rgba(147, 64, 74, 0.16);
+  color: #7d2b34;
+}
+
+.cat-badge--support {
+  background: rgba(61, 122, 99, 0.16);
+  color: #2c5c4a;
+}
+
+.cat-badge--breakthrough {
+  background: rgba(58, 110, 168, 0.16);
+  color: #2c5480;
+}
+
+.recipe__desc {
+  font-size: 11px;
+  color: var(--ink-faint);
+  line-height: 1.5;
+  margin-bottom: 7px;
+}
+
+.recipe__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.recipe__cost {
+  font-size: 12px;
+}
+
+.recipe__lock {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.inv-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--line);
+}
+
+.inv-row__icon {
+  font-size: 15px;
+}
+
+.inv-row__name {
+  font-weight: 700;
+  font-family: var(--font-serif);
+  font-size: 14px;
+}
+
+.inv-row__count {
+  color: var(--jade);
+  margin-left: auto;
+}
+
+.inv-row__effect {
+  width: 100%;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.buff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.buff {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: rgba(61, 122, 99, 0.1);
+}
+
+.buff__label {
+  color: var(--ink-soft);
+}
+
+.buff__value {
+  font-weight: 700;
+  color: var(--jade);
+}
+
+.buff__time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.btn--tiny {
+  padding: 2px 9px;
+  font-size: 11px;
+}
+
+/* ==========================================================================
+   宗门记事
+   ========================================================================== */
+
+.journal {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.journal--compact {
+  max-height: 160px;
+}
+
+.journal__item {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  border-left: 3px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.journal__item--good {
+  border-left-color: var(--jade);
+}
+
+.journal__item--bad {
+  border-left-color: var(--accent);
+}
+
+.journal__item--info {
+  border-left-color: #3a6ea8;
+}
+
+.journal__time {
+  color: var(--ink-faint);
+  font-size: 11px;
+  white-space: nowrap;
+  min-width: 62px;
+}
+
+.journal__text {
+  flex: 1;
+}
+
+.modal__journal {
+  margin: 10px 0;
+}
+
+.modal__journal-title {
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-bottom: 5px;
+}
+
+.modal__list--material li {
+  background: rgba(58, 110, 168, 0.08);
+}
+
+.modal__list--material strong {
+  color: #3a6ea8;
+}
+
+.modal__list--pill li {
+  background: rgba(184, 134, 11, 0.1);
+}
+
+.modal__list--pill strong {
+  color: var(--gold);
+}

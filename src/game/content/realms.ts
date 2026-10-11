@@ -1,0 +1,267 @@
+/**
+ * 境界体系
+ *
+ * 同一张表同时服务于三方：
+ *   - 玩家自己的修行（消耗灵气参悟/突破）
+ *   - 弟子的修行（按游戏年数推进）
+ *   - 秘境战力与寿元（决定弟子能走多远、探索有多强）
+ */
+
+export interface RealmDef {
+  name: string;
+  /** 本境界有多少层小境界 */
+  layerCount: number;
+  /** 第 1 层小境界的参悟消耗（灵气） */
+  baseLayerCost: number;
+  /** 每多一层，消耗乘以该系数 */
+  costGrowth: number;
+  /** 每层小境界提供的全局产量加成（加算，0.05 = +5%） */
+  layerBonus: number;
+  /** 身处此境界时的全局产量乘数（已含前面所有境界的累积效果） */
+  realmMultiplier: number;
+  /** 突破到下一境界所需灵气 */
+  breakthroughQi: number;
+  /** 突破到下一境界所需丹药数量（丹药 id 见 breakthroughPill） */
+  breakthroughPills: number;
+  /** 突破该境界时建议服用的境界丹 */
+  breakthroughPill: string;
+  /** 不吃丹药的基础突破成功率 */
+  baseSuccess: number;
+
+  /* ---- 以下服务于弟子与秘境 ---- */
+  /** 弟子从本境界修炼到下一境界所需的游戏年数 */
+  cultivationYears: number;
+  /** 本境界的寿元上限（游戏年）。超过即寿元耗尽而亡 */
+  lifespan: number;
+  /** 弟子处于本境界时的基础战力 */
+  power: number;
+
+  desc: string;
+}
+
+export const REALMS: RealmDef[] = [
+  {
+    name: '炼气期',
+    layerCount: 9,
+    baseLayerCost: 8,
+    costGrowth: 1.75,
+    layerBonus: 0.05,
+    realmMultiplier: 1,
+    breakthroughQi: 600,
+    breakthroughPills: 0,
+    breakthroughPill: 'foundationPill',
+    baseSuccess: 0.8,
+    cultivationYears: 50,
+    lifespan: 300,
+    power: 1,
+    desc: '引气入体，初窥门径。',
+  },
+  {
+    name: '筑基期',
+    layerCount: 9,
+    baseLayerCost: 150,
+    costGrowth: 1.85,
+    layerBonus: 0.06,
+    realmMultiplier: 3,
+    breakthroughQi: 1.2e4,
+    breakthroughPills: 0,
+    breakthroughPill: 'goldenCorePill',
+    baseSuccess: 0.68,
+    cultivationYears: 80,
+    lifespan: 700,
+    power: 3,
+    desc: '筑就道基，从此寿元大增。',
+  },
+  {
+    name: '金丹期',
+    layerCount: 9,
+    baseLayerCost: 2.5e3,
+    costGrowth: 1.9,
+    layerBonus: 0.08,
+    realmMultiplier: 9,
+    breakthroughQi: 1.5e5,
+    breakthroughPills: 0,
+    breakthroughPill: 'nascentPill',
+    baseSuccess: 0.58,
+    cultivationYears: 120,
+    lifespan: 1500,
+    power: 10,
+    desc: '结丹成婴之始，一方修士中的翘楚。',
+  },
+  {
+    name: '元婴期',
+    layerCount: 9,
+    baseLayerCost: 1.6e4,
+    costGrowth: 1.95,
+    layerBonus: 0.1,
+    realmMultiplier: 27,
+    breakthroughQi: 8e5,
+    breakthroughPills: 0,
+    breakthroughPill: 'spiritPill',
+    baseSuccess: 0.5,
+    cultivationYears: 250,
+    lifespan: 3000,
+    power: 30,
+    desc: '元婴出窍，肉身可弃而神魂不灭。',
+  },
+  {
+    name: '化神期',
+    layerCount: 9,
+    baseLayerCost: 2.4e5,
+    costGrowth: 2.0,
+    layerBonus: 0.12,
+    realmMultiplier: 81,
+    breakthroughQi: 1.2e7,
+    breakthroughPills: 0,
+    breakthroughPill: 'voidPill',
+    baseSuccess: 0.42,
+    cultivationYears: 400,
+    lifespan: 6000,
+    power: 100,
+    desc: '神识化虚，可窥天地法则。自此可开宗立派。',
+  },
+  {
+    name: '炼虚期',
+    layerCount: 9,
+    baseLayerCost: 4e6,
+    costGrowth: 2.05,
+    layerBonus: 0.15,
+    realmMultiplier: 243,
+    breakthroughQi: 2e8,
+    breakthroughPills: 0,
+    breakthroughPill: 'unityPill',
+    baseSuccess: 0.35,
+    cultivationYears: 700,
+    lifespan: 12000,
+    power: 300,
+    desc: '炼化虚空，举手投足皆合天道。',
+  },
+  {
+    name: '合体期',
+    layerCount: 9,
+    baseLayerCost: 6e7,
+    costGrowth: 2.1,
+    layerBonus: 0.18,
+    realmMultiplier: 729,
+    breakthroughQi: 3.2e9,
+    breakthroughPills: 0,
+    breakthroughPill: 'grandPill',
+    baseSuccess: 0.3,
+    cultivationYears: 1200,
+    lifespan: 24000,
+    power: 1000,
+    desc: '法体合一，已非凡俗之身。',
+  },
+  {
+    name: '大乘期',
+    layerCount: 9,
+    baseLayerCost: 1e9,
+    costGrowth: 2.15,
+    layerBonus: 0.22,
+    realmMultiplier: 2187,
+    breakthroughQi: 6e10,
+    breakthroughPills: 0,
+    breakthroughPill: 'tribulationPill',
+    baseSuccess: 0.25,
+    cultivationYears: 2000,
+    lifespan: 50000,
+    power: 3000,
+    desc: '大乘圆满，只待雷劫加身。',
+  },
+  {
+    name: '渡劫期',
+    layerCount: 9,
+    baseLayerCost: 1.6e10,
+    costGrowth: 2.2,
+    layerBonus: 0.26,
+    realmMultiplier: 6561,
+    breakthroughQi: 1.2e12,
+    breakthroughPills: 0,
+    breakthroughPill: 'ascensionPill',
+    baseSuccess: 0.18,
+    cultivationYears: 5000,
+    lifespan: 100000,
+    power: 10000,
+    desc: '九重雷劫，过则登仙。',
+  },
+  {
+    name: '仙人',
+    layerCount: 1,
+    baseLayerCost: 4e12,
+    costGrowth: 2.5,
+    layerBonus: 1.0,
+    realmMultiplier: 19683,
+    breakthroughQi: 0,
+    breakthroughPills: 0,
+    breakthroughPill: '',
+    baseSuccess: 1,
+    cultivationYears: 0,
+    lifespan: Infinity,
+    power: 30000,
+    desc: '跳出三界外，不在五行中。此界已是尽头。',
+  },
+];
+
+export const FINAL_REALM_INDEX = REALMS.length - 1;
+
+/** 达到该境界（化神期）后可开宗立派，也可飞升 */
+export const ASCENSION_MIN_REALM = 4;
+/** 开宗立派所需的最低境界 */
+export const SECT_MIN_REALM = 4;
+
+/* ------------------------------------------------------------------ */
+/* 突破成功率                                                          */
+/* ------------------------------------------------------------------ */
+
+/** 服用对应的境界丹，突破成功率提升多少 */
+export const BREAKTHROUGH_PILL_BONUS = 0.35;
+/** 每次失败累积的保底加成（失败也长经验，避免卡死） */
+export const BREAKTHROUGH_FAIL_BONUS = 0.05;
+/** 保底加成上限 */
+export const BREAKTHROUGH_FAIL_BONUS_CAP = 0.5;
+/** 成功率上限，留一点失败余地 */
+export const BREAKTHROUGH_MAX_SUCCESS = 0.98;
+
+/* ------------------------------------------------------------------ */
+/* 飞升                                                                */
+/* ------------------------------------------------------------------ */
+
+/** 每点「道韵」提供的全局产量加成 */
+export const DAO_YUN_BONUS = 0.05;
+/**
+ * 飞升结算：本世累计灵气 → 道韵
+ *     道韵 = floor( (本世灵气 / DAO_YUN_DIVISOR) ^ DAO_YUN_EXPONENT )
+ */
+export const DAO_YUN_DIVISOR = 1e5;
+export const DAO_YUN_EXPONENT = 0.5;
+
+/* ------------------------------------------------------------------ */
+/* 手动打坐（需求 1：必须限流）                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 打坐消耗「心神」。心神有上限、按固定间隔回复，
+ * 因此手动点击的收益被硬性封顶，无法靠疯狂点击大幅加速游戏。
+ *
+ * 每秒最多打坐 1/6 次，每次给 1.5 秒的灵气产量
+ * → 满负荷手动也只相当于约 25% 的产量加成。
+ */
+export const MIND_MAX = 20;
+export const MIND_REGEN_SECONDS = 6;
+export const MEDITATE_COST = 1;
+export const MEDITATE_MIN_QI = 3;
+export const MEDITATE_SECONDS = 1.5;
+
+/* ------------------------------------------------------------------ */
+/* 游戏内时间                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 1 真实秒 = 30 游戏天（约 1 真实分钟 = 5 游戏年）。
+ *
+ * 这个比例决定了「五百年」要挂多久：
+ * 天灵根弟子修到化神期正好 500 游戏年 ≈ 1.7 小时真实时间。
+ * 想让弟子成长更快/更慢，改这一个数就行。
+ */
+export const GAME_DAYS_PER_SECOND = 30;
+export const GAME_DAYS_PER_YEAR = 365;

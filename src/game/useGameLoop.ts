@@ -1,18 +1,17 @@
 /**
  * 主循环：驱动游戏时间前进 + 定时自动存档。
  *
- * 用固定间隔 + 真实时间差（dt）来推进，而不是"每次 tick 加固定产量"。
+ * 用固定间隔 + 真实时间差（dt）推进，而不是"每次 tick 加固定产量"。
  * 这样浏览器把后台标签页降频到 1 秒一次时，产量依然是准确的。
  */
 import { useEffect } from 'react';
 import { useGame } from './store';
+import { MAX_TICK_SECONDS } from './tick';
 
-/** 主循环间隔（毫秒）。200ms 约等于 5 帧/秒，对放置游戏足够流畅 */
+/** 主循环间隔（毫秒）。200ms ≈ 5 帧/秒，对放置游戏足够流畅 */
 export const TICK_MS = 200;
 /** 自动存档间隔（毫秒） */
 export const AUTOSAVE_MS = 10_000;
-/** 单次 tick 最多推进 5 分钟，防止电脑休眠唤醒后数值跳变 */
-export const MAX_TICK_SECONDS = 300;
 
 export function useGameLoop(): void {
   useEffect(() => {

@@ -1,6 +1,7 @@
-/** 顶部：境界、小境界层数、全局倍率、道韵 */
+/** 顶部：境界、小境界层数、全局倍率、道韵、心神 */
 import { fmt, fmtMultiplier } from '../game/decimal';
-import { getGlobalMultiplier, getRealm, isFinalRealm } from '../game/engine';
+import { MIND_MAX } from '../game/content';
+import { getGlobalMultiplier, getRealm, isFinalRealm, getDiscipleCapacity } from '../game/engine';
 import { useGame } from '../game/store';
 
 const CN_NUM = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
@@ -12,6 +13,10 @@ export function Header() {
 
   const layerText = realm.layerCount > 1 ? `${CN_NUM[game.layer] ?? game.layer}层` : '圆满';
   const realmLabel = isFinalRealm(game) ? `${realm.name}·圆满` : realm.name;
+
+  const mindRatio = game.mind / MIND_MAX;
+  const discipleCount = game.sect.disciples.length;
+  const discipleCap = getDiscipleCapacity(game);
 
   return (
     <header className="header">
@@ -33,6 +38,27 @@ export function Header() {
           <span className="stat__label">全局倍率</span>
           <span className="stat__value">{fmtMultiplier(multiplier)}</span>
         </div>
+
+        <div className="stat">
+          <span className="stat__label">心神</span>
+          <span className="stat__value">
+            {Math.floor(game.mind)}
+            <em className="stat__layer">/ {MIND_MAX}</em>
+          </span>
+          <span className="mind-bar">
+            <span className="mind-bar__fill" style={{ width: `${Math.round(mindRatio * 100)}%` }} />
+          </span>
+        </div>
+
+        {game.sect.founded && (
+          <div className="stat">
+            <span className="stat__label">弟子</span>
+            <span className="stat__value">
+              {discipleCount}
+              <em className="stat__layer">/ {discipleCap}</em>
+            </span>
+          </div>
+        )}
 
         <div className="stat">
           <span className="stat__label">道韵</span>
