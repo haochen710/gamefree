@@ -423,16 +423,17 @@ function SurveyCard({ region, state }: { region: MapRegionDef; state: GameState 
 
       {/*
         需求 5：掌门可以自己去。
-        派队伍要开宗、要有弟子、还只走"小区域档次"这一步；
-        掌门亲自去则不分这些 —— 代价是产量下降、收获只有一半，
+        派队伍要开宗、要有弟子、还要过"小区域档次"和队伍名额；
+        掌门亲自去则不分这些 —— 代价只是慢一点、收获减半，
         好处是**不会折损弟子**，而且还没开宗时就能出门。
+        （本轮需求 4 起，出门**不再**扣全局产量。）
       */}
       <div className="realm-card__solo">
         <div className="realm-card__solo-head">
           <strong>掌门亲自查探</strong>
           <span className="panel__hint">
             无伤亡 · 产出约一半 · 约 {Math.round(getSoloSurveyDuration(state, region.id) / 60)} 分钟 ·
-            期间洞府产量下降
+            稀有材料 30% 概率
           </span>
         </div>
         <div className="btn-row">
