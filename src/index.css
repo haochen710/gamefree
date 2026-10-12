@@ -1255,6 +1255,51 @@ a {
   background: linear-gradient(90deg, #ababab, #888888);
 }
 
+/*
+ * 忠诚与心魔两条细条（设定集第 8.6 / 14.3 章）。
+ *
+ * 忠诚越满越"实"（深墨），心魔越满越"危险"（警示色）——
+ * 黑白风里能用的只有明度与那一种警示色，所以这两条正好各占一头：
+ * 忠诚是纯灰阶，心魔用 --warn。一眼扫过去就知道该先处理谁。
+ */
+.mini-bar--thin {
+  height: 3px;
+}
+
+.mini-bar__fill--loyalty {
+  background: linear-gradient(90deg, #9b9b9b, #262626);
+}
+
+.mini-bar__fill--demon {
+  background: linear-gradient(90deg, #6e6e6e, var(--warn));
+}
+
+.disciple__tag--warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+/* 全宗种田天赋一览（设定集第 8.4 章） */
+.talent-summary {
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
+.talent-summary__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.talent-summary__item strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
 .disciple__foot {
   display: flex;
   flex-wrap: wrap;
@@ -1418,6 +1463,20 @@ a {
 .picker__item--on {
   background: rgba(0, 0, 0, 0.16);
   border-color: var(--jade);
+}
+
+/* 拒绝出征的弟子：灰掉但仍然看得见（藏起来玩家会以为人丢了） */
+.picker__item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.picker__tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
 }
 
 .picker__name {

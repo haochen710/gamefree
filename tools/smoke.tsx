@@ -38,6 +38,8 @@ import AlchemyPanel from '../src/components/AlchemyPanel';
 import RefiningPanel from '../src/components/RefiningPanel';
 import InventoryPanel from '../src/components/InventoryPanel';
 import JournalPanel from '../src/components/JournalPanel';
+import ManualPanel from '../src/components/ManualPanel';
+import * as manuals from '../src/game/manuals';
 import { useGame } from '../src/game/store';
 import { D, fmt } from '../src/game/decimal';
 import {
@@ -64,6 +66,27 @@ import {
   ARENA_BUFF_BONUS,
   BREAKTHROUGH_MAX_SUCCESS,
   BREAKTHROUGH_PILL_GAP_RECOVERY,
+  COMBAT_TALENT_IDS,
+  COMBAT_TALENT_MAP,
+  COMBAT_TALENTS,
+  DEMON_TIERS,
+  FARM_TALENT_IDS,
+  FARM_TALENTS,
+  LOYALTY_IDLE_DECAY_SECONDS,
+  LOYALTY_INITIAL,
+  LOYALTY_NEGLECT_FLOOR,
+  LOYALTY_TIERS,
+  MANUALS,
+  MANUAL_GRADE_MIN_REALM,
+  MANUAL_GRADE_NAMES,
+  MANUAL_MAP,
+  PERSONALITIES,
+  PERSONALITY_IDS,
+  PERSONALITY_MAP,
+  demonTierOf,
+  loyaltyTierOf,
+  fragmentIdOf,
+  manualIdOfFragment,
   BUILD_GROUPS,
   DISCIPLE_CAP_BY_SECT_LEVEL,
   discipleCapBySect,
@@ -152,13 +175,15 @@ import {
   countMaterialKinds,
   createEmptyBuffs,
   hastenQiCost,
+  type ManualGrade,
   type MaterialId,
   type ResourceId,
 } from '../src/game/content';
-import { createInitialState, type GameState } from '../src/game/state';
+import { createInitialState, type Disciple, type GameState } from '../src/game/state';
 import * as engine from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
 import * as expeditions from '../src/game/expeditions';
+import * as encounter from '../src/game/encounter';
 import {
   canStartExpedition,
   canStartSurvey,
@@ -303,6 +328,35 @@ function grantAll(state: GameState, extra: Partial<Record<string, string>> = {})
   const materials: Partial<Record<string, string>> = {};
   for (const id of MATERIAL_IDS) materials[id] = '1e7';
   return grant(state, { ...materials, ...extra });
+}
+
+/**
+ * 造一名测试弟子。
+ *
+ * ⚠️ 用工厂而不是在每个测试里手写对象字面量：本轮给 Disciple 加了
+ * 战斗天赋 / 种田天赋 / 性格 / 忠诚度 / 心魔 / 闲置时长 六个字段，
+ * 手写的字面量当场全部编译不过 —— 以后每加一个字段都会再来一遍。
+ */
+function makeDisciple(overrides: Partial<Disciple> = {}): Disciple {
+  return {
+    id: 'd0',
+    name: '测试弟子',
+    aptitude: 'mortal',
+    combatTalent: 'ironBody',
+    farmTalent: 'herbWhisper',
+    personality: 'dao',
+    loyalty: 70,
+    demon: 0,
+    cultivationManual: '',
+    combatManual: '',
+    idleSeconds: 0,
+    realmIndex: 0,
+    progress: 0,
+    age: 20,
+    status: 'idle',
+    insight: 0,
+    ...overrides,
+  };
 }
 
 /** 搭一个「已经钻研出某技术」的状态 */
@@ -563,16 +617,9 @@ section('[2c] 仆役（杂役）');
     engine.getDiscipleCapacity(withDorms) === Math.min(36, discipleCapBySect(5)),
     `居所 36 / 品阶 ${discipleCapBySect(5)} → ${engine.getDiscipleCapacity(withDorms)}`,
   );
-  const dummyDisciples = Array.from({ length: 20 }, (_, i) => ({
-    id: `t${i}`,
-    name: `测试弟子${i}`,
-    aptitude: 'mortal' as const,
-    realmIndex: 0,
-    progress: 0,
-    age: 20,
-    status: 'idle' as const,
-    insight: 0,
-  }));
+  const dummyDisciples = Array.from({ length: 20 }, (_, i) =>
+    makeDisciple({ id: `t${i}`, name: `测试弟子${i}` }),
+  );
   check(
     '需求 2：弟子不占仆役床位',
     engine.getServantCapacity({ ...withDorms, sect: { ...withDorms.sect, disciples: dummyDisciples } }) === 30,
@@ -3023,13 +3070,22 @@ section('[26] 宗门建筑与大比（需求 4）');
     );
 
     // 连心得一起算（弟子修行速度 = 资质 × (建筑 + 大比 + 心得)，同一个加算池）
+    //
+    // ⚠️ 本轮给弟子加了性格 / 忠诚 / 心魔三个新的乘区，所以这里必须先把它们
+    // **归零**（守道 + 寻常忠诚 + 无心魔）才能验证"加算池"这件事 ——
+    // 否则算出来的是一个混合了四个因子的数，断言会失效（本轮就是这么红的）。
     const best = disciples.rollDisciple(8, 1, makeRandom(7));
+    const neutral = {
+      ...best,
+      aptitude: 'heaven' as typeof best.aptitude,
+      insight: engine.getInsightMax(maxed),
+      personality: 'dao' as const,
+      loyalty: 50,
+      demon: 0,
+    };
     const insightMaxed: GameState = {
       ...maxed,
-      sect: {
-        ...maxed.sect,
-        disciples: [{ ...best, aptitude: 'heaven' as typeof best.aptitude, insight: engine.getInsightMax(maxed) }],
-      },
+      sect: { ...maxed.sect, disciples: [neutral] },
     };
     check(
       '心得与建筑处在同一个加算池（不是再乘一次）',
@@ -3046,6 +3102,33 @@ section('[26] 宗门建筑与大比（需求 4）');
       fullSpeed < 4.5,
       `×${fullSpeed.toFixed(2)}`,
     );
+
+    /* ---- 本轮新增：忠诚与心魔确实改变修行速度（而且是乘法，不被加算池稀释） ---- */
+    {
+      const withState = (over: Partial<typeof neutral>) => ({
+        ...insightMaxed,
+        sect: { ...insightMaxed.sect, disciples: [{ ...neutral, ...over }] },
+      });
+      const base = disciples.getDiscipleSpeed(insightMaxed, neutral);
+      const deadLoyal = disciples.getDiscipleSpeed(withState({ loyalty: 95 }), { ...neutral, loyalty: 95 });
+      const rebel = disciples.getDiscipleSpeed(withState({ loyalty: 5 }), { ...neutral, loyalty: 5 });
+      check('死忠弟子修行更快', deadLoyal > base, `×${(deadLoyal / base).toFixed(3)}`);
+      check('离心/叛离弟子修行更慢', rebel < base, `×${(rebel / base).toFixed(3)}`);
+
+      const demonMad = { ...neutral, demon: 90 };
+      const mad = disciples.getDiscipleSpeed(
+        { ...insightMaxed, sect: { ...insightMaxed.sect, disciples: [demonMad] } },
+        demonMad,
+      );
+      check('心魔深重的弟子修行明显变慢', mad < base * 0.8, `×${(mad / base).toFixed(3)}`);
+
+      const proud = { ...neutral, personality: 'proud' as const };
+      const proudSpeed = disciples.getDiscipleSpeed(
+        { ...insightMaxed, sect: { ...insightMaxed.sect, disciples: [proud] } },
+        proud,
+      );
+      check('孤傲的弟子修行 +3%（加算进池子）', proudSpeed > base, `×${(proudSpeed / base).toFixed(3)}`);
+    }
   }
 
   /* ---- 寻宝宝盘要真的被"七品炼器"卡住 ---- */
@@ -5188,16 +5271,7 @@ section('[44] 弟子人数 · 居所拆分 · 新模块 · 突破丹药 · 派�
   /* ---- 需求 1 的存档 bug：上限抬到 2048 后，读档不能再丢人 ---- */
   {
     const base = { ...createInitialState(0), sect: { ...createInitialState(0).sect, founded: true, level: 9 } };
-    const many = Array.from({ length: 600 }, (_, i) => ({
-      id: `d${i}`,
-      name: `弟子${i}`,
-      aptitude: 'mortal' as const,
-      realmIndex: 0,
-      progress: 0,
-      age: 20,
-      status: 'idle' as const,
-      insight: 0,
-    }));
+    const many = Array.from({ length: 600 }, (_, i) => makeDisciple({ id: `d${i}`, name: `弟子${i}` }));
     const big: GameState = { ...base, sect: { ...base.sect, disciples: many } };
     const round = deserialize(JSON.parse(JSON.stringify(serialize(big))));
     check(
@@ -5482,17 +5556,13 @@ section('[44] 弟子人数 · 居所拆分 · 新模块 · 突破丹药 · 派�
         founded: true,
         level: 3,
         disciples: [
-          {
+          makeDisciple({
             id: 'd0',
             name: '缺丹弟子',
             aptitude: 'heaven',
-            realmIndex: 0,
             // 差一点点就满：这一 tick 正好会顶到临界点（也就是"刚卡住"的那一帧）
             progress: REALMS[0].cultivationYears - 0.001,
-            age: 20,
-            status: 'idle',
-            insight: 0,
-          },
+          }),
         ],
       },
     };
@@ -5517,6 +5587,67 @@ section('[44] 弟子人数 · 居所拆分 · 新模块 · 突破丹药 · 派�
     const broke = disciples.tickDisciples(withPill, 60 * 60);
     check('需求 9：有丹药就能破境', broke.sect.disciples[0].realmIndex === 1);
     check('需求 9：破境消耗一颗丹药', (broke.pills.foundationPill ?? 0) === 0);
+
+    /*
+     * 破境成功要**顺带压心魔**（设定集第 14.3 章）。
+     *
+     * ⚠️ 这一条曾经是"函数写了但没人调用"的典型：`relieveDemonOnBreakthrough`
+     * 躺在 disciples.ts 里没有调用点，于是"破境 −3 心魔"永远不生效。
+     * 这条断言就是为了让它以后不能再悄悄死掉。
+     */
+    const madStalled: GameState = {
+      ...withPill,
+      sect: {
+        ...withPill.sect,
+        disciples: [{ ...withPill.sect.disciples[0], demon: 20 }],
+      },
+    };
+    const brokeMad = disciples.tickDisciples(madStalled, 60 * 60);
+    check('破境成功后心魔会降', brokeMad.sect.disciples[0].realmIndex === 1 && brokeMad.sect.disciples[0].demon === 17, `${brokeMad.sect.disciples[0].demon}`);
+
+    // 没破境就不该降（同一 tick 里）
+    const stayedMad = disciples.tickDisciples(
+      { ...madStalled, sect: { ...madStalled.sect, disciples: [{ ...madStalled.sect.disciples[0], progress: 0 }] } },
+      60 * 60,
+    );
+    check('没破境时心魔不会因为这条而降', stayedMad.sect.disciples[0].demon === 20);
+  }
+
+  /* ---- 战斗天赋 / 性格的「宗门防御」真的进了妖兽袭宗结算 ---- */
+  {
+    /*
+     * ⚠️ 又一个"写好了没人调用"的坑：`disciples.getSectTalentDefense` 曾经
+     * 没有任何调用点，铁甲体魄的"+5 宗门防御"于是永远不生效，
+     * 界面却理直气壮地写着它。现在由 `encounter.getSectDefense` 读取。
+     */
+    const bare = createInitialState(0);
+    check('没有弟子时宗门防御只来自建筑', encounter.getSectDefense(bare) === engine.getStructureBonus(bare, 'sectDefense'));
+
+    const withIron: GameState = {
+      ...bare,
+      sect: { ...bare.sect, founded: true, disciples: [makeDisciple({ combatTalent: 'ironBody' })] },
+    };
+    check(
+      '铁甲体魄会提高宗门防御',
+      encounter.getSectDefense(withIron) > encounter.getSectDefense(bare),
+      `${encounter.getSectDefense(bare)} → ${encounter.getSectDefense(withIron)}`,
+    );
+    const both: GameState = {
+      ...withIron,
+      sect: {
+        ...withIron.sect,
+        disciples: [makeDisciple({ id: 'a', combatTalent: 'ironBody' }), makeDisciple({ id: 'b', personality: 'warlike' })],
+      },
+    };
+    check(
+      '多个弟子不叠加（取最高一项）',
+      encounter.getSectDefense(both) ===
+        Math.max(
+          engine.getStructureBonus(both, 'sectDefense') + COMBAT_TALENT_MAP.ironBody.sectDefense,
+          engine.getStructureBonus(both, 'sectDefense') + PERSONALITY_MAP.warlike.sectDefense,
+        ),
+      `${encounter.getSectDefense(both)}`,
+    );
   }
 
   /* ---- 需求 10：派遣期间额外累积修为 ---- */
@@ -5529,8 +5660,8 @@ section('[44] 弟子人数 · 居所拆分 · 新模块 · 突破丹药 · 派�
         founded: true,
         level: 3,
         disciples: [
-          { id: 'a', name: '在家', aptitude: 'heaven', realmIndex: 0, progress: 0, age: 20, status: 'idle', insight: 0 },
-          { id: 'b', name: '在外', aptitude: 'heaven', realmIndex: 0, progress: 0, age: 20, status: 'exploring', insight: 0 },
+          makeDisciple({ id: 'a', name: '在家', aptitude: 'heaven' }),
+          makeDisciple({ id: 'b', name: '在外', aptitude: 'heaven', status: 'exploring' }),
         ],
       },
     };
@@ -5658,8 +5789,661 @@ section('[44] 弟子人数 · 居所拆分 · 新模块 · 突破丹药 · 派�
 }
 
 /* ------------------------------------------------------------------ */
-/* 结果                                                                */
+/* 45. 弟子养成：天赋 / 性格 / 忠诚度 / 心魔（设定集第 8、14 章）          */
 /* ------------------------------------------------------------------ */
+section('[45] 弟子养成：战斗天赋 · 种田天赋 · 性格 · 忠诚度 · 心魔');
+{
+  /* ---- 数据层：六项一组，id 与定义一一对应 ---- */
+  {
+    check('战斗天赋共 6 项', COMBAT_TALENTS.length === 6, COMBAT_TALENTS.map((t) => t.name).join('、'));
+    check('种田天赋共 6 项', FARM_TALENTS.length === 6, FARM_TALENTS.map((t) => t.name).join('、'));
+    check('性格共 6 项', PERSONALITIES.length === 6, PERSONALITIES.map((p) => p.name).join('、'));
+    check(
+      '战斗天赋 id 与查表一致',
+      COMBAT_TALENTS.every((t) => COMBAT_TALENT_MAP[t.id].name === t.name),
+    );
+    check(
+      '性格 id 与查表一致',
+      PERSONALITIES.every((p) => PERSONALITY_MAP[p.id].name === p.name),
+    );
+    check(
+      '战斗天赋的减伤都不超过 4%（逐人掷骰，不能给太多）',
+      COMBAT_TALENTS.every((t) => t.casualtyReduction <= 0.04),
+      COMBAT_TALENTS.map((t) => t.casualtyReduction).join('/'),
+    );
+    check(
+      '忠诚档从高到低排列（loyaltyTierOf 依赖这个顺序）',
+      LOYALTY_TIERS.every((t, i, arr) => i === 0 || t.min < arr[i - 1].min),
+    );
+    check(
+      '心魔档从高到低排列',
+      DEMON_TIERS.every((t, i, arr) => i === 0 || t.min < arr[i - 1].min),
+    );
+    check('忠诚档覆盖 0~100 全区间', loyaltyTierOf(0).name === '叛离' && loyaltyTierOf(100).name === '死忠');
+    check(
+      '心魔档覆盖 0~100 全区间',
+      demonTierOf(0).name === '心神稳固' && demonTierOf(100).name === '心魔深重',
+    );
+    check(
+      '只有 86 以上才叫"心魔深重"，61 以上开始拒绝任务',
+      !demonTierOf(60).refuseTask && demonTierOf(61).refuseTask,
+    );
+  }
+
+  /* ---- 招募：四个随机维度都真的随机，且落在合法集合里 ---- */
+  {
+    const rolls = Array.from({ length: 200 }, (_, i) => disciples.rollDisciple(9, i, makeRandom(i + 1)));
+    check(
+      '新弟子的战斗天赋都在定义集合里',
+      rolls.every((d) => COMBAT_TALENT_IDS.includes(d.combatTalent)),
+    );
+    check('新弟子的种田天赋都在定义集合里', rolls.every((d) => FARM_TALENT_IDS.includes(d.farmTalent)));
+    check('新弟子的性格都在定义集合里', rolls.every((d) => PERSONALITY_IDS.includes(d.personality)));
+    check(
+      '六种战斗天赋在 200 次抽样里都出现过',
+      new Set(rolls.map((d) => d.combatTalent)).size === 6,
+      `${new Set(rolls.map((d) => d.combatTalent)).size}/6`,
+    );
+    check(
+      '六种性格在 200 次抽样里都出现过',
+      new Set(rolls.map((d) => d.personality)).size === 6,
+      `${new Set(rolls.map((d) => d.personality)).size}/6`,
+    );
+    check(
+      '初始忠诚落在资质区间内',
+      rolls.every((d) => {
+        const [lo, hi] = LOYALTY_INITIAL[d.aptitude];
+        return d.loyalty >= lo - 1e-9 && d.loyalty <= hi + 1e-9;
+      }),
+    );
+    check('新弟子的心魔从 0 起', rolls.every((d) => d.demon === 0));
+  }
+
+  /* ---- 种田天赋：√人数 收益递减 ---- */
+  {
+    const base: GameState = {
+      ...createInitialState(0),
+      sect: { ...createInitialState(0).sect, founded: true, level: 9 },
+    };
+    const withN = (n: number) => ({
+      ...base,
+      sect: {
+        ...base.sect,
+        disciples: Array.from({ length: n }, (_, i) =>
+          makeDisciple({ id: `f${i}`, farmTalent: 'herbWhisper' }),
+        ),
+      },
+    });
+    check('没有该天赋的弟子时加成为 0', engine.getFarmTalentBonus(base, 'herb') === 0);
+    check(
+      '100 名灵草亲和给 +15%（1.5% × √100）',
+      Math.abs(engine.getFarmTalentBonus(withN(100), 'herb') - 0.15) < 1e-9,
+      `${(engine.getFarmTalentBonus(withN(100), 'herb') * 100).toFixed(1)}%`,
+    );
+    check(
+      '收益递减：人数翻四倍，加成只翻一倍',
+      Math.abs(
+        engine.getFarmTalentBonus(withN(400), 'herb') - 2 * engine.getFarmTalentBonus(withN(100), 'herb'),
+      ) < 1e-9,
+    );
+    check(
+      '一千人也不会顶穿曲线（灵草合计仍低于 +50%）',
+      engine.getFarmTalentBonus(withN(1000), 'herb') < 0.5,
+      `+${(engine.getFarmTalentBonus(withN(1000), 'herb') * 100).toFixed(1)}%`,
+    );
+
+    // 真的接到产出上：灵气与灵草吃加成，灵矿不吃
+    const rich = grant(forceBuild(withN(100), 'spiritArray', 50), { wood: '1e9' });
+    const poor = grant(forceBuild(base, 'spiritArray', 50), { wood: '1e9' });
+    const qiWith = engine.getProduction(rich).qi.toNumber();
+    const qiWithout = engine.getProduction(poor).qi.toNumber();
+    check(
+      '灵泉感悟接进了灵气产出',
+      (() => {
+        const withSpring = {
+          ...base,
+          sect: {
+            ...base.sect,
+            disciples: Array.from({ length: 100 }, (_, i) =>
+              makeDisciple({ id: `s${i}`, farmTalent: 'springSense' }),
+            ),
+          },
+        };
+        const q = engine.getProduction(grant(forceBuild(withSpring, 'spiritArray', 50), { wood: '1e9' })).qi.toNumber();
+        return q > qiWithout;
+      })(),
+      `${qiWithout.toFixed(1)} → 灵泉感悟版更高`,
+    );
+    void qiWith;
+  }
+
+  /* ---- 战斗天赋：逐人减伤、队伍产出取最高、性格拒绝高危 ---- */
+  {
+    const iron = makeDisciple({ id: 'a', combatTalent: 'ironBody' });
+    const steady = makeDisciple({ id: 'b', combatTalent: 'soulSteady' });
+    check(
+      '铁甲体魄自己的减伤高于神魂稳固',
+      disciples.getDiscipleCasualtyReduction(iron) > disciples.getDiscipleCasualtyReduction(steady),
+    );
+
+    const state: GameState = {
+      ...createInitialState(0),
+      sect: { ...createInitialState(0).sect, founded: true, disciples: [iron, steady] },
+    };
+    check(
+      '个人减伤有上限（不会因为叠满三项变成免死）',
+      disciples.getDiscipleCasualtyReduction(makeDisciple({ combatTalent: 'ironBody', personality: 'warlike', loyalty: 95 })) <=
+        disciples.MAX_PERSONAL_CASUALTY_REDUCTION + 1e-9,
+    );
+    check(
+      '队伍产出天赋取最高一项而不是相加',
+      Math.abs(
+        disciples.getPartyTalentYieldBonus(state, ['a', 'b']) -
+          COMBAT_TALENT_MAP.ironBody.yieldBonus,
+      ) < 1e-9,
+      `铁甲 0 + 神魂 0 → ${disciples.getPartyTalentYieldBonus(state, ['a', 'b'])}`,
+    );
+    const beast = makeDisciple({ id: 'c', combatTalent: 'beastWhisper' });
+    const withBeast: GameState = {
+      ...state,
+      sect: { ...state.sect, disciples: [iron, beast] },
+    };
+    check(
+      '队伍里有一个兽语通晓就有产出加成',
+      Math.abs(
+        disciples.getPartyTalentYieldBonus(withBeast, ['a', 'c']) - COMBAT_TALENT_MAP.beastWhisper.yieldBonus,
+      ) < 1e-9,
+    );
+
+    check('恬淡拒绝高危秘境', disciples.refusesHighRisk(makeDisciple({ personality: 'serene' })));
+    check('守道不拒绝高危', !disciples.refusesHighRisk(makeDisciple({ personality: 'dao' })));
+  }
+
+  /* ---- 忠诚度：变动、下限、叛逃 ---- */
+  {
+    const dao = makeDisciple({ id: 'x', personality: 'dao', loyalty: 25 });
+    const greedy = makeDisciple({ id: 'y', personality: 'greedy', loyalty: 10 });
+    const heaven = makeDisciple({ id: 'z', aptitude: 'heaven', personality: 'warlike', loyalty: 5 });
+
+    check('守道的忠诚下限是 20', disciples.adjustLoyalty(dao, -50).loyalty === 20);
+    check('天纵的忠诚下限是 30', disciples.adjustLoyalty(heaven, -50).loyalty === 30);
+    check('贪利没有下限（可以掉到 0）', disciples.adjustLoyalty(greedy, -50).loyalty === 0);
+    check('忠诚不会超过 100', disciples.adjustLoyalty(dao, 500).loyalty === 100);
+    check(
+      '贪利的忠诚掉得比守道快（decayMult 2 vs 0.25）',
+      disciples.adjustLoyalty(greedy, -10).loyalty - greedy.loyalty <
+        disciples.adjustLoyalty(dao, -10).loyalty - dao.loyalty,
+    );
+    check(
+      '重义的赏赐忠诚翻倍',
+      Math.abs(
+        disciples.adjustLoyalty(makeDisciple({ personality: 'renyi', loyalty: 50 }), 10).loyalty - 70,
+      ) < 1e-9,
+    );
+
+    // 叛逃：守道永不叛逃；贪利在阈值以下会叛逃（这里用必定触发的随机源）
+    const party: GameState = {
+      ...grant(createInitialState(0), { moonDew: '1000', starSand: '500' }),
+      sect: {
+        ...createInitialState(0).sect,
+        founded: true,
+        disciples: [
+          makeDisciple({ id: 'dao1', personality: 'dao', loyalty: 5 }),
+          makeDisciple({ id: 'greedy1', personality: 'greedy', loyalty: 5 }),
+        ],
+      },
+    };
+    const desert = disciples.rollDesertion(party, ['dao1', 'greedy1'], () => 0);
+    check(
+      '守道即使忠诚很低也不叛逃',
+      !desert.deserters.some((d) => d.id === 'dao1'),
+      desert.deserters.map((d) => d.id).join('、'),
+    );
+    check(
+      '贪利在阈值以下会叛逃',
+      desert.deserters.some((d) => d.id === 'greedy1'),
+      desert.deserters.map((d) => d.id).join('、'),
+    );
+    check('叛逃者从名册里被移除', desert.state.sect.disciples.length === 1);
+    check(
+      '贪利叛逃会带走一部分仓库材料',
+      desert.state.materials.moonDew.lt(party.materials.moonDew),
+      `${fmt(party.materials.moonDew)} → ${fmt(desert.state.materials.moonDew)}`,
+    );
+  }
+
+  /* ---- 心魔：增长、区间效果、化解 ---- */
+  {
+    const base: GameState = {
+      ...createInitialState(0),
+      sect: {
+        ...createInitialState(0).sect,
+        founded: true,
+        disciples: [makeDisciple({ id: 'm1', personality: 'dao' })],
+      },
+    };
+    check('心魔不会超过 100', disciples.adjustDemon(base.sect.disciples[0], 500).demon === 100);
+    check('心神稳固时心魔涨得更慢（守道 demonMult 0.6 + 抵抗）', (() => {
+      const reckless = makeDisciple({ personality: 'warlike' });
+      const calm = makeDisciple({ personality: 'dao' });
+      return disciples.adjustDemon(calm, 10).demon < disciples.adjustDemon(reckless, 10).demon;
+    })());
+
+    const mad = { ...base, sect: { ...base.sect, disciples: [makeDisciple({ id: 'm2', demon: 90 })] } };
+    check('心魔 90 的弟子拒绝出征', disciples.isRefusingTask(mad.sect.disciples[0]));
+    check('心魔 30 的弟子照常出征', !disciples.isRefusingTask(makeDisciple({ demon: 30 })));
+
+    // 清心丹：全宗 −15
+    const relieved = disciples.relieveDemonAll(mad, 15);
+    check('清心丹把心魔压下去 15', relieved.sect.disciples[0].demon === 75);
+    const pill = PILL_MAP.clearMindPill;
+    check('清心丹存在且是辅助丹', Boolean(pill) && pill.category === 'support');
+    check('清心丹的效果就是压心魔', pill.effect.kind === 'relieveDemon');
+
+    // 静心阁：被动压制（盖满 12 座时每分钟 0.24）
+    const withRooms = forceBuild(base, 'mindPavilion', 12);
+    const drained = disciples.tickDisciples(
+      { ...withRooms, sect: { ...withRooms.sect, disciples: [makeDisciple({ id: 'm3', demon: 50 })] } },
+      60,
+    );
+    check(
+      '静心阁每分钟压 0.24（12 座 × 0.02）',
+      Math.abs(drained.sect.disciples[0].demon - (50 - 0.24)) < 1e-9,
+      `${drained.sect.disciples[0].demon.toFixed(3)}`,
+    );
+    check('没有静心阁就不压', (() => {
+      const t = disciples.tickDisciples(
+        { ...base, sect: { ...base.sect, disciples: [makeDisciple({ id: 'm4', demon: 50 })] } },
+        60,
+      );
+      return t.sect.disciples[0].demon === 50;
+    })());
+
+    // 闲置掉忠诚（15 分钟 1 点），出门探索则清零
+    const longIdle: GameState = {
+      ...base,
+      sect: { ...base.sect, disciples: [makeDisciple({ id: 'm5', loyalty: 80, personality: 'greedy' })] },
+    };
+    const idled = disciples.tickDisciples(longIdle, LOYALTY_IDLE_DECAY_SECONDS * 2);
+    check(
+      '闲置 30 分钟忠诚掉 2 点（贪利翻倍 → 4）',
+      Math.abs(idled.sect.disciples[0].loyalty - (80 - 4)) < 1e-9,
+      `${idled.sect.disciples[0].loyalty}`,
+    );
+    const exploring: GameState = {
+      ...longIdle,
+      sect: { ...longIdle.sect, disciples: [makeDisciple({ id: 'm6', loyalty: 80, status: 'exploring' })] },
+    };
+    check(
+      '在外探索的弟子不算闲置',
+      disciples.tickDisciples(exploring, LOYALTY_IDLE_DECAY_SECONDS * 2).sect.disciples[0].loyalty === 80,
+    );
+
+    /*
+     * ⚠️ 闲置掉忠诚有**地板**（`LOYALTY_NEGLECT_FLOOR`，45 = 寻常档下沿）。
+     *
+     * 这条是本轮实测抓出来的：千人宗门里九成弟子永远轮不到派遣，
+     * 于是"闲置"是常态 —— 原来的 15 分钟掉 1 点让 30 天后全宗清一色掉到叛离，
+     * 忠诚这个字段等于永远显示最低值。现在闲置只把人磨到"寻常"，
+     * 再往下必须真的出过事（同门陨落 / 被派去极危之地）。
+     */
+    /*
+     * ⚠️ 用**渡劫期**弟子来做这条断言，理由是时间换算：
+     * `tickDisciples` 的 dt 是**真实秒**，而 480 真实秒 = 1 游戏年 ——
+     * 想把 70 点忠诚磨到 45 点需要 25×7200 秒 ≈ 2 天真实时间 ≈ 375 游戏年，
+     * 炼气弟子（寿元 60 年）在这一 tick 里早就坐化了，断言拿到的是空数组。
+     * 渡劫期寿元 5 万年，这点岁数无所谓。
+     */
+    const immortal: GameState = {
+      ...base,
+      realmIndex: 8,
+      sect: {
+        ...base.sect,
+        disciples: [
+          makeDisciple({ id: 'm7', aptitude: 'heaven', realmIndex: 8, loyalty: 70, personality: 'greedy' }),
+        ],
+      },
+    };
+    const neglected = disciples.tickDisciples(immortal, LOYALTY_IDLE_DECAY_SECONDS * 40);
+    check(
+      '闲置很久只掉到「寻常」地板（不会掉成离心/叛离）',
+      neglected.sect.disciples[0]?.loyalty === LOYALTY_NEGLECT_FLOOR,
+      `70 → ${neglected.sect.disciples[0]?.loyalty}`,
+    );
+    check(
+      '闲置地板就是「寻常」档的下沿（45）',
+      loyaltyTierOf(LOYALTY_NEGLECT_FLOOR).name === '寻常',
+      `${LOYALTY_NEGLECT_FLOOR} → ${loyaltyTierOf(LOYALTY_NEGLECT_FLOOR).name}`,
+    );
+    check(
+      '同门陨落才能把人压到地板以下',
+      disciples.settlePartyAfterExpedition(
+        {
+          ...immortal,
+          sect: {
+            ...immortal.sect,
+            disciples: [{ ...immortal.sect.disciples[0], loyalty: LOYALTY_NEGLECT_FLOOR }],
+          },
+        },
+        ['m7'],
+        3,
+        true,
+      ).sect.disciples[0].loyalty < LOYALTY_NEGLECT_FLOOR,
+    );
+  }
+
+  /* ---- 大比降心魔 ---- */
+  {
+    const base = forceBuild(
+      { ...createInitialState(0), sect: { ...createInitialState(0).sect, founded: true } },
+      'arena',
+      1,
+    );
+    const withMad: GameState = {
+      ...base,
+      sect: { ...base.sect, disciples: [makeDisciple({ id: 'a1', demon: 40 })] },
+    };
+    check('大比把全宗心魔压下 5', sectActivity.runArena(withMad).state.sect.disciples[0].demon === 35);
+  }
+
+  /* ---- 界面：天赋/忠诚/心魔都渲染出来了 ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    const rich: GameState = {
+      ...createInitialState(0),
+      sect: {
+        ...createInitialState(0).sect,
+        founded: true,
+        level: 2,
+        disciples: [
+          makeDisciple({ id: 'u1', name: '甲', combatTalent: 'beastWhisper', personality: 'proud', loyalty: 88 }),
+          makeDisciple({ id: 'u2', name: '乙', demon: 90 }),
+          makeDisciple({ id: 'u3', name: '丙', personality: 'serene' }),
+        ],
+      },
+    };
+    Object.assign(initial, { game: engine.refreshUnlocks(rich) });
+    const html = renderToString(<DisciplePanel />);
+    check('弟子列表渲染出战斗天赋名', html.includes(COMBAT_TALENT_MAP.beastWhisper.name));
+    check('弟子列表渲染出性格名', html.includes(PERSONALITY_MAP.proud.name));
+    check('弟子列表渲染出种田天赋名', html.includes(FARM_TALENTS[0].name));
+    check('弟子列表有天全宗天赋一览', html.includes('talent-summary'));
+    check('心魔 90 的弟子标出「拒绝出征」', html.includes('拒绝出征'));
+    check('恬淡的弟子标出「拒赴险地」', html.includes('拒赴险地'));
+    check('忠诚与心魔各有自己的进度条', html.includes('mini-bar__fill--loyalty') && html.includes('mini-bar__fill--demon'));
+    Object.assign(initial, { game: backup.game });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 46. 功法系统（设定集第 7 章）                                          */
+/* ------------------------------------------------------------------ */
+section('[46] 功法：五档制 · 碎片合成 · 藏经阁 · 装备与回收');
+{
+  const base = (): GameState => ({
+    ...createInitialState(0),
+    sect: { ...createInitialState(0).sect, founded: true, level: 3, disciples: [] },
+  });
+
+  /* ---- 数据层 ---- */
+  {
+    check('功法共 18 本', MANUALS.length === 18, `${MANUALS.length} 本`);
+    check(
+      '修炼功法 9 本、战斗功法 9 本',
+      MANUALS.filter((m) => m.kind === 'cultivation').length === 9 &&
+        MANUALS.filter((m) => m.kind === 'combat').length === 9,
+    );
+    check(
+      '五档各有功法（至少凡品与天纵各一本）',
+      [1, 2, 3, 4, 5].every((g) => MANUALS.some((m) => m.grade === g)),
+      [1, 2, 3, 4, 5].map((g) => `${MANUAL_GRADE_NAMES[g as ManualGrade]}:${MANUALS.filter((m) => m.grade === g).length}`).join(' '),
+    );
+    check(
+      '战斗功法一律不加修行速度（修炼功法才加）',
+      MANUALS.filter((m) => m.kind === 'combat').every((m) => m.cultivationBonus === 0),
+    );
+    check(
+      '修炼功法一律不带秘境减伤（两种功法各司其职）',
+      MANUALS.filter((m) => m.kind === 'cultivation').every((m) => m.casualtyReduction === 0),
+    );
+    check(
+      '品阶越高，单本效果越强（战斗功法按减伤排序）',
+      (() => {
+        const combat = MANUALS.filter((m) => m.kind === 'combat');
+        for (let i = 1; i < combat.length; i += 1) {
+          if (combat[i].grade > combat[i - 1].grade && combat[i].casualtyReduction < combat[i - 1].casualtyReduction) {
+            return false;
+          }
+        }
+        return true;
+      })(),
+    );
+    check(
+      '境界门槛随品阶递增',
+      [1, 2, 3, 4, 5].every((g, i, arr) => i === 0 || MANUAL_GRADE_MIN_REALM[g as ManualGrade] > MANUAL_GRADE_MIN_REALM[arr[i - 1] as ManualGrade]),
+    );
+    check(
+      '碎片 id 能反解回功法',
+      MANUALS.every((m) => manualIdOfFragment(fragmentIdOf(m.id)) === m.id),
+    );
+    check('非碎片 id 不会被误认', manualIdOfFragment('foundationPill') === null);
+  }
+
+  /* ---- 秘境掉落：档次越高，碎片品阶越高 ---- */
+  {
+    /*
+     * ⚠️ 随机源必须**在循环外**建一次。
+     * 写成 `Array.from({length: 200}, () => f(makeRandom(11)))` 的话，
+     * 每次迭代都会新建一个同种子的生成器 —— 200 个样本拿到的是同一个数，
+     * 于是"九档能掉天纵"这条会以"全部都是极品"的形式假红（本轮就是这么红的）。
+     */
+    const lowRandom = makeRandom(7);
+    const highRandom = makeRandom(11);
+    const lowTier = Array.from({ length: 200 }, () => manuals.rollFragmentGrade(1, lowRandom));
+    const highTier = Array.from({ length: 200 }, () => manuals.rollFragmentGrade(9, highRandom));
+    check('低档秘境只掉凡品碎片', lowTier.every((g) => g === 1));
+    check(
+      '九档秘境能掉到天纵碎片',
+      highTier.includes(5),
+      `${[...new Set(highTier)].sort().join('/')}`,
+    );
+    check(
+      '九档的平均品阶明显高于一档',
+      highTier.reduce((a, b) => a + b, 0) / highTier.length > lowTier.reduce((a, b) => a + b, 0) / lowTier.length,
+    );
+
+    // 真的掉进仓库
+    const dropped = manuals.rollFragmentDrop(base(), 9, () => 0.1);
+    check('探索可以掉到碎片', Object.keys(dropped.state.manualFragments).length > 0, JSON.stringify(dropped.state.manualFragments));
+    const never = manuals.rollFragmentDrop(base(), 9, () => 0.99);
+    check('概率不过时什么都不掉', Object.keys(never.state.manualFragments).length === 0);
+  }
+
+  /* ---- 参悟：要有藏经阁、要花灵气、天纵不可参悟 ---- */
+  {
+    const noLib = base();
+    check('没有藏经阁时不能参悟', !manuals.canContemplate(noLib, 1).ok, manuals.canContemplate(noLib, 1).reason ?? '');
+    check('天纵永远不能参悟（只能靠九档秘境）', !manuals.canContemplate(forceBuild(noLib, 'library', 1), 5).ok);
+
+    const stocked = forceBuild(grant(noLib, { qi: '1e12' }), 'library', 2);
+    const ok = manuals.canContemplate(stocked, 3);
+    check('有藏经阁且有灵气时可以参悟上品', ok.ok, ok.reason ?? '');
+    const before = stocked.resources.qi;
+    const result = manuals.contemplate(stocked, 3, makeRandom(3));
+    check('参悟扣了灵气', result.state.resources.qi.lt(before));
+    check('参悟得到了一份碎片', result.gained !== null && Object.keys(result.state.manualFragments).length === 1, result.message);
+    check(
+      '参悟到的是**上品**功法的碎片',
+      result.gained !== null && MANUAL_MAP[result.gained.id].grade === 3,
+    );
+    check('灵气不足时参悟失败', !manuals.canContemplate({ ...stocked, resources: { ...stocked.resources, qi: D(0) } }, 3).ok);
+  }
+
+  /* ---- 合成：5 份碎片、成功率随藏经阁上升、失败只损失 1 份 ---- */
+  {
+    const bare = forceBuild(grant(base(), { qi: '1e12' }), 'library', 1);
+    check(
+      '藏经阁越多，合成成功率越高',
+      manuals.getSynthRate(forceBuild(bare, 'library', 8)) > manuals.getSynthRate(bare),
+      `${Math.round(manuals.getSynthRate(bare) * 100)}% → ${Math.round(manuals.getSynthRate(forceBuild(bare, 'library', 8)) * 100)}%`,
+    );
+
+    const four = manuals.addFragments(bare, 'qiGuide', 4);
+    check(
+      '碎片不足 5 份时合成被拒',
+      !manuals.synthManual(four, 'qiGuide', () => 0).ok,
+      manuals.synthManual(four, 'qiGuide', () => 0).message,
+    );
+
+    const five = manuals.addFragments(bare, 'qiGuide', 5);
+    const success = manuals.synthManual(five, 'qiGuide', () => 0);
+    check('合成成功', success.ok, success.message);
+    check('成功后得到一本完整功法', (success.state.manuals.qiGuide ?? 0) === 1);
+    check('成功后碎片清零', Object.keys(success.state.manualFragments).length === 0);
+
+    const fail = manuals.synthManual(five, 'qiGuide', () => 0.999);
+    check('合成会失败（成功率不是 100%）', !fail.ok && fail.failed, fail.message);
+    check(
+      '失败只损失 1 份碎片（不是全部）',
+      manuals.getFragmentCount(fail.state, 'qiGuide') === 4,
+      `${manuals.getFragmentCount(fail.state, 'qiGuide')} 份`,
+    );
+    check('失败不会产出功法', (fail.state.manuals.qiGuide ?? 0) === 0);
+  }
+
+  /* ---- 装备：境界门槛、槽位、换书回收、卸下归还 ---- */
+  {
+    let state = forceBuild(grant(base(), { qi: '1e12' }), 'library', 1);
+    state = manuals.addManual(state, 'starBreath', 1); // 极品修炼功法（需元婴）
+    state = manuals.addManual(state, 'mountainFist', 1); // 凡品战斗功法
+    state = manuals.addManual(state, 'qiGuide', 1); // 凡品修炼功法
+
+    const young = makeDisciple({ id: 'y1', realmIndex: 0 });
+    const elder = makeDisciple({ id: 'e1', realmIndex: 3 });
+    state = { ...state, sect: { ...state.sect, disciples: [young, elder] } };
+
+    check(
+      '境界不够时装备被拒（极品需元婴）',
+      !manuals.canEquipManual(state, 'y1', 'starBreath').ok,
+      manuals.canEquipManual(state, 'y1', 'starBreath').reason ?? '',
+    );
+    check('境界够时可以装备', manuals.canEquipManual(state, 'e1', 'starBreath').ok);
+    check('仓库里没有的功法不能装备', !manuals.canEquipManual(state, 'e1', 'windDodge').ok);
+
+    const equipped = manuals.equipManual(state, 'e1', 'starBreath');
+    check('装备后弟子身上有这本功法', equipped.sect.disciples.find((d) => d.id === 'e1')?.cultivationManual === 'starBreath');
+    check('装备后仓库少一本', (equipped.manuals.starBreath ?? 0) === 0);
+
+    const swapped = manuals.equipManual(equipped, 'e1', 'qiGuide');
+    check('换书后身上是新书', swapped.sect.disciples.find((d) => d.id === 'e1')?.cultivationManual === 'qiGuide');
+    check('换下来的旧书回到仓库', (swapped.manuals.starBreath ?? 0) === 1);
+
+    const fist = manuals.equipManual(swapped, 'e1', 'mountainFist');
+    check('战斗功法进的是进攻位（两个槽位互不干扰）', (() => {
+      const d = fist.sect.disciples.find((x) => x.id === 'e1');
+      return d?.cultivationManual === 'qiGuide' && d?.combatManual === 'mountainFist';
+    })());
+
+    const removed = manuals.unequipManual(fist, 'e1', 'combatManual');
+    check('卸下后槽位清空', removed.sect.disciples.find((d) => d.id === 'e1')?.combatManual === '');
+    check('卸下的书回到仓库', (removed.manuals.mountainFist ?? 0) === 1);
+  }
+
+  /* ---- 加成：修行、减伤、产出取最高、心魔抵抗、修为减耗 ---- */
+  {
+    const baseState = base();
+    const plain = makeDisciple({ id: 'p', realmIndex: 4 });
+    const learned = makeDisciple({ id: 'l', realmIndex: 4, cultivationManual: 'primordialDao' });
+    const warrior = makeDisciple({ id: 'w', realmIndex: 4, combatManual: 'heavenWar' });
+    const withAll: GameState = { ...baseState, sect: { ...baseState.sect, disciples: [plain, learned, warrior] } };
+
+    check(
+      '修炼功法提高修行速度',
+      disciples.getDiscipleSpeed(withAll, learned) > disciples.getDiscipleSpeed(withAll, plain),
+      `${disciples.getDiscipleSpeed(withAll, plain).toFixed(3)} → ${disciples.getDiscipleSpeed(withAll, learned).toFixed(3)}`,
+    );
+    check(
+      '战斗功法降低自己的秘境伤亡',
+      disciples.getDiscipleCasualtyReduction(warrior) > disciples.getDiscipleCasualtyReduction(plain),
+    );
+    check(
+      '队伍产出加成取最高一本（不叠加）',
+      Math.abs(manuals.getPartyManualYieldBonus(withAll, ['p', 'w']) - MANUAL_MAP.heavenWar.yieldBonus) < 1e-9,
+      `${manuals.getPartyManualYieldBonus(withAll, ['p', 'w'])}`,
+    );
+    check(
+      '心魔抵抗真的让心魔涨得更慢',
+      disciples.adjustDemon(makeDisciple({ combatManual: 'soulSubdue' }), 10).demon <
+        disciples.adjustDemon(makeDisciple({}), 10).demon,
+    );
+    check(
+      '减耗功法降低突破所需修为',
+      disciples.getDiscipleRealmNeed(makeDisciple({ cultivationManual: 'nineHeaven' }), 3) <
+        disciples.getDiscipleRealmNeed(makeDisciple({}), 3),
+      `${disciples.getDiscipleRealmNeed(makeDisciple({}), 3)} → ${disciples.getDiscipleRealmNeed(makeDisciple({ cultivationManual: 'nineHeaven' }), 3)}`,
+    );
+    check(
+      '减耗上限 30%（不会把修为需求压到 0）',
+      disciples.getDiscipleRealmNeed(makeDisciple({ cultivationManual: 'nineHeaven', combatManual: 'heavenWar' }), 3) > 0,
+    );
+  }
+
+  /* ---- 陨落回收：60% 概率逐本判定 ---- */
+  {
+    const dead = makeDisciple({ id: 'dead', cultivationManual: 'qiGuide', combatManual: 'windDodge' });
+    const state: GameState = { ...base(), sect: { ...base().sect, disciples: [] } };
+    const allBack = manuals.salvageManualsOnDeath(state, [dead], () => 0);
+    check('陨落时功法会被回收（必定成功的那次）', (allBack.state.manuals.qiGuide ?? 0) === 1 && (allBack.state.manuals.windDodge ?? 0) === 1);
+    check('回收清单里列出了书名', allBack.salvaged.length === 2, allBack.salvaged.join('、'));
+    const allLost = manuals.salvageManualsOnDeath(state, [dead], () => 0.99);
+    check('也可能全部损毁（40% 那一侧）', Object.keys(allLost.state.manuals).length === 0);
+    check('损毁清单里列出了书名', allLost.lost.length === 2, allLost.lost.join('、'));
+    check('没有功法时不会凭空加书', Object.keys(manuals.salvageManualsOnDeath(state, [makeDisciple({})], () => 0).state.manuals).length === 0);
+  }
+
+  /* ---- 论道大比给碎片 ---- */
+  {
+    const arena = forceBuild({ ...base(), sect: { ...base().sect, disciples: [makeDisciple({ id: 'a' }), makeDisciple({ id: 'b' })] } }, 'arena', 1);
+    const result = sectActivity.runArena(arena);
+    check('大比会发功法碎片', Object.keys(result.state.manualFragments).length > 0, JSON.stringify(result.state.manualFragments));
+    check('大比的记事里写了碎片', result.state.journal[0]?.text.includes('碎片'), result.state.journal[0]?.text ?? '');
+  }
+
+  /* ---- 界面 ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    let rich: GameState = {
+      ...createInitialState(0),
+      sect: {
+        ...createInitialState(0).sect,
+        founded: true,
+        level: 2,
+        disciples: [makeDisciple({ id: 'u1', name: '甲', realmIndex: 3, cultivationManual: 'starBreath' })],
+      },
+    };
+    rich = manuals.addManual(rich, 'qiGuide', 2);
+    rich = manuals.addFragments(rich, 'qiGuide', 3);
+    Object.assign(initial, { game: engine.refreshUnlocks(rich) });
+
+    const html = renderToString(<ManualPanel />);
+    /*
+     * ⚠️ React 的 SSR 会在相邻的文本/表达式之间插 `<!-- -->`，
+     * 所以「参悟凡品」在 HTML 里其实是「参悟<!-- -->凡品」——
+     * 直接 includes 原文会假红。统一先剥掉注释再断言。
+     */
+    const text = html.replace(/<!--[^>]*-->/g, '');
+    check('藏经阁面板渲染出来了', text.includes('藏经阁'));
+    check('列出了五档功法分组', [1, 2, 3, 4, 5].every((g) => text.includes(MANUAL_GRADE_NAMES[g as ManualGrade])));
+    check('渲染出具体功法名', text.includes(MANUAL_MAP.qiGuide.name));
+    check('显示了碎片进度', text.includes('碎片 3/5'), '（3/5 份）');
+    check('有参悟按钮', text.includes('参悟凡品'));
+    check('有一键发书入口', text.includes('一键发书'));
+    check('列出了已装配的弟子', text.includes('甲'));
+    Object.assign(initial, { game: backup.game });
+  }
+}
 console.log('');
 console.log('='.repeat(64));
 if (!passed) {

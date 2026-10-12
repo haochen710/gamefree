@@ -35,6 +35,10 @@ import {
   DISCOVERY_MAX_CHANCE,
   DISCOVERY_PITY_FAILURES,
   FINAL_REALM_INDEX,
+  FARM_TALENTS,
+  farmTalentBonus,
+  type FarmTalentId,
+  type FarmTalentTarget,
   GENERATORS,
   INJURY_FALLBACK_SECONDS,
   INJURY_FROM_REALM,
@@ -340,6 +344,7 @@ export type StructureBonusKey =
   | 'sectDefense'
   | 'alchemySuccessBonus'
   | 'refiningSuccessBonus'
+  | 'mindDrain'
   | 'productionBonus';
 
 export function getStructureBonus(state: GameState, key: StructureBonusKey): number {
@@ -349,6 +354,34 @@ export function getStructureBonus(state: GameState, key: StructureBonusKey): num
     if (!per) continue;
     const count = getBuildingCount(state, def.id);
     if (count > 0) total += per * count;
+  }
+  return total;
+}
+
+/* ------------------------------------------------------------------ */
+/* 种田天赋的全宗聚合（设定集第 8.4 章）                                */
+/* ------------------------------------------------------------------ */
+/*
+ * 这两个函数放在 engine 而不是 disciples：产出、炼丹成功率、灵植成熟速度
+ * 都要用它，而 disciples 已经 import engine —— 反过来 import 就成环了。
+ * （放 content 也不行：它们要读 state。）
+ */
+
+/** 拥有某种种田天赋的弟子数 */
+export function countFarmTalent(state: GameState, id: FarmTalentId): number {
+  let n = 0;
+  for (const d of state.sect.disciples) {
+    if (d.farmTalent === id) n += 1;
+  }
+  return n;
+}
+
+/** 某个作用面上，全宗种田天赋提供的加成合计（每条按 √人数 收益递减） */
+export function getFarmTalentBonus(state: GameState, target: FarmTalentTarget): number {
+  let total = 0;
+  for (const def of FARM_TALENTS) {
+    if (def.target !== target) continue;
+    total += farmTalentBonus(countFarmTalent(state, def.id), def.rate);
   }
   return total;
 }
@@ -733,6 +766,16 @@ export function getProduction(state: GameState): ResourceMap {
     const bonus = getEnvironmentResourceBonus(state, id);
     if (bonus !== 0) out[id] = out[id].mul(Math.max(0, 1 + bonus));
   }
+
+  /*
+   * 种田天赋（设定集第 8.4 章）：灵泉感悟抬灵气、灵草亲和抬灵草。
+   *
+   * 只作用于这两条资源线 —— 天赋描述里说的就是"门派灵气产出速度""门派灵田产量"，
+   * 而不是"所有资源"。放在最后一步（在季节之后）是因为它是一个**人**的加成，
+   * 与气候无关；顺序在这里不影响结果（都是乘法），但读起来更清楚。
+   */
+  out.qi = out.qi.mul(1 + getFarmTalentBonus(state, 'qi'));
+  out.herb = out.herb.mul(1 + getFarmTalentBonus(state, 'herb'));
 
   return out;
 }

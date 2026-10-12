@@ -25,12 +25,19 @@ import {
   QUEUE_UPGRADES,
   REFINE_RECIPES,
   ENLIGHTEN_PATHS,
+  FRAGMENTS_PER_MANUAL,
   ARTIFACTS,
   SECRET_REALMS,
+  MANUALS,
+  MANUAL_GRADE_MIN_REALM,
+  MANUAL_GRADE_NAMES,
+  MANUAL_MAP,
   MATERIAL_MAP,
   SECRET_REALM_MAP,
   PILL_MAP,
   REALMS,
+  demonTierOf,
+  loyaltyTierOf,
   REFINING_TIER_COST,
   RESOURCE_IDS,
   SECT_LEVELS,
@@ -38,6 +45,7 @@ import {
   STRUCTURES,
   TECHS,
   TECH_MAP,
+  TRAVEL_REGION_MAP,
   TRAVEL_REGIONS,
   isResourceId,
 } from '../src/game/content';
@@ -55,6 +63,7 @@ import * as enlightenment from '../src/game/enlightenment';
 import { applyTick as applyTickSim } from '../src/game/tick';
 import * as travel from '../src/game/travel';
 import * as sectActivity from '../src/game/sectActivity';
+import * as manuals from '../src/game/manuals';
 import { applyTick } from '../src/game/tick';
 
 /* ------------------------------------------------------------------ */
@@ -92,6 +101,24 @@ const CONFIG: SimConfig = {
   maxIterations: 1200000,
 };
 
+/**
+ * 临时缩短一次运行（排查用）：`SIM_DAYS=3 SIM_SEEDS=1 pnpm simulate`。
+ *
+ * 加这个开关是因为一次全量运行要十几分钟 —— 而排查"某一处逻辑是不是卡住"
+ * 只需要看头三天。默认值不动，所以常规报告仍然是 5 种子 × 30 天。
+ *
+ * ⚠️ 这里手写 `process` 的声明，而不是直接用 `process.env`：
+ * 本项目没有装 `@types/node`（tsconfig 的 types 只有 vite/client），
+ * 所以 `process` 在类型上是未知的 —— 而为了一个排查开关引入整个 Node 类型
+ * 又不划算。运行期它当然是存在的（脚本就是 node 跑的）。
+ */
+declare const process: { env: Record<string, string | undefined> } | undefined;
+const env = typeof process === 'undefined' ? {} : (process.env ?? {});
+const SIM_DAYS = Number(env.SIM_DAYS ?? 0);
+const SIM_SEEDS = Number(env.SIM_SEEDS ?? 0);
+if (SIM_DAYS > 0) CONFIG.budget = 60 * 60 * 24 * SIM_DAYS;
+if (SIM_SEEDS > 0) CONFIG.seeds = SIM_SEEDS;
+
 /** 固定种子线性同余伪随机数，保证结果可复现 */
 function makeRandom(seed: number): () => number {
   let state = seed >>> 0;
@@ -127,11 +154,15 @@ interface SimResult {
   popPeak: number;
   /** 掌门出门采办的趟数 */
   tripsStarted: number;
+  /** 每个采办目的地各跑了多少趟（按趟数降序） */
+  farmTrips: [string, number][];
+  /** 发书的结果计数（诊断库存发不出去） */
+  equipOk: number;
+  equipNoTarget: number;
+  equipRejected: number;
   /** 是不是撞上了迭代上限（撞上时"30 天"其实没跑满） */
   hitIterationCap: boolean;
 }
-
-/* -------------------------- 估值辅助 ------------------------------ */
 
 /**
  * 「下一颗突破丹 / 下一次炼丹升品 / 下一次炼器升品」里，缺的第一味**材料**。
@@ -156,6 +187,29 @@ function nextMissingMaterial(state: GameState): MaterialId | null {
     }
   }
   return null;
+}
+
+/* -------------------------- 估值辅助 ------------------------------ */
+
+/**
+ * 给一本功法找一名能装备它的弟子（模拟器用）。
+ *
+ * 与 `store.autoEquipManuals` 同一套规则，但不走 store（模拟器只用纯函数）：
+ * 境界够、对应槽位空着、境界高的优先。
+ */
+function findEquipTarget(state: GameState, manualId: string): string | null {
+  const def = MANUAL_MAP[manualId];
+  if (!def) return null;
+  if (manuals.getManualCount(state, manualId) <= 0) return null;
+  const slot = def.kind === 'cultivation' ? 'cultivationManual' : 'combatManual';
+  const minRealm = MANUAL_GRADE_MIN_REALM[def.grade];
+
+  let best: { id: string; realmIndex: number } | null = null;
+  for (const d of state.sect.disciples) {
+    if (d[slot] || d.realmIndex < minRealm) continue;
+    if (!best || d.realmIndex > best.realmIndex) best = { id: d.id, realmIndex: d.realmIndex };
+  }
+  return best ? best.id : null;
 }
 
 function shadowPrices(state: GameState): Record<string, number> {
@@ -318,9 +372,26 @@ function runSimulation(seed: number): SimResult {
   const farmedItems = new Set<string>();
   /** 掌门出门采办的趟数（用来判断"是不是真的在跑"） */
   let tripsStarted = 0;
+  /** 每个目的地跑了几趟（诊断"掌门到底在哪儿采办"） */
+  const farmTrips = new Map<string, number>();
   const record = (label: string) => milestones.push({ seconds, label });
 
-  const sectFlags = { founded: false, firstDisciple: false, firstExpedition: false, firstPill: false };
+  const sectFlags = {
+    founded: false,
+    firstDisciple: false,
+    firstExpedition: false,
+    firstPill: false,
+    firstManual: false,
+  };
+  /** 合成好、等着发给弟子的功法（事件驱动的"发书"队列） */
+  const pendingEquip: string[] = [];
+  /** 参悟次数上限（防止"灵气一超阈值就参悟"把主循环刷爆） */
+  const MAX_CONTEMPLATIONS = 400;
+  let contemplations = 0;
+  /** 发书的三种结果（诊断"为什么库存发不出去"） */
+  let equipOk = 0;
+  let equipNoTarget = 0;
+  let equipRejected = 0;
   const seenSectLevel = new Set<number>([1]);
   const seenAlchemy = new Set<number>([1]);
   const seenRefining = new Set<number>([1]);
@@ -484,11 +555,19 @@ function runSimulation(seed: number): SimResult {
        * 而这里要的是"卡在金丹 9 层、只差 10 份灵液"这种一次性缺口 ——
        * 等自动合成的档位（要灵气产量 > 1e5/秒）跟上，早就卡死了。
        */
+      /*
+       * ⚠️ 这里必须 **向上取整**：`refine` 是按"整批"合成的（一批一份），
+       * 而仓库里的材料可能是**小数** —— 本轮新增的"贪利弟子叛逃带走一部分材料"
+       * 就会把 40 变成 39.9。于是 `missing = 0.1`、`refine(state, id, 0.1)`
+       * 一批也合不出来，AI 就永远差那 0.1 —— 模拟器为此整整卡了 30 天。
+       * 真实玩家遇到这种情况只会点一下"合成"，所以这里也应当补一整批。
+       */
       const topUp = (recipeId: string, missing: number) => {
         if (missing <= 0) return false;
+        const want = Math.max(1, Math.ceil(missing));
         const affordable = engine.maxRefine(state, recipeId);
         if (affordable <= 0) return false;
-        const next = engine.refine(state, recipeId, Math.min(missing, affordable));
+        const next = engine.refine(state, recipeId, Math.min(want, affordable));
         if (next === state) return false;
         state = next;
         return true;
@@ -517,33 +596,134 @@ function runSimulation(seed: number): SimResult {
       const missingItem = nextMissingMaterial(state);
       if (missingItem && !state.personalTravel) {
         /*
-         * ⚠️ 必须**先筛出真的走得成的地方**再挑掉落。
+         * ⚠️ 要挑**出产最多**的那个目的地，而不是"第一个产它的"。
          *
-         * 第一版写的是 `regions.find(r => r.loot.some(...))`，取"第一个产这种材料的目的地"，
-         * 而 `getAvailableRegions` 只看**地图区域**能不能到、不看 `minRealm`。
-         * 于是当第一个匹配的目的地境界不够时，`startTravel` 原样返回、
-         * 这个分支什么也没做 —— 下一轮还是选中它，永远出不了门。
-         * 表现就是"卡在化神 9 层 22 天没动静"。
+         * 仙玉这一味上就吃过亏：`find` 命中的是九幽裂隙（一次 1 份），
+         * 而混沌沙海一次给 5 份、极北的某个目的地给 15 份 —— 后者境界要求更高，
+         * 但到了合体期明明去得了。结果模拟器跑了 1135 趟采办、仓库里只有 4 份仙玉，
+         * 主种子在合体期卡了整整 27 天。
          */
-        const target = travel
+        const scored = travel
           .getAvailableRegions(state)
-          .find(
-            (r) => travel.canStartTravel(state, r.id).ok && r.loot.some((entry) => entry.item === missingItem),
-          );
+          .filter((r) => travel.canStartTravel(state, r.id).ok)
+          .map((r) => {
+            const best = Math.max(
+              0,
+              ...r.loot.filter((entry) => entry.item === missingItem).map((entry) => entry.amount),
+            );
+            return { region: r, amount: best };
+          })
+          .filter((x) => x.amount > 0)
+          .sort((a, b) => b.amount - a.amount);
+        const target = scored[0]?.region;
+
         if (target) {
           const next = travel.startTravel(state, target.id);
           if (next !== state) {
             state = next;
             tripsStarted += 1;
+            farmTrips.set(target.id, (farmTrips.get(target.id) ?? 0) + 1);
             if (!farmedItems.has(missingItem)) {
               farmedItems.add(missingItem);
-              record(`掌门出门采办${MATERIAL_MAP[missingItem]?.name ?? missingItem}（${target.name}）`);
+              record(
+                `掌门出门采办${MATERIAL_MAP[missingItem]?.name ?? missingItem}（${target.name}，一趟约 ${scored[0].amount} 份）`,
+              );
             }
             continue;
           }
-        } else if (!farmedItems.has(missingItem)) {
-          farmedItems.add(missingItem);
-          record(`⚠️ 无处采办${MATERIAL_MAP[missingItem]?.name ?? missingItem}，只能等秘境掉落`);
+        }
+        /*
+         * 找不到出产这种材料的目的地**不算异常**：灵液 / 精金 / 阵枢 / 灵石
+         * 都是合成出来的，本来就不在任何采办路线上 —— 它们由上面那两个
+         * `topUp` 负责。所以这里**不再记一条 ⚠️ 里程碑**：
+         * 上一版把它当成"无处可去"报出来，误导了整整一轮排查
+         * （真因是 `topUp` 拿小数去 refine，一批都合不出来）。
+         */
+      }
+
+      /*
+       * 藏经阁（设定集第 7 章）：AI 要会参悟、合成、发书。
+       *
+       * ⚠️ 这一段的第一版把"发书"写成"每轮都扫一遍全宗弟子找空位"，
+       * 结果模拟器直接跑不完：弟子 1408 人 × 库存几百本 × 每轮一次
+       * = O(轮数 × 人数 × 库存)，几十万轮下来是天文数字。
+       * 现在改成**事件驱动**：合成出一本才把它记进"待发"队列，
+       * 每轮最多处理一本 —— 总代价 = 功法总数 × 人数，一笔有限的账。
+       */
+      if (engine.getBuildingCount(state, 'library') > 0) {
+        // 1) 发书：只处理"待发"队列里的那一本
+        if (pendingEquip.length > 0) {
+          const manualId = pendingEquip[0];
+          const target = findEquipTarget(state, manualId);
+          if (target) {
+            const next = manuals.equipManual(state, target, manualId);
+            if (next !== state) {
+              state = next;
+              pendingEquip.shift();
+              equipOk += 1;
+              if (!sectFlags.firstManual) {
+                sectFlags.firstManual = true;
+                record('首次为弟子配备功法');
+              }
+              continue;
+            }
+            equipRejected += 1;
+          } else {
+            equipNoTarget += 1;
+          }
+          // 没人可发（境界不够，或该槽位都满了）：丢掉这一项，别卡住主循环
+          pendingEquip.shift();
+        }
+        // 1b) 补发：弟子陨落时功法有 60% 会回到仓库，而"谁死了"这件事
+        //     不会给待发队列发通知 —— 所以每隔一阵子主动扫一次库存。
+        //     每 500 轮一次、每次最多补发一本，把 O(人数) 的扫描摊薄到可忽略。
+        if (iterations % 500 === 0) {
+          let stock = 0;
+          for (const n of Object.values(state.manuals)) stock += n;
+          if (stock > 0) {
+            // 从**高品阶**往下找（好书先发出去，别拿天纵换凡品）
+            const order = [...MANUALS].sort((a, b) => b.grade - a.grade);
+            const first = order.find(
+              (m) => manuals.getManualCount(state, m.id) > 0 && findEquipTarget(state, m.id) !== null,
+            );
+            if (first) {
+              const target = findEquipTarget(state, first.id);
+              if (target) {
+                const next = manuals.equipManual(state, target, first.id);
+                if (next !== state) {
+                  state = next;
+                  equipOk += 1;
+                  continue;
+                }
+              }
+            }
+          }
+        }
+
+        // 2) 合成：任何一本凑够 5 份碎片就合（合出来的进待发队列）
+        const ready = MANUALS.find((m) => manuals.getFragmentCount(state, m.id) >= FRAGMENTS_PER_MANUAL);
+        if (ready) {
+          const synth = manuals.synthManual(state, ready.id, random);
+          if (synth.ok) pendingEquip.push(ready.id);
+          state = synth.state;
+          continue;
+        }
+        // 3) 参悟：灵气富余时换碎片（从高品往下试）。带次数上限，
+        //    否则"灵气一超阈值就参悟"会在每个大时间步之后再刷几百次。
+        if (contemplations < MAX_CONTEMPLATIONS && state.resources.qi.gt(1e10)) {
+          for (const grade of [4, 3, 2, 1] as const) {
+            if (!manuals.canContemplate(state, grade).ok) continue;
+            const result = manuals.contemplate(state, grade, random);
+            if (result.gained) {
+              state = result.state;
+              contemplations += 1;
+              if (!sectFlags.firstManual) {
+                sectFlags.firstManual = true;
+                record('藏经阁首次参悟，得功法碎片');
+              }
+              break;
+            }
+          }
         }
       }
 
@@ -1208,6 +1388,10 @@ function runSimulation(seed: number): SimResult {
     popAverage: popSeconds > 0 ? popIntegral / popSeconds : 0,
     popPeak,
     tripsStarted,
+    farmTrips: [...farmTrips.entries()].sort((a, b) => b[1] - a[1]),
+    equipOk,
+    equipNoTarget,
+    equipRejected,
     hitIterationCap: iterations >= CONFIG.maxIterations,
   };
 }
@@ -1408,6 +1592,106 @@ function printDetail(result: SimResult): void {
       .toFixed(2)}`,
   );
 
+  /*
+   * 弟子养成（设定集第 8 / 14 章）：忠诚与心魔的分布。
+   *
+   * 只报"平均 61"是看不出问题的 —— 真要看的是**有没有人已经掉到叛逃区、
+   * 有没有人已经高到拒绝出征**。所以按档位报人数。
+   */
+  {
+    const loyaltyTiers = new Map<string, number>();
+    const demonTiers = new Map<string, number>();
+    let refusing = 0;
+    for (const d of state.sect.disciples) {
+      const lt = loyaltyTierOf(d.loyalty).name;
+      loyaltyTiers.set(lt, (loyaltyTiers.get(lt) ?? 0) + 1);
+      const dt = demonTierOf(d.demon).name;
+      demonTiers.set(dt, (demonTiers.get(dt) ?? 0) + 1);
+      if (d.demon >= 61) refusing += 1;
+    }
+    console.log(
+      `  弟子忠诚：${[...loyaltyTiers.entries()].map(([k, v]) => `${k} ${v}`).join(' · ') || '（无弟子）'}`,
+    );
+    console.log(
+      `  弟子心魔：${[...demonTiers.entries()].map(([k, v]) => `${k} ${v}`).join(' · ') || '（无弟子）'}${
+        refusing > 0 ? ` · ⚠️ 已有 ${refusing} 人拒绝出征` : ''
+      }`,
+    );
+  }
+
+  /* ---- 功法（设定集第 7 章） ---- */
+  {
+    const owned = manuals.getOwnedManuals(state);
+    const fragments = manuals.getOwnedFragments(state);
+    const inStock = owned.reduce((sum, entry) => sum + entry.count, 0);
+    const fragmentsTotal = fragments.reduce((sum, entry) => sum + entry.count, 0);
+    let equipped = 0;
+    for (const d of state.sect.disciples) {
+      if (d.cultivationManual) equipped += 1;
+      if (d.combatManual) equipped += 1;
+    }
+    console.log(
+      `  功法（藏经阁 ${engine.getBuildingCount(state, 'library')} 座 · 合成率 ${Math.round(
+        manuals.getSynthRate(state) * 100,
+      )}%）：本局累计发书 ${result.equipOk} 本 · 当前在装 ${equipped} 本 · 库存 ${inStock} 本 · 碎片 ${fragmentsTotal} 份`,
+    );
+    /*
+     * ⚠️ 「本局累计发书」与「当前在装」必须**一起**报。
+     *
+     * 只报"当前在装 37 本"会让人以为发书逻辑坏了 —— 事实上这一局发出去过
+     * 六千多本，只是这个存档的门派弟子更替极快（30 天招收 48 万人），
+     * 弟子坐化时功法 60% 回仓库、40% 损毁，于是快照上的在装数永远很小。
+     * 两个数放在一起，读者才能分清"系统没跑"和"跑了很多但人换了"。
+     */
+    const byGrade = new Map<number, number>();
+    for (const d of state.sect.disciples) {
+      for (const id of [d.cultivationManual, d.combatManual]) {
+        const def = MANUAL_MAP[id];
+        if (def) byGrade.set(def.grade, (byGrade.get(def.grade) ?? 0) + 1);
+      }
+    }
+    if (byGrade.size > 0) {
+      console.log(
+        `  已装配品阶：${[...byGrade.entries()]
+          .sort((a, b) => b[0] - a[0])
+          .map(([g, n]) => `${MANUAL_GRADE_NAMES[g as 1 | 2 | 3 | 4 | 5]} ${n}`)
+          .join(' · ')}`,
+      );
+    }
+    /*
+     * 「库存两千多本却只装出去几十本」这种账必须能一眼看懂，所以把
+     * **库存品阶**与**每种品阶还剩多少空位**（够境界且槽位空着的人数）一起印出来。
+     * 只印总数的话，读者分不清是"没人够境界"还是"发书逻辑根本没跑"。
+     */
+    if (inStock > 0) {
+      const stockByGrade = new Map<number, number>();
+      for (const entry of owned) {
+        stockByGrade.set(entry.def.grade, (stockByGrade.get(entry.def.grade) ?? 0) + entry.count);
+      }
+      console.log(
+        `  库存品阶：${[...stockByGrade.entries()]
+          .sort((a, b) => b[0] - a[0])
+          .map(([g, n]) => `${MANUAL_GRADE_NAMES[g as 1 | 2 | 3 | 4 | 5]} ${n}`)
+          .join(' · ')}`,
+      );
+      const slots: string[] = [];
+      for (const grade of [5, 4, 3, 2, 1] as const) {
+        const minRealm = MANUAL_GRADE_MIN_REALM[grade];
+        let free = 0;
+        for (const d of state.sect.disciples) {
+          if (d.realmIndex < minRealm) continue;
+          if (!d.cultivationManual) free += 1;
+          if (!d.combatManual) free += 1;
+        }
+        slots.push(`${MANUAL_GRADE_NAMES[grade]} ${free}`);
+      }
+      console.log(`  可装空位（按该品阶的境界门槛算）：${slots.join(' · ')}`);
+      console.log(
+        `  发书诊断：成功 ${result.equipOk} · 找不到合适弟子 ${result.equipNoTarget} · 装备被拒 ${result.equipRejected}`,
+      );
+    }
+  }
+
   /* ---- 需求 4：自动合成 ---- */
   console.log(
     `  自动合成：${state.autoRefineLevel === 0 ? '关闭' : `${state.autoRefineLevel} 档（${engine.getAutoRefineRate(state)} 批/秒）`}`,
@@ -1436,7 +1720,16 @@ function printDetail(result: SimResult): void {
   } else {
     console.log('  掌门：在洞府中');
   }
-  console.log(`  采办出行：${result.tripsStarted} 趟${nextMissingMaterial(state) ? ` · 仍缺 ${MATERIAL_MAP[nextMissingMaterial(state)!]?.name ?? ''}` : ''}`);
+  console.log(
+    `  采办出行：${result.tripsStarted} 趟${nextMissingMaterial(state) ? ` · 仍缺 ${MATERIAL_MAP[nextMissingMaterial(state)!]?.name ?? ''}` : ''}`,
+  );
+  if (result.farmTrips.length > 0) {
+    console.log(
+      `  采办去向：${result.farmTrips
+        .map(([id, n]) => `${TRAVEL_REGION_MAP[id]?.name ?? id} ${n} 趟`)
+        .join(' · ')}`,
+    );
+  }
 
   console.log(
     `  储存占用：${RESOURCE_IDS.map((id) => `${id} ${fmt(state.resources[id])}/${fmt(caps[id])}`).join('，')}`,

@@ -36,6 +36,7 @@ import {
   canAfford,
   getAlchemySlots,
   getAmount,
+  getFarmTalentBonus,
   getRefiningSlots,
   getStructureBonus,
   grantQiSeconds,
@@ -43,7 +44,7 @@ import {
   toCostMap,
   type CostMap,
 } from './engine';
-import { aptitudeRank, pushJournal } from './disciples';
+import { aptitudeRank, pushJournal, relieveDemonAll } from './disciples';
 import { completeAllExpeditions } from './expeditions';
 import type { GameState } from './state';
 
@@ -218,7 +219,9 @@ export function canCraftPill(state: GameState, pillId: string): CraftCheck {
  *   3. 「**相差三个品阶的时候成功率达到百分百**」→ 差 ≥ 3 时**硬返回 1**，
  *      不是"算出来刚好接近 1"。这一点很重要：如果写成加法，
  *      以后一改基础成功率，那句"百分之百"就悄悄失效了。
- *   4. 丹炉阵 / 地火熔炉额外加成（`alchemySuccessBonus` / `refiningSuccessBonus`）。
+ *   4. 丹炉阵 / 地火熔炉额外加成（`alchemySuccessBonus` / `refiningSuccessBonus`）；
+ *   5. 弟子的**种田天赋**（炉火通灵 / 锻器巧手，设定集第 8.4 章）——
+ *      按 √人数 给全宗加成，所以不会因为"招了一千个弟子"把成功率顶穿。
  */
 export function getCraftSuccessRate(state: GameState, kind: 'alchemy' | 'refining', targetTier: number): number {
   const own = kind === 'alchemy' ? state.alchemyTier : state.refiningTier;
@@ -232,10 +235,11 @@ export function getCraftSuccessRate(state: GameState, kind: 'alchemy' | 'refinin
     kind === 'alchemy'
       ? getStructureBonus(state, 'alchemySuccessBonus')
       : getStructureBonus(state, 'refiningSuccessBonus');
+  const talent = getFarmTalentBonus(state, kind === 'alchemy' ? 'alchemyRate' : 'refiningRate');
   const bonus = gap > 0 ? gap * CRAFT_MASTER_GAP_BONUS : 0;
 
-  // 上限仍是 1（差两品也可能因为炉子好而摸到满）
-  return Math.max(0.05, Math.min(1, base + bonus + building));
+  // 上限仍是 1（差两品也可能因为炉子好、弟子手巧而摸到满）
+  return Math.max(0.05, Math.min(1, base + bonus + building + talent));
 }
 
 /** 界面用：说清楚"为什么会失败/为什么会必成" */
@@ -445,6 +449,12 @@ function applyEffect(state: GameState, effect: Effect, random: () => number): Us
         },
         message: `${target.name} 洗髓成功，资质大进`,
       };
+    }
+
+    case 'relieveDemon': {
+      const next = relieveDemonAll(state, effect.amount);
+      if (next === state) return { state, message: '尚无弟子，无人需要静心' };
+      return { state: next, message: `全宗弟子心魔 −${effect.amount}` };
     }
 
     case 'lifespanBonus':

@@ -23,7 +23,7 @@ import {
   type MaterialId,
   type SeedDef,
 } from './content';
-import { addItem, getPlotCapacity } from './engine';
+import { addItem, getFarmTalentBonus, getPlotCapacity } from './engine';
 import { getEnvironmentMaterialBonus } from './season';
 import { getElementMaterialBonus } from './enlightenment';
 import { pushJournal } from './disciples';
@@ -111,7 +111,14 @@ export function plantSeed(
     id: randomId('p', random),
     material,
     progress: 0,
-    duration: seed.growSeconds,
+    /*
+     * 沃土专精（设定集第 8.4 章：灵田成熟时间 −12%）。
+     *
+     * 在**种下那一刻**就把时间折算好、存进 duration，而不是每帧去问一次天赋：
+     * 这样"种下去之后又招了几个沃土专精弟子"不会让已经在地里的作物
+     * 突然变快 —— 那会让玩家觉得进度条在抽风。
+     */
+    duration: Math.max(1, Math.round(seed.growSeconds / (1 + getFarmTalentBonus(state, 'plantingSpeed')))),
   };
 
   return {

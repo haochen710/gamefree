@@ -23,6 +23,8 @@ import {
   type ItemId,
   type MaterialId,
 } from './resources';
+// 清心丹的"压多少心魔"只在 talents.ts 里定义一次，处方引用它（避免同一个数存两份）
+import { DEMON_RELIEF_PILL } from './talents';
 // 技术 id 在 content/techs.ts 里就是普通 string（没有窄化的联合类型），所以这里也用 string
 
 /* ------------------------------------------------------------------ */
@@ -46,6 +48,14 @@ export type Effect =
   | { kind: 'completeLayers' }
   /** 弟子战力倍率，持续 duration 秒 */
   | { kind: 'expeditionPower'; multiplier: number; duration: number }
+  /**
+   * 全宗弟子心魔 −amount（设定集第 14.3 章：清心蕴灵丹 / 清蕴丹一类）。
+   *
+   * 为什么是"全宗"而不是"指定一名弟子"：本作的丹药一直是
+   * "掌门服下 → 全宗生效"的口径（洗髓丹提升随机一人资质也是如此），
+   * 而心魔一旦高发就是几十上百人一起高发，逐个点名在千人的宗门前不可用。
+   */
+  | { kind: 'relieveDemon'; amount: number }
   /** 探索伤亡率降低 reduction（0.25 = -25%），持续 duration 秒 */
   | { kind: 'expeditionSafety'; reduction: number; duration: number }
   /**
@@ -318,6 +328,24 @@ export const PILLS: PillDef[] = [
     desc: '宁神静气，立即回满心神。',
     cost: { herb: 120, demonCore: 10, spiritSilk: 6, moonDew: 3, qi: 8e3 },
     effect: { kind: 'restoreMind' },
+  },
+  {
+    /*
+     * 清心丹（设定集第 14.3 章「压制/清除手段」的第 1 条）。
+     *
+     * 刻意做得**便宜**（二品、只要灵草与妖丹）：它是一件消耗品 ——
+     * 心魔高发的时候玩家要连点好几颗，贵了就变成"看着弟子入魔却吃不起药"。
+     * 一次压 15 点，正好把"心魔滋长"（61）压回"心神躁动"以下。
+     */
+    id: 'clearMindPill',
+    name: '清心丹',
+    icon: '🫧',
+    tier: 2,
+    category: 'support',
+    desc: '清心定神，全宗弟子心魔 −15。心魔高发时连服数颗即可。',
+    cost: { herb: 200, demonCore: 12, spiritSilk: 8, moonDew: 4, qi: 1.2e4 },
+    // 数值只有一处定义（content/talents.ts），处方直接引用它
+    effect: { kind: 'relieveDemon', amount: DEMON_RELIEF_PILL },
   },
   {
     id: 'nurturePill',

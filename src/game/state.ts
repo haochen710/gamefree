@@ -15,7 +15,10 @@ import {
   createEmptyBuffs,
   type ActiveBuffs,
   type AptitudeId,
+  type CombatTalentId,
+  type FarmTalentId,
   type MaterialId,
+  type PersonalityId,
   type ResourceId,
   type ShopOffer,
 } from './content';
@@ -35,6 +38,36 @@ export interface Disciple {
   id: string;
   name: string;
   aptitude: AptitudeId;
+  /**
+   * 战斗天赋（设定集第 8.3 章）：影响**自己**在秘境的伤亡与产出。
+   *
+   * 旧存档没有这个字段，读档时会按 id 稳定地补一个（见 save.ts）。
+   */
+  combatTalent: CombatTalentId;
+  /** 种田天赋（设定集第 8.4 章）：全宗按 √人数 提供加成，不影响伤亡 */
+  farmTalent: FarmTalentId;
+  /** 性格（设定集第 8.5 章）：永久固定，同时影响忠诚与心魔的动态 */
+  personality: PersonalityId;
+  /** 忠诚度 0~100（设定集第 8.6 章） */
+  loyalty: number;
+  /** 心魔 0~100（设定集第 14.3 章） */
+  demon: number;
+  /**
+   * 已装备的修炼功法 / 战斗功法（设定集第 7 章：每名弟子各 1 本）。
+   *
+   * 存 id 而不是引用：功法在仓库里是"份数"，装备时从份数里减 1、
+   * 卸下时加回去 —— 这样"同一本书能不能给两个人"这件事只有一个答案（不能）。
+   * 空字符串 = 未装备。
+   */
+  cultivationManual: string;
+  combatManual: string;
+  /**
+   * 已经闲置了多久（真实秒）。
+   *
+   * 只用来实现「长期闲置，忠诚每过一段就 −1」；一旦出门探索就清零。
+   * 不给它单独存档字段而是随 Disciple 一起存 —— 少一个键就少一处漂移。
+   */
+  idleSeconds: number;
   /** 当前境界下标（对应 REALMS） */
   realmIndex: number;
   /** 在当前境界已修炼的「有效年数」，达到 cultivationYears 即晋升 */
@@ -246,6 +279,14 @@ export interface GameState {
   gearCharges: Record<string, number>;
   /** 器物库存 */
   artifacts: ItemCountMap;
+  /**
+   * 完整的功法库存（设定集第 7 章）：功法 id → 册数。
+   *
+   * 装备一本就从这里减 1，卸下加回去 —— 于是"这本书在谁手上"永远有唯一答案。
+   */
+  manuals: ItemCountMap;
+  /** 功法碎片：`frag:<功法id>` → 份数（5 份合一本） */
+  manualFragments: ItemCountMap;
 
   /* ---- 修行 ---- */
   realmIndex: number;
@@ -447,6 +488,8 @@ export function createInitialState(now = Date.now()): GameState {
     pills: {},
     artifacts: {},
     gearCharges: {},
+    manuals: {},
+    manualFragments: {},
     realmIndex: 0,
     layer: 0,
     globalBreakthroughBonus: 0,

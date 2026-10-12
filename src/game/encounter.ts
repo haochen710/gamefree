@@ -39,7 +39,7 @@ import {
 export { isAttackEncounter, playerEncounters, sectEncounters };
 import { ITEM_MAP, PILL_MAP, isBasicMaterial, type ItemId } from './content';
 import { addItem, getStructureBonus } from './engine';
-import { pushJournal } from './disciples';
+import { getSectTalentDefense, pushJournal } from './disciples';
 import { gameRandom, weightedDraw, type RandomSource } from './random';
 import type { GameState } from './state';
 
@@ -240,9 +240,21 @@ export function rollEncounterNow(state: GameState, random: RandomSource = gameRa
 /* 宗门防御与进攻结算（需求 1）                                          */
 /* ------------------------------------------------------------------ */
 
-/** 宗门防御总强度（0 起步，可以超过 1 —— 超过 1 就是"完全挡下"） */
+/**
+ * 宗门防御总强度（0 起步，可以超过 1 —— 超过 1 就是"完全挡下"）。
+ *
+ * 两条来源：
+ *   1. **建筑**（护山大阵 / 周天星斗大阵 / 混元无极阵，`sectDefense`）；
+ *   2. **弟子的战斗天赋与性格**（设定集第 8.3 / 8.5 章：铁甲体魄"妖兽袭宗防御判定 +12"、
+ *      好战"妖兽袭宗防御判定 +8"）。
+ *
+ * ⚠️ 第 2 条本轮差点变成一句空话：`disciples.getSectTalentDefense` 当时写好了
+ * 却**一个调用点都没有** —— 天赋描述里写着"+5 宗门防御"、实现里永远不生效，
+ * 界面还理直气壮地把它显示出来。现在它在这里被真正读到了。
+ * 口径是"取全宗最高一项"，不是按人头叠加（否则一千个铁甲体魄就是无敌）。
+ */
 export function getSectDefense(state: GameState): number {
-  return getStructureBonus(state, 'sectDefense');
+  return getStructureBonus(state, 'sectDefense') + getSectTalentDefense(state);
 }
 
 export interface AttackOutcome {

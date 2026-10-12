@@ -14,13 +14,37 @@ import { gameRandom, type RandomSource } from './random';
 import {
   APTITUDE_MAP,
   APTITUDE_ORDER,
+  COMBAT_TALENT_IDS,
+  COMBAT_TALENT_MAP,
+  DEMON_MAX,
+  DEMON_MIN,
+  DEMON_PER_ALLY_DEATH,
+  DEMON_RELIEF_PER_BREAKTHROUGH,
+  DEMON_RELIEF_PER_EXPEDITION,
+  DESERT_CHANCE,
+  DESERT_LOOT_RATIO,
   EXPEDITION_CULTIVATION_BONUS,
+  FARM_TALENT_IDS,
   GAME_DAYS_PER_SECOND,
   GAME_DAYS_PER_YEAR,
   INSIGHT_SPEED_PER_POINT,
+  LOYALTY_GAIN_EXPEDITION,
+  LOYALTY_IDLE_DECAY,
+  LOYALTY_IDLE_DECAY_SECONDS,
+  LOYALTY_INITIAL,
+  LOYALTY_LOSS_ALLY_DEATH,
+  LOYALTY_MAX,
+  MANUAL_MAP,
+  LOYALTY_MIN,
+  LOYALTY_NEGLECT_FLOOR,
+  PERSONALITY_IDS,
+  PERSONALITY_MAP,
   PILL_MAP,
   REALMS,
+  demonTierOf,
   discipleCapBySect,
+  loyaltyFloorOf,
+  loyaltyTierOf,
   randomDiscipleName,
   recruitCost,
   rollAptitude,
@@ -33,7 +57,13 @@ import {
   getDiscipleHousing,
   getStructureBonus,
 } from './engine';
-import { JOURNAL_LIMIT, type Disciple, type GameState, type JournalEntry } from './state';
+import {
+  JOURNAL_LIMIT,
+  type Disciple,
+  type GameState,
+  type JournalEntry,
+} from './state';
+import type { MaterialId } from './content';
 
 /** 弟子一生最多一次跨多少个境界（防止极端离线时间把循环跑爆） */
 const MAX_REALM_JUMPS = 32;
@@ -63,10 +93,28 @@ export function getDiscipleCapReason(
 /* ------------------------------------------------------------------ */
 
 export function rollDisciple(sectLevel: number, id: number, random: RandomSource = gameRandom): Disciple {
+  const aptitude = rollAptitude(sectLevel, random);
+  const [loyaltyMin, loyaltyMax] = LOYALTY_INITIAL[aptitude];
   return {
     id: `d${id}`,
     name: randomDiscipleName(random),
-    aptitude: rollAptitude(sectLevel, random),
+    aptitude,
+    /*
+     * 三个随机维度（设定集第 8 章）：战斗天赋、种田天赋、性格。
+     * 加上资质，一名弟子就有四个互相独立的随机面 ——
+     * "招到一个资质好、性格也好、天赋还对口的人"因此变成一个值得期待的事件。
+     */
+    combatTalent: COMBAT_TALENT_IDS[Math.floor(random() * COMBAT_TALENT_IDS.length)],
+    farmTalent: FARM_TALENT_IDS[Math.floor(random() * FARM_TALENT_IDS.length)],
+    personality: PERSONALITY_IDS[Math.floor(random() * PERSONALITY_IDS.length)],
+    // 初始忠诚按资质给区间（资质越高越死心塌地）
+    loyalty: loyaltyMin + random() * (loyaltyMax - loyaltyMin),
+    // 新弟子心魔从 0 起（心魔是"练出来的"，不是天生的）
+    demon: 0,
+    // 功法要靠玩家去挣（碎片合成 / 秘境掉落），新弟子一律空手
+    cultivationManual: '',
+    combatManual: '',
+    idleSeconds: 0,
     realmIndex: 0,
     // 给一点随机初始进度，免得同一批弟子永远整齐划一地一起突破
     progress: random() * 5,
@@ -96,18 +144,295 @@ export function getInsightSpeedBonus(state: GameState, disciple: Disciple): numb
 /**
  * 弟子的综合修行速度倍率。
  *
- * = 资质 × (1 + 建筑 + 大比 + 心得)
+ * = 资质 × (建筑 + 大比 + 心得 + 性格 + 忠诚档 + 修炼功法) × 心魔档
  *
  * ⚠️ 这里原来是 `资质 × (1 + 心得) × 建筑大比` —— 心得和建筑是**两个乘区**，
  * 而且大比在建筑那一项里又是乘算 ×2，三者互相放大：
  * 满配时 (1 + 心得) × (1 + 建筑) × 2 能到 ×9 以上（更早一版的实测是 ×7.4）。
- * 现在三者全部并进同一个加算池：
+ * 现在全部并进同一个加算池：
  *   1 + 功法殿 80% + 讲道堂 50% + 大比 50% + 心得 135% = ×4.15
  * 好处不只是"数字变小"：加算池不会随着以后再加内容而互相放大。
+ *
+ * 三个"池子"的分工（**这一条被写错过一次**，所以在此写明）：
+ *   - **加算池**：建筑 / 大比 / 心得 / 性格 / **忠诚档** / 修炼功法 ——
+ *     它们都是"加一点速度"，性质相同，加在一起才不会互相放大（单项 ±2%~30%）；
+ *   - **乘区**：心魔 —— 它是"状态"而不是"加成"，用乘法才让高段位真正致命（×0.96 → ×0.75）；
+ *   - **资质**：最外层的基底。
+ *
+ * 注释原先写着"忠诚档是乘区"，与代码不符 —— 忠诚档的数值本来就是小百分比
+ * （离心 −5%、叛离 −12%、死忠 +5%），放进加算池才是它应有的分量。
  */
 export function getDiscipleSpeed(state: GameState, disciple: Disciple): number {
   const aptitude = APTITUDE_MAP[disciple.aptitude].speed;
-  return aptitude * (getCultivationSpeedMultiplier(state) + getInsightSpeedBonus(state, disciple));
+  const personality = PERSONALITY_MAP[disciple.personality];
+  const loyaltyTier = loyaltyTierOf(disciple.loyalty);
+  const demonTier = demonTierOf(disciple.demon);
+  const additive = getCultivationSpeedMultiplier(state) + getInsightSpeedBonus(state, disciple);
+  /*
+   * 功法（设定集第 7 章）：修炼功法走**加算**（它本来就是"功法"这一类，
+   * 与建筑/大比/心得同一性质），与性格一起进那个池子。
+   */
+  const manual = MANUAL_MAP[disciple.cultivationManual]?.cultivationBonus ?? 0;
+  return (
+    aptitude *
+    (additive + personality.cultivationBonus + loyaltyTier.cultivationBonus + manual) *
+    demonTier.cultivationMult
+  );
+}
+
+/**
+ * 弟子突破到下一境界所需的修为（年）。
+ *
+ * 设定集里的「小境界所需修为 −5% / −8%」（《碧髓凝真章》《九天归元秘》）
+ * 就是作用在这一格上的：本作弟子的"小境界"就是这条进度。
+ * 单独抽成函数是因为**界面也要用它**（如果界面按 `REALMS[r].cultivationYears`
+ * 直接显示，装了减耗功法的弟子就会显示成"进度条永远差一点"）。
+ */
+export function getDiscipleRealmNeed(disciple: Disciple, realmIndex: number): number {
+  const base = REALMS[Math.min(realmIndex, REALMS.length - 1)].cultivationYears;
+  let reduction = 0;
+  for (const id of [disciple.cultivationManual, disciple.combatManual]) {
+    reduction += MANUAL_MAP[id]?.needReduction ?? 0;
+  }
+  return base * (1 - Math.min(0.3, reduction));
+}
+
+/**
+ * 弟子**自己**受到的秘境伤亡率削减（战斗天赋 + 性格 + 忠诚档 + 功法）。
+ *
+ * 为什么挂"每人一份"而不是全宗一个系数：秘境的伤亡本来就是逐人掷骰
+ * （`expeditions.resolveExpedition` 里对每个弟子各掷一次），
+ * 所以把天赋挂在本人的骰子上最自然，也天然免疫"带 50 个人就无伤"。
+ *
+ * 上限 0.35 是一条**安全轨**，不是当前内容的实际天花板：
+ * 现有内容里最高的一个人是「浴血奋战/铁甲体魄 3.5% + 好战 2% + 死忠 2%
+ * + 《天地战章》12%」≈ **19.5%**（护山大阵另有减免口径，且是队伍级的另一层）。
+ * 留这个数是为了以后加内容时不会悄悄突破到"免死"。
+ */
+export const MAX_PERSONAL_CASUALTY_REDUCTION = 0.35;
+
+export function getDiscipleCasualtyReduction(disciple: Disciple): number {
+  const talent = COMBAT_TALENT_MAP[disciple.combatTalent].casualtyReduction;
+  const personality = PERSONALITY_MAP[disciple.personality].casualtyReduction;
+  const loyalty = loyaltyTierOf(disciple.loyalty).casualtyReduction;
+  // 战斗功法与修炼功法都可能带减伤（见 content/manuals.ts）
+  let manuals = 0;
+  for (const id of [disciple.cultivationManual, disciple.combatManual]) {
+    manuals += MANUAL_MAP[id]?.casualtyReduction ?? 0;
+  }
+  return Math.min(MAX_PERSONAL_CASUALTY_REDUCTION, talent + personality + loyalty + manuals);
+}
+
+/**
+ * 队伍里所有弟子的**产出类**天赋加成（按项目取最高一项，不叠加）。
+ *
+ * 设定集里"同功法不可叠加，只取最高品级效果"，这里是同一个思路：
+ * 一支队伍带上一个兽语通晓的和带十个，产出加成一样 —— 否则
+ * "凑 50 个兽语通晓"就会变成唯一正解。
+ */
+export function getPartyTalentYieldBonus(state: GameState, ids: string[]): number {
+  const byId = new Map(state.sect.disciples.map((d) => [d.id, d]));
+  const party: Disciple[] = [];
+  for (const id of ids) {
+    const d = byId.get(id);
+    if (d) party.push(d);
+  }
+  return getPartyTalentYieldBonusOf(party);
+}
+
+/**
+ * 同上，但直接收弟子对象。
+ *
+ * 秘境结算为了"逐人掷伤亡"已经把队伍取出来过一次了，
+ * 再按 id 去全宗名册里找一遍是白费一趟 O(全宗人数) ——
+ * 千人宗门下这一趟要被走上万次，模拟器就是这么慢下来的。
+ */
+export function getPartyTalentYieldBonusOf(party: Disciple[]): number {
+  let talent = 0;
+  let personality = 0;
+  for (const d of party) {
+    talent = Math.max(talent, COMBAT_TALENT_MAP[d.combatTalent].yieldBonus);
+    personality = Math.max(personality, PERSONALITY_MAP[d.personality].yieldBonus);
+  }
+  return talent + personality;
+}
+
+/**
+ * 全宗范围内的宗门防御贡献（**取最高一项**，不叠加）。
+ *
+ * 由 `encounter.getSectDefense` 读取 —— 也就是说战斗天赋与性格里的
+ * 「宗门防御判定 +N」真的会进入妖兽袭宗 / 敌方偷袭的结算。
+ */
+export function getSectTalentDefense(state: GameState): number {
+  let best = 0;
+  for (const d of state.sect.disciples) {
+    best = Math.max(best, COMBAT_TALENT_MAP[d.combatTalent].sectDefense);
+    best = Math.max(best, PERSONALITY_MAP[d.personality].sectDefense);
+  }
+  return best;
+}
+
+/* ------------------------------------------------------------------ */
+/* 忠诚度与心魔：读写工具                                                */
+/* ------------------------------------------------------------------ */
+
+export function clampLoyalty(value: number): number {
+  return Math.min(LOYALTY_MAX, Math.max(LOYALTY_MIN, value));
+}
+
+export function clampDemon(value: number): number {
+  return Math.min(DEMON_MAX, Math.max(DEMON_MIN, value));
+}
+
+/** 修改某名弟子的忠诚（自动夹到 0~100 与性格下限之间） */
+export function adjustLoyalty(disciple: Disciple, delta: number): Disciple {
+  const personality = PERSONALITY_MAP[disciple.personality];
+  const floor = loyaltyFloorOf(disciple.aptitude, personality);
+  const scaled = delta > 0 ? delta * personality.gainMult : delta * personality.decayMult;
+  return { ...disciple, loyalty: Math.max(floor, clampLoyalty(disciple.loyalty + scaled)) };
+}
+
+/** 修改某名弟子的心魔（性格、天赋与功法都会放大/削减增长，下降不受影响） */
+export function adjustDemon(disciple: Disciple, delta: number): Disciple {
+  const personality = PERSONALITY_MAP[disciple.personality];
+  let manualGuard = 0;
+  for (const id of [disciple.cultivationManual, disciple.combatManual]) {
+    manualGuard += MANUAL_MAP[id]?.demonGuard ?? 0;
+  }
+  const guard =
+    COMBAT_TALENT_MAP[disciple.combatTalent].demonGuard + personality.demonGuard + manualGuard;
+  if (delta > 0) {
+    const mult = personality.demonMult * Math.max(0.2, 1 - guard);
+    return { ...disciple, demon: clampDemon(disciple.demon + delta * mult) };
+  }
+  return { ...disciple, demon: clampDemon(disciple.demon + delta) };
+}
+
+/**
+ * 批量结算：同小队弟子陨落 → 幸存者忠诚与心魔都受创；平安归来 → 忠诚小涨、心魔稍定。
+ *
+ * 一次探索只调一次（在 `resolveExpedition` 里），所以这里的复杂度是 O(队伍)。
+ */
+export function settlePartyAfterExpedition(
+  state: GameState,
+  survivorIds: string[],
+  perished: number,
+  lostAlly: boolean,
+): GameState {
+  if (survivorIds.length === 0) return state;
+  const set = new Set(survivorIds);
+  return {
+    ...state,
+    sect: {
+      ...state.sect,
+      disciples: state.sect.disciples.map((d) => {
+        if (!set.has(d.id)) return d;
+        const personality = PERSONALITY_MAP[d.personality];
+        let next = d;
+        if (lostAlly) {
+          // 同门陨落：忠诚下跌（重义翻倍），心神受创
+          next = adjustLoyalty(next, -LOYALTY_LOSS_ALLY_DEATH * personality.allyDeathMult);
+          next = adjustDemon(next, DEMON_PER_ALLY_DEATH * perished);
+        } else {
+          // 圆满归来：忠诚小涨，心魔稍定
+          next = adjustLoyalty(next, LOYALTY_GAIN_EXPEDITION);
+          next = adjustDemon(next, -DEMON_RELIEF_PER_EXPEDITION);
+        }
+        return next;
+      }),
+    },
+  };
+}
+
+/**
+ * 全宗化解心魔（清心丹）。
+ *
+ * 与"心魔是个人问题"的原则不冲突：丹药是**玩家主动花钱**买的一次全宗静心，
+ * 而不是某个弟子的行为牵连全宗。
+ */
+export function relieveDemonAll(state: GameState, amount: number): GameState {
+  if (state.sect.disciples.length === 0) return state;
+  return {
+    ...state,
+    sect: {
+      ...state.sect,
+      disciples: state.sect.disciples.map((d) => adjustDemon(d, -amount)),
+    },
+  };
+}
+
+/**
+ * 任务途中叛逃（设定集第 8.6 章）。
+ *
+ * 只在**探索结算的那一刻**对参战弟子掷一次骰。这样做有两个好处：
+ *   1. 叛逃永远发生在玩家看得见的场合（一趟队伍归来），而不是角落里静默消失；
+ *   2. 掷骰的规模被队伍人数（≤50）框住 —— 千人宗门也不会每帧掉人。
+ *
+ * 触发条件是"忠诚低于性格阈值"：守道与恬淡的阈值是 0（永不叛逃），
+ * 重义 15、好战 / 孤傲 20、贪利 40。
+ */
+export interface DesertionResult {
+  state: GameState;
+  deserters: { id: string; name: string; greedy: boolean }[];
+}
+
+export function rollDesertion(state: GameState, ids: string[], random: RandomSource): DesertionResult {
+  const set = new Set(ids);
+  const deserters: DesertionResult['deserters'] = [];
+  for (const d of state.sect.disciples) {
+    if (!set.has(d.id)) continue;
+    const personality = PERSONALITY_MAP[d.personality];
+    if (personality.desertBelow <= 0) continue;
+    if (loyaltyTierOf(d.loyalty).neverDesert) continue;
+    if (d.loyalty >= personality.desertBelow) continue;
+    if (random() < DESERT_CHANCE) {
+      deserters.push({ id: d.id, name: d.name, greedy: personality.id === 'greedy' });
+    }
+  }
+  if (deserters.length === 0) return { state, deserters };
+
+  const gone = new Set(deserters.map((x) => x.id));
+  let next: GameState = {
+    ...state,
+    sect: { ...state.sect, disciples: state.sect.disciples.filter((d) => !gone.has(d.id)) },
+  };
+
+  // 贪利弟子叛逃会**带走一部分仓库材料**（设定集：贪利叛逃带走物资）
+  const greedyCount = deserters.filter((x) => x.greedy).length;
+  if (greedyCount > 0) {
+    const taken = Math.min(0.5, DESERT_LOOT_RATIO * greedyCount);
+    const materials = { ...next.materials };
+    for (const key of Object.keys(materials) as MaterialId[]) {
+      materials[key] = materials[key].mul(1 - taken);
+    }
+    next = { ...next, materials };
+  }
+
+  return { state: next, deserters };
+}
+
+/**
+ * 这名弟子现在是否**拒绝执行任务**（心魔 61 以上）。
+ *
+ * 用在"选择弟子"的名单里：拒绝派遣的人会灰掉并写明原因，
+ * 而不是被静默排除（静默排除会让玩家以为界面坏了）。
+ */
+export function isRefusingTask(disciple: Disciple): boolean {
+  return demonTierOf(disciple.demon).refuseTask;
+}
+
+/** 拒绝高风险秘境（恬淡） */
+export function refusesHighRisk(disciple: Disciple): boolean {
+  return PERSONALITY_MAP[disciple.personality].refuseHighRisk;
+}
+
+/** 界面用：忠诚档名 / 心魔档名 */
+export function describeLoyalty(disciple: Disciple): string {
+  return loyaltyTierOf(disciple.loyalty).name;
+}
+
+export function describeDemon(disciple: Disciple): string {
+  return demonTierOf(disciple.demon).name;
 }
 
 /**
@@ -271,6 +596,16 @@ export function tickDisciples(state: GameState, dt: number): GameState {
   let journal = state.journal;
   let changed = false;
 
+  /*
+   * 静心阁的持续压制（设定集第 14.3 章"压制/清除手段"之一）。
+   *
+   * 按**真实分钟**算而不是按游戏年：心魔是给真人看的一条压力线，
+   * 挂在纪年上会因为"一年只有 8 分钟"而变成一夜之间全员入魔。
+   * 数值取建筑定义里的 `mindDrain`（每座 0.02/分钟，最多 12 座 = 0.24/分钟）——
+   * 盖满之后大约一小时能压掉 14 点，刚好抵得上一次伤亡惨重的探索带来的涨幅。
+   */
+  const demonDrain = getStructureBonus(state, 'mindDrain') * (dt / 60);
+
   for (const disciple of state.sect.disciples) {
     const age = disciple.age + years;
     /*
@@ -294,8 +629,9 @@ export function tickDisciples(state: GameState, dt: number): GameState {
 
     while (remaining > 0 && realmIndex < realmCap && jumps < MAX_REALM_JUMPS) {
       const def = REALMS[realmIndex];
-      const need = def.cultivationYears;
-      if (need <= 0) break;
+      // 装了《碧髓凝真章》这类功法的弟子，突破所需修为会少一截
+      const need = getDiscipleRealmNeed(disciple, realmIndex);
+      if (def.cultivationYears <= 0 || need <= 0) break;
 
       const toNext = need - progress;
       if (remaining >= toNext) {
@@ -343,7 +679,6 @@ export function tickDisciples(state: GameState, dt: number): GameState {
     } else if (progress !== disciple.progress) {
       changed = true;
     }
-
     /* --- 寿元判定 --- */
     const lifespan = REALMS[realmIndex].lifespan * lifespanBonus;
     if (age > lifespan) {
@@ -357,7 +692,39 @@ export function tickDisciples(state: GameState, dt: number): GameState {
       continue;
     }
 
-    survivors.push({ ...disciple, age, realmIndex, progress });
+    /* --- 忠诚度与心魔（设定集第 8.6 / 14.3 章） --- */
+    const personality = PERSONALITY_MAP[disciple.personality];
+    // 出门在外就不算闲置；闲着才掉忠诚
+    let idleSeconds = disciple.status === 'exploring' ? 0 : disciple.idleSeconds + dt;
+    let loyalty = disciple.loyalty;
+    if (idleSeconds >= LOYALTY_IDLE_DECAY_SECONDS) {
+      const steps = Math.floor(idleSeconds / LOYALTY_IDLE_DECAY_SECONDS);
+      idleSeconds -= steps * LOYALTY_IDLE_DECAY_SECONDS;
+      /*
+       * 地板取"闲置地板"与"性格地板"里更高的那个：
+       * 闲置最多把人磨到寻常（45），性格地板（天纵 30）比它低，
+       * 所以正常情况下闲置这一条永远不会把人推到离心 —— 那要靠真出事。
+       */
+      const floor = Math.max(LOYALTY_NEGLECT_FLOOR, loyaltyFloorOf(disciple.aptitude, personality));
+      loyalty = Math.max(
+        floor,
+        clampLoyalty(loyalty - steps * LOYALTY_IDLE_DECAY * personality.decayMult),
+      );
+    }
+    // 心魔：静心阁持续压制 + 破境成功心病自消
+    let demon = disciple.demon;
+    if (demonDrain > 0 && demon > 0) demon = clampDemon(demon - demonDrain);
+    if (realmIndex !== disciple.realmIndex) {
+      /*
+       * 破境成功 → 心魔 −3（设定集：悟道/破境能"降低心魔增速"）。
+       *
+       * ⚠️ 这一条原本写成了 `relieveDemonOnBreakthrough()` 却**没人调用** ——
+       * 函数在、效果在描述里、实际永远不生效。现在直接在这里结算。
+       */
+      demon = clampDemon(demon - DEMON_RELIEF_PER_BREAKTHROUGH);
+    }
+
+    survivors.push({ ...disciple, age, realmIndex, progress, loyalty, demon, idleSeconds });
   }
 
   if (!changed) return state;

@@ -31,6 +31,8 @@ import {
   INSIGHT_MAX_ABSOLUTE,
   ITEM_MAP,
   MATERIAL_IDS,
+  MANUAL_MAP,
+  manualIdOfFragment,
   MATERIAL_MAP,
   PILL_MAP,
   REALMS,
@@ -48,10 +50,21 @@ import {
   WEATHER_MAP,
   WEATHER_ROLL_INTERVAL,
   createEmptyBuffs,
+  COMBAT_TALENT_IDS,
+  DEMON_MAX,
+  DEMON_MIN,
+  FARM_TALENT_IDS,
+  LOYALTY_INITIAL,
+  LOYALTY_MAX,
+  LOYALTY_MIN,
+  PERSONALITY_IDS,
   type ActiveBuffs,
   type AptitudeId,
+  type CombatTalentId,
+  type FarmTalentId,
   type ItemId,
   type MaterialId,
+  type PersonalityId,
   type ResourceId,
   type ShopOffer,
 } from './content';
@@ -159,6 +172,9 @@ export interface SerializedGame {
   or?: Record<string, boolean>;
   /** 可携带器物的剩余次数（需求 2） */
   gc?: Record<string, number>;
+  /** 功法：完整功法 `mn`、碎片 `mf`（设定集第 7 章） */
+  mn?: Record<string, number>;
+  mf?: Record<string, number>;
   /** 各条配方的自动合成目标存量（本轮需求 2） */
   art?: Record<string, number>;
   /** 天工院特殊升级等级（需求 2） */
@@ -225,6 +241,9 @@ export function serialize(state: GameState): SerializedGame {
     ur: { ...state.discoveredRealms },
     pl: { ...state.pills },
     ar: { ...state.artifacts },
+    /** 功法（设定集第 7 章）：完整功法 `mn`、碎片 `mf` */
+    mn: { ...state.manuals },
+    mf: { ...state.manualFragments },
     gc: { ...state.gearCharges },
     ri: state.realmIndex,
     li: state.layer,
@@ -321,15 +340,44 @@ function toFloat(value: unknown, fallback: number, min: number, max: number): nu
   return Math.min(Math.max(value, min), max);
 }
 
-function toCountMap(raw: unknown, min = 0, max = 1e12): Record<string, number> {
+/**
+ * 把任意输入安全读成「id → 正整数」的表（丹药 / 器物 / 功法库存都是这个形状）。
+ *
+ * `accept` 用于过滤掉已经删掉的内容：旧存档里可能存着一个后来被移除的
+ * 丹药 / 功法 id，不过滤的话它会一直躺在库存里（界面读不出名字、还占存档体积）。
+ */
+function toCountMap(
+  raw: unknown,
+  min = 0,
+  max = 1e12,
+  accept?: (key: string) => boolean,
+): Record<string, number> {
   if (raw === null || typeof raw !== 'object') return {};
   const out: Record<string, number> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (accept && !accept(key)) continue;
     if (typeof value === 'number' && Number.isFinite(value) && value > min) {
       out[key] = Math.min(Math.floor(value), max);
     }
   }
   return out;
+}
+
+/**
+ * 由字符串稳定地推出一个小整数（FNV-1a）。
+ *
+ * 本轮新增了"战斗天赋 / 种田天赋 / 性格"三个随机维度，而旧存档里没有它们。
+ * 补的时候**必须用这种确定性派生**，不能用 `random()`：
+ * 否则每次刷新页面都会给同一名弟子换一套性格与天赋 —— 那等于内置了读档作弊，
+ * 而且玩家会以为界面在乱跳。
+ */
+function stableIndex(text: string, mod: number): number {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash) % mod;
 }
 
 function sanitizeDisciple(raw: unknown, index: number): Disciple | null {
@@ -341,14 +389,39 @@ function sanitizeDisciple(raw: unknown, index: number): Disciple | null {
     ? (d.aptitude as AptitudeId)
     : 'mortal';
 
+  const id = d.id;
+  const combatTalent = COMBAT_TALENT_IDS.includes(d.combatTalent as CombatTalentId)
+    ? (d.combatTalent as CombatTalentId)
+    : COMBAT_TALENT_IDS[stableIndex(`${id}:c`, COMBAT_TALENT_IDS.length)];
+  const farmTalent = FARM_TALENT_IDS.includes(d.farmTalent as FarmTalentId)
+    ? (d.farmTalent as FarmTalentId)
+    : FARM_TALENT_IDS[stableIndex(`${id}:f`, FARM_TALENT_IDS.length)];
+  const personality = PERSONALITY_IDS.includes(d.personality as PersonalityId)
+    ? (d.personality as PersonalityId)
+    : PERSONALITY_IDS[stableIndex(`${id}:p`, PERSONALITY_IDS.length)];
+
+  // 旧存档没有忠诚度：按资质区间的中点补一个（新存档是区间里随机取）
+  const [loyaltyMin, loyaltyMax] = LOYALTY_INITIAL[aptitude];
+  const loyaltyFallback = (loyaltyMin + loyaltyMax) / 2;
+
   return {
-    id: d.id,
+    id,
     name: d.name.slice(0, 24) || `弟子${index + 1}`,
     aptitude,
+    combatTalent,
+    farmTalent,
+    personality,
+    loyalty: toFloat(d.loyalty, loyaltyFallback, LOYALTY_MIN, LOYALTY_MAX),
+    // 心魔是"练出来的"：旧存档里的弟子一律从 0 起，不凭空给他们塞心病
+    demon: toFloat(d.demon, 0, DEMON_MIN, DEMON_MAX),
+    idleSeconds: toFloat(d.idleSeconds, 0, 0, 1e9),
     realmIndex: toInt(d.realmIndex, 0, 0, FINAL_REALM_INDEX),
     progress: toFloat(d.progress, 0, 0, 1e9),
     age: toFloat(d.age, 16, 0, 1e9),
     insight: toFloat(d.insight, 0, 0, INSIGHT_MAX_ABSOLUTE),
+    // 功法：只认还存在的 id（一本被删掉的功法不该让读档报错）
+    cultivationManual: MANUAL_MAP[String(d.cultivationManual)] ? String(d.cultivationManual) : '',
+    combatManual: MANUAL_MAP[String(d.combatManual)] ? String(d.combatManual) : '',
     // status 交给 repairState 依据探索列表重新推导，这里先一律置空闲
     status: 'idle',
   };
@@ -817,6 +890,9 @@ export function deserialize(raw: unknown): GameState | null {
     pills,
     artifacts,
     gearCharges,
+    // 功法只保留认得出 id 的那些（删过的功法不该把存档带崩）
+    manuals: toCountMap(data.mn, 0, 1e12, (id) => MANUAL_MAP[id] !== undefined),
+    manualFragments: toCountMap(data.mf, 0, 1e12, (key) => manualIdOfFragment(key) !== null),
     realmIndex,
     layer,
     globalBreakthroughBonus: toFloat(data.gb, 0, 0, 10),

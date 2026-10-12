@@ -10,18 +10,41 @@
  *     否则玩家只会看到"某某人不涨修为"而找不到原因。
  */
 import { useMemo, useState } from 'react';
-import { GAME_DAYS_PER_SECOND, GAME_DAYS_PER_YEAR, APTITUDE_MAP, APTITUDES, PILL_MAP, REALMS } from '../game/content';
+import {
+  COMBAT_TALENT_MAP,
+  FARM_TALENT_MAP,
+  FARM_TALENTS,
+  GAME_DAYS_PER_SECOND,
+  GAME_DAYS_PER_YEAR,
+  APTITUDE_MAP,
+  APTITUDES,
+  PERSONALITY_MAP,
+  PILL_MAP,
+  REALMS,
+  demonTierOf,
+  loyaltyTierOf,
+} from '../game/content';
 import {
   aptitudeRank,
   getDiscipleCapReason,
   getDiscipleEffectiveSpeed,
   getDiscipleSpeed,
+  isRefusingTask,
+  refusesHighRisk,
 } from '../game/disciples';
-import { getDiscipleCapacity, getDiscipleHousing, getInsightMax } from '../game/engine';
+import {
+  countFarmTalent,
+  getDiscipleCapacity,
+  getDiscipleHousing,
+  getFarmTalentBonus,
+  getInsightMax,
+} from '../game/engine';
 import { useGame } from '../game/store';
 import type { Disciple } from '../game/state';
 
-type SortKey = 'aptitude' | 'realm' | 'age';
+type SortKey = 'aptitude' | 'realm' | 'age' | 'loyalty' | 'demon';
+/** 弟子列表的"状态"筛选（忠诚 / 心魔 / 卡瓶颈） */
+type StatusFilter = 'all' | 'refusing' | 'demon' | 'lowLoyalty' | 'stalled';
 
 /** 一次最多渲染多少行；点「显示更多」再放一批 */
 const PAGE_SIZE = 50;
@@ -40,6 +63,11 @@ function DiscipleRow({ disciple }: { disciple: Disciple }) {
   const dismiss = useGame((s) => s.dismissDisciple);
 
   const aptitude = APTITUDE_MAP[disciple.aptitude];
+  const combat = COMBAT_TALENT_MAP[disciple.combatTalent];
+  const farm = FARM_TALENT_MAP[disciple.farmTalent];
+  const personality = PERSONALITY_MAP[disciple.personality];
+  const loyaltyTier = loyaltyTierOf(disciple.loyalty);
+  const demonTier = demonTierOf(disciple.demon);
   const realm = REALMS[disciple.realmIndex];
   const nextRealm = REALMS[Math.min(disciple.realmIndex + 1, REALMS.length - 1)];
   const capReason = getDiscipleCapReason(game, disciple);
@@ -49,7 +77,8 @@ function DiscipleRow({ disciple }: { disciple: Disciple }) {
   const progressRatio =
     atCap || realm.cultivationYears <= 0 ? 1 : Math.min(1, disciple.progress / realm.cultivationYears);
   /*
-   * 实际修行速度：资质 × (建筑 + 大比 + 心得)，再加上"在外历练"那一层（本轮需求 10）。
+   * 实际修行速度：资质 × (建筑 + 大比 + 心得 + 性格) × 忠诚档 × 心魔档，
+   * 再加上"在外历练"那一层（需求 10）。
    * 用 effective 而不是 getDiscipleSpeed —— 否则界面上的"还要几年"会偏慢，
    * 玩家会以为派遣拖慢了弟子。
    */
@@ -82,11 +111,47 @@ function DiscipleRow({ disciple }: { disciple: Disciple }) {
           {aptitude.name}
         </span>
         <span className="disciple__realm">{realm.name}</span>
+        {/* 战斗天赋与性格：这两条决定"这个人好不好用" */}
+        <span className="disciple__tag" title={combat.desc}>
+          {combat.icon} {combat.name}
+        </span>
+        <span className="disciple__tag" title={personality.desc}>
+          {personality.icon} {personality.name}
+        </span>
+        <span className="disciple__tag" title={farm.desc}>
+          {farm.icon} {farm.name}
+        </span>
+      </div>
+
+      <div className="disciple__bars">
+        <div className="mini-bar" title={`修为 ${disciple.progress.toFixed(1)} / ${realm.cultivationYears} 年`}>
+          <div className="mini-bar__fill mini-bar__fill--cultivation" style={{ width: `${progressRatio * 100}%` }} />
+        </div>
+        <div className="mini-bar" title={`寿元 ${disciple.age.toFixed(0)} / ${lifespan} 年`}>
+          <div
+            className="mini-bar__fill mini-bar__fill--age"
+            style={{ width: `${ageRatio * 100}%` }}
+          />
+        </div>
+        {/*
+          忠诚与心魔各占一条细条。它们与修为一样是"会变、要看"的量，
+          所以用同一种可视化语言，而不是塞进一行文字里。
+        */}
+        <div className="mini-bar mini-bar--thin" title={`忠诚 ${Math.round(disciple.loyalty)}/100（${loyaltyTier.name}）`}>
+          <div className="mini-bar__fill mini-bar__fill--loyalty" style={{ width: `${disciple.loyalty}%` }} />
+        </div>
+        <div className="mini-bar mini-bar--thin" title={`心魔 ${Math.round(disciple.demon)}/100（${demonTier.name}）`}>
+          <div className="mini-bar__fill mini-bar__fill--demon" style={{ width: `${disciple.demon}%` }} />
+        </div>
+      </div>
+
+      <div className="disciple__foot">
+        <span>
+          {disciple.age.toFixed(0)} 岁 · 忠诚 {Math.round(disciple.loyalty)}（{loyaltyTier.name}）· 心魔{' '}
+          {Math.round(disciple.demon)}
+        </span>
         {disciple.insight > 0 && (
-          <span
-            className="disciple__tag"
-            title={`心得：每点 +0.5% 修行速度，上限随掌门境界增长（当前 ${Math.round(disciple.insight)}/${getInsightMax(game)}）`}
-          >
+          <span title={`心得：每点 +0.5% 修行速度，上限随掌门境界增长（当前 ${Math.round(disciple.insight)}/${getInsightMax(game)}）`}>
             心得 {Math.round(disciple.insight)}/{getInsightMax(game)}
           </span>
         )}
@@ -103,24 +168,19 @@ function DiscipleRow({ disciple }: { disciple: Disciple }) {
             缺丹
           </span>
         )}
-      </div>
-
-      <div className="disciple__bars">
-        <div className="mini-bar" title={`修为 ${disciple.progress.toFixed(1)} / ${realm.cultivationYears} 年`}>
-          <div className="mini-bar__fill mini-bar__fill--cultivation" style={{ width: `${progressRatio * 100}%` }} />
-        </div>
-        <div className="mini-bar" title={`寿元 ${disciple.age.toFixed(0)} / ${lifespan} 年`}>
-          <div
-            className="mini-bar__fill mini-bar__fill--age"
-            style={{ width: `${ageRatio * 100}%` }}
-          />
-        </div>
-      </div>
-
-      <div className="disciple__foot">
-        <span>
-          {disciple.age.toFixed(0)} 岁 · 寿元 {Number.isFinite(lifespan) ? `${lifespan.toFixed(0)} 岁` : '无尽'}
-        </span>
+        {isRefusingTask(disciple) && (
+          <span
+            className="disciple__tag disciple__tag--warn"
+            title="心魔 61 以上会拒绝出征：先服清心丹，或多建静心阁"
+          >
+            拒绝出征
+          </span>
+        )}
+        {refusesHighRisk(disciple) && (
+          <span className="disciple__tag" title="恬淡性格：不会去高危秘境（基础伤亡 ≥ 30%）">
+            拒赴险地
+          </span>
+        )}
         <span>{capText}</span>
         <button
           type="button"
@@ -141,6 +201,7 @@ export function DisciplePanel() {
 
   const [sortKey, setSortKey] = useState<SortKey>('aptitude');
   const [minRank, setMinRank] = useState(0);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   // 需求 1：上限 2048 人，列表必须分批渲染
   const [shown, setShown] = useState(PAGE_SIZE);
 
@@ -148,15 +209,28 @@ export function DisciplePanel() {
   const housing = getDiscipleHousing(game);
 
   const list = useMemo(() => {
-    const filtered = game.sect.disciples.filter((d) => aptitudeRank(d.aptitude) >= minRank);
+    const filtered = game.sect.disciples
+      .filter((d) => aptitudeRank(d.aptitude) >= minRank)
+      .filter((d) => {
+        if (statusFilter === 'refusing') return isRefusingTask(d);
+        if (statusFilter === 'demon') return d.demon >= 31;
+        if (statusFilter === 'lowLoyalty') return d.loyalty < 40;
+        if (statusFilter === 'stalled') {
+          const need = REALMS[d.realmIndex]?.cultivationYears ?? 0;
+          return need > 0 && d.progress >= need;
+        }
+        return true;
+      });
     const sorted = [...filtered];
     sorted.sort((a, b) => {
       if (sortKey === 'aptitude') return aptitudeRank(b.aptitude) - aptitudeRank(a.aptitude);
       if (sortKey === 'realm') return b.realmIndex - a.realmIndex;
+      if (sortKey === 'loyalty') return a.loyalty - b.loyalty;
+      if (sortKey === 'demon') return b.demon - a.demon;
       return a.age - b.age;
     });
     return sorted;
-  }, [game.sect.disciples, sortKey, minRank]);
+  }, [game.sect.disciples, sortKey, minRank, statusFilter]);
 
   if (!game.sect.founded) return null;
 
@@ -180,6 +254,8 @@ export function DisciplePanel() {
             <option value="aptitude">按资质</option>
             <option value="realm">按境界</option>
             <option value="age">按年龄</option>
+            <option value="loyalty">按忠诚（低的在前）</option>
+            <option value="demon">按心魔（高的在前）</option>
           </select>
         </label>
 
@@ -192,6 +268,17 @@ export function DisciplePanel() {
                 {a.name}及以上
               </option>
             ))}
+          </select>
+        </label>
+
+        <label>
+          状态
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
+            <option value="all">全部</option>
+            <option value="refusing">拒绝出征（心魔 ≥ 61）</option>
+            <option value="demon">心魔 ≥ 31</option>
+            <option value="lowLoyalty">忠诚 &lt; 40（离心）</option>
+            <option value="stalled">卡在瓶颈（缺丹）</option>
           </select>
         </label>
 
@@ -209,6 +296,31 @@ export function DisciplePanel() {
 
       {game.sect.disciples.length === 0 && (
         <p className="panel__note">尚无弟子。回到「宗门」面板招收门徒。</p>
+      )}
+
+      {/*
+        全宗天赋一览（设定集第 8.4 章）。
+        种田天赋是按 √人数 给全宗加成的，所以"我手下有几个人有这条天赋"
+        是玩家唯一能判断该往哪边堆人的依据 —— 不给看，这个系统就等于没有。
+      */}
+      {game.sect.disciples.length > 0 && (
+        <div className="talent-summary">
+          <div className="talent-summary__row">
+            {FARM_TALENTS.map((t) => {
+              const count = countFarmTalent(game, t.id);
+              const bonus = getFarmTalentBonus(game, t.target);
+              return (
+                <span key={t.id} className="talent-summary__item" title={`${t.desc}（全宗合计 +${(bonus * 100).toFixed(1)}%）`}>
+                  {t.icon} {t.name} <strong>{count}</strong>
+                </span>
+              );
+            })}
+          </div>
+          <p className="panel__note">
+            种田天赋按 <strong>√人数</strong> 给全宗加成（收益递减，所以人越多边际越小）。
+            战斗天赋只护自己；性格决定忠诚与心魔怎么变。
+          </p>
+        </div>
       )}
 
       {/*

@@ -14,10 +14,12 @@ import {
   AUTO_REFINE_LEVEL_MAX,
   BUILDABLE_MAP,
   ITEM_MAP,
+  MANUAL_GRADE_MIN_REALM,
   REFINE_RECIPE_MAP,
   SERVANT_JOB_MAP,
   SECRET_REALM_MAP,
   type ItemId,
+  type ManualGrade,
   type MaterialId,
   type ServantJobId,
 } from './content';
@@ -28,6 +30,7 @@ import * as crafting from './crafting';
 import * as research from './research';
 import * as planting from './planting';
 import * as shop from './shop';
+import * as manuals from './manuals';
 import * as travel from './travel';
 import * as encounter from './encounter';
 import * as enlightenment from './enlightenment';
@@ -94,6 +97,18 @@ export interface GameStore {
 
   /* 商行（需求 3） */
   buyShopOffer(offerId: string): void;
+
+  /* 藏经阁 / 功法（设定集第 7 章） */
+  /** 用灵气参悟某一品阶的碎片（凡品~极品） */
+  contemplateManual(grade: ManualGrade): void;
+  /** 用 5 份碎片合成一本完整功法 */
+  synthManual(manualId: string): void;
+  /** 把一本功法装备给某名弟子 */
+  equipManual(discipleId: string, manualId: string): void;
+  /** 卸下某名弟子某个槽位的功法 */
+  unequipManual(discipleId: string, slot: 'cultivationManual' | 'combatManual'): void;
+  /** 一键把仓库里的功法发给最合适的弟子（按境界降序，能装就装） */
+  autoEquipManuals(): void;
 
   /* 仆人 */
   recruitServant(job: string): void;
@@ -393,6 +408,87 @@ export const useGame = create<GameStore>()((set, get) => ({
       const result = shop.buyShopOffer(s.game, offerId);
       if (result.state === s.game) return { notice: result.message };
       return { ...nextGame(s.game, result.state), notice: result.message };
+    });
+  },
+
+  /* --------------------------------------------------- 藏经阁 / 功法（设定集第 7 章） */
+
+  contemplateManual: (grade) => {
+    set((s) => {
+      const result = manuals.contemplate(s.game, grade);
+      if (result.state === s.game) return { notice: result.message };
+      return { ...nextGame(s.game, result.state), notice: result.message };
+    });
+  },
+
+  synthManual: (manualId) => {
+    set((s) => {
+      const result = manuals.synthManual(s.game, manualId);
+      if (result.state === s.game) return { notice: result.message };
+      return { ...nextGame(s.game, result.state), notice: result.message };
+    });
+  },
+
+  equipManual: (discipleId, manualId) => {
+    set((s) => {
+      const check = manuals.canEquipManual(s.game, discipleId, manualId);
+      if (!check.ok) return { notice: check.reason ?? '无法装备' };
+      const next = manuals.equipManual(s.game, discipleId, manualId);
+      if (next === s.game) return {};
+      const disciple = s.game.sect.disciples.find((d) => d.id === discipleId);
+      return {
+        ...nextGame(s.game, next),
+        notice: `${disciple?.name ?? '弟子'} 习得 ${manuals.labelOf(manualId)}`,
+      };
+    });
+  },
+
+  unequipManual: (discipleId, slot) => {
+    set((s) => {
+      const next = manuals.unequipManual(s.game, discipleId, slot);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '已卸下功法，功法已回到藏经阁' };
+    });
+  },
+
+  /*
+   * 一键发书。
+   *
+   * 千人的宗门里逐本拖到某个人身上是不现实的，所以给一个"能装就装"的入口：
+   * 按**境界降序**遍历弟子（境界高的先拿好书），每本功法只发一本，
+   * 发完为止。玩家仍然可以手动调整个别重点弟子。
+   */
+  autoEquipManuals: () => {
+    set((s) => {
+      let working = s.game;
+      const owned = manuals
+        .getOwnedManuals(working)
+        .sort((a, b) => b.def.grade - a.def.grade)
+        .map((entry) => ({ ...entry }));
+      if (owned.length === 0) return { notice: '仓库里没有可发的功法' };
+
+      const candidates = [...working.sect.disciples].sort(
+        (a, b) => b.realmIndex - a.realmIndex || a.name.localeCompare(b.name),
+      );
+      let handed = 0;
+      for (const entry of owned) {
+        const slot = entry.def.kind === 'cultivation' ? 'cultivationManual' : 'combatManual';
+        for (let i = 0; i < entry.count; i += 1) {
+          const target = candidates.find(
+            (d) =>
+              !d[slot] &&
+              d.realmIndex >= MANUAL_GRADE_MIN_REALM[entry.def.grade] &&
+              manuals.getManualCount(working, entry.def.id) > 0,
+          );
+          if (!target) break;
+          const next = manuals.equipManual(working, target.id, entry.def.id);
+          if (next === working) break;
+          working = next;
+          handed += 1;
+        }
+      }
+      if (working === s.game) return { notice: '没有可发出去的功法（弟子境界不够或都已装备）' };
+      return { ...nextGame(s.game, working), notice: `已发出 ${handed} 本功法` };
     });
   },
 

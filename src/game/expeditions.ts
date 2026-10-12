@@ -25,6 +25,8 @@ import {
   INSIGHT_PER_EXPEDITION,
   INSIGHT_PER_REALM_LEVEL,
   ITEM_MAP,
+  HIGH_RISK_CASUALTY,
+  LOYALTY_LOSS_HIGH_RISK,
   LOOT_ROLLS,
   LOOT_ROLLS_MAX,
   LOOT_ROLLS_PER_EXTRA,
@@ -51,6 +53,7 @@ import {
   expeditionSlots,
   getSurveyLoot,
   isBasicMaterial,
+  isRareMaterial,
   realmCountOfRegion,
   realmsOfRegion,
   regionTier,
@@ -65,6 +68,7 @@ import {
   discoverRealm,
   getArtifactBonuses,
   getDiscoveryChance,
+  getFarmTalentBonus,
   getRealmCooldown,
   getStructureBonus,
   getUndiscoveredCandidates,
@@ -75,7 +79,20 @@ import {
   recordDiscoveryFailure,
   consumeGear,
 } from './engine';
-import { addInsight, getPartyPower, pushJournal, setDiscipleStatus } from './disciples';
+import { getPartyManualYieldBonusOf, rollFragmentDrop, salvageManualsOnDeath } from './manuals';
+import {
+  addInsight,
+  adjustLoyalty,
+  getDiscipleCasualtyReduction,
+  getPartyPower,
+  getPartyTalentYieldBonusOf,
+  isRefusingTask,
+  pushJournal,
+  refusesHighRisk,
+  rollDesertion,
+  setDiscipleStatus,
+  settlePartyAfterExpedition,
+} from './disciples';
 import { getEnvironmentMaterialBonus, getWeatherEffects } from './season';
 import { getKarmaExploreBonus } from './encounter';
 import { getElementMaterialBonus, getSpaceExploreBonus } from './enlightenment';
@@ -152,6 +169,20 @@ export function canStartExpedition(state: GameState, realmId: string, ids: strin
     if (d.realmIndex < def.minRealm) {
       return { ok: false, reason: `需${REALMS[def.minRealm].name}以上弟子` };
     }
+    /*
+     * 心魔与性格会让人**拒绝执行任务**（设定集第 8.5 / 14.3 章）。
+     *
+     * 两条都做成硬性拒绝、并把原因写在按钮上：
+     * 设定集原文说的是"有概率无故拒绝"，但概率拒绝在界面上无法表达 ——
+     * 玩家点下"派遣"却什么也没发生，只会以为是 bug。
+     * 硬拒绝 + 明确提示，玩家一眼就知道"这个人现在不能用，得先给他清心"。
+     */
+    if (isRefusingTask(d)) {
+      return { ok: false, reason: `${d.name} 心魔缠身，拒绝出征（先服清心丹或建静心阁）` };
+    }
+    if (def.baseCasualty >= HIGH_RISK_CASUALTY && refusesHighRisk(d)) {
+      return { ok: false, reason: `${d.name} 性情恬淡，拒绝前往如此凶险之地` };
+    }
   }
   return { ok: true, reason: null };
 }
@@ -161,13 +192,20 @@ export function canStartExpedition(state: GameState, realmId: string, ids: strin
  *
  * 默认按 maxParty 满编 —— 「人越多最终获取的资源越多」，
  * 空闲弟子闲着也是闲着。
+ *
+ * ⚠️ 这里必须排掉"拒绝出征"的人（心魔缠身 / 恬淡拒绝高危），
+ * 否则"推荐队伍"会推荐出一个 `canStartExpedition` 判定为不合法的组合，
+ * 玩家点了派遣却失败，还得自己去找是谁的问题。
  */
 export function autoSelectParty(state: GameState, realmId: string, size?: number): string[] {
   const def = SECRET_REALM_MAP[realmId];
   if (!def) return [];
 
+  const highRisk = def.baseCasualty >= HIGH_RISK_CASUALTY;
   const candidates = getIdleDisciples(state)
     .filter((d) => d.realmIndex >= def.minRealm)
+    .filter((d) => !isRefusingTask(d))
+    .filter((d) => !(highRisk && refusesHighRisk(d)))
     .sort((a, b) => REALMS[b.realmIndex].power - REALMS[a.realmIndex].power);
 
   const want = Math.max(def.minParty, Math.min(size ?? def.maxParty, def.maxParty));
@@ -209,11 +247,32 @@ export function startExpedition(
     .map((id) => state.sect.disciples.find((d) => d.id === id)?.name ?? '?')
     .join('、');
 
+  /*
+   * 指派高危秘境会让人不满（设定集第 8.6 章「指派极高风险任务 −10~20」）。
+   *
+   * 取了个温和值（−4）：本作的秘境伤亡率到极危是 40%，一趟下来常常真的要死人，
+   * 按设定集那个量级来扣，玩家的每一支队伍打完两趟就全部离心了 ——
+   * 那不是"取舍"，那是"不许打"。所以这里只作为**长期消耗**存在，
+   * 与"圆满归来 +3"形成一个"打得稳就涨、硬拼就掉"的平衡。
+   */
+  const withLoyalty =
+    def.baseCasualty >= HIGH_RISK_CASUALTY
+      ? {
+          ...withStatus,
+          sect: {
+            ...withStatus.sect,
+            disciples: withStatus.sect.disciples.map((d) =>
+              ids.includes(d.id) ? adjustLoyalty(d, -LOYALTY_LOSS_HIGH_RISK) : d,
+            ),
+          },
+        }
+      : withStatus;
+
   return {
-    ...withStatus,
-    expeditions: [...withStatus.expeditions, expedition],
-    journal: pushJournal(withStatus.journal, {
-      time: withStatus.playTime,
+    ...withLoyalty,
+    expeditions: [...withLoyalty.expeditions, expedition],
+    journal: pushJournal(withLoyalty.journal, {
+      time: withLoyalty.playTime,
       kind: 'info',
       text: `${names} 启程探索${def.name}（${ids.length} 人）`,
     }),
@@ -228,6 +287,8 @@ export interface ExpeditionOutcome {
   realmName: string;
   gains: { id: ItemId; amount: number; name: string; icon: string }[];
   pills: { id: string; amount: number; name: string; icon: string }[];
+  /** 本次掉到的功法碎片（设定集第 7 章） */
+  fragments: { id: string; amount: number; name: string; grade: number }[];
   /** 带回的材料种子（需求 5） */
   seeds: { material: MaterialId; amount: number; name: string; icon: string }[];
   /** 寻获的图纸（需求 6） */
@@ -275,6 +336,13 @@ export function resolveExpedition(
 
   // 队伍里可能已经有人寿元耗尽
   const alive = expedition.discipleIds.filter((id) => state.sect.disciples.some((d) => d.id === id));
+  // 队伍只从名册里取一次，后面所有按人算的东西都复用这一份（千人宗门下省一趟 O(全宗人数)）
+  const rosterById = new Map(state.sect.disciples.map((d) => [d.id, d]));
+  const party: Disciple[] = [];
+  for (const id of alive) {
+    const d = rosterById.get(id);
+    if (d) party.push(d);
+  }
   const partyPower = getPartyPower(state, alive);
   const powerRatio = def.requiredPower > 0 ? partyPower / def.requiredPower : MAX_YIELD_FACTOR;
   const partySize = alive.length;
@@ -283,14 +351,35 @@ export function resolveExpedition(
   const sizeFactor = getPartySizeFactor(def, partySize);
   const artifacts = getArtifactBonuses(state);
   const weather = getWeatherEffects(state);
+  /*
+   * 弟子的**产出类**天赋与性格（设定集第 8.3 / 8.5 章）：
+   * 按队伍取最高一项，不叠加 —— 一个人懂兽语就够了，带十个不会变成十倍。
+   */
+  const partyTalentBonus = getPartyTalentYieldBonusOf(party) + getPartyManualYieldBonusOf(party);
   const yieldMultiplier =
     // 善行值加成（需求 2）：善行越高，探索产出越好
     (1 + getKarmaExploreBonus(state) + getSpaceExploreBonus(state)) *
     state.buffs.yieldMultiplier *
-    (1 + artifacts.expeditionYield + getStructureBonus(state, 'expeditionYieldBonus') + (weather.expeditionYield ?? 0));
+    (1 + artifacts.expeditionYield + getStructureBonus(state, 'expeditionYieldBonus') + (weather.expeditionYield ?? 0)) *
+    (1 + partyTalentBonus);
 
   /* ---- 1. 计算产出 ---- */
-  const pool = def.loot.filter((entry) => !entry.guaranteed);
+  /*
+   * 慧眼辨材（设定集第 8.4 章：稀有材料掉落概率 +4%）。
+   *
+   * 做法是**按权重抬稀有材料**，而不是"必定多掉一条"—— 后者会让稀有材料
+   * 从"运气"变成"工资"。这个坑在掌门亲探那条路上踩过一次：
+   * `weightedDraw(rare, 1, ...)` 在不放回抽样下必定返回一条，稀有率直接变 100%。
+   * 抬权重保留了随机性，只是把骰子往稀有那一侧挪一点。
+   */
+  const rareBonus = getFarmTalentBonus(state, 'rareDrop');
+  const pool = def.loot
+    .filter((entry) => !entry.guaranteed)
+    .map((entry) =>
+      rareBonus > 0 && isRareMaterial(entry.item)
+        ? { ...entry, weight: entry.weight * (1 + rareBonus) }
+        : entry,
+    );
   const guaranteed = def.loot.filter((entry) => entry.guaranteed);
   const picked: LootEntry[] = [...guaranteed, ...weightedDraw(pool, getLootRolls(def, partySize), random)];
 
@@ -392,6 +481,11 @@ export function resolveExpedition(
     }
   }
 
+  /* ---- 1d2. 功法碎片（设定集第 7.3 章：小怪/精英/BOSS 掉碎片） ---- */
+  const fragmentRoll = rollFragmentDrop(working, def.tier, random);
+  working = fragmentRoll.state;
+  const fragmentGain = fragmentRoll.drop;
+
   /* ---- 1e. 心得（需求 4：弟子探索后增加心得，加快进境） ---- */
   const insightGain = getExpeditionInsight(working, def);
 
@@ -413,14 +507,23 @@ export function resolveExpedition(
    */
   const casualtyRate = Math.min(Math.max(baseRate, 0), MAX_CASUALTY_RATE) * (1 - safety);
 
+  /*
+   * 逐人掷骰（设定集第 8.3 / 8.5 / 8.6 章）。
+   *
+   * 队伍级的 `casualtyRate` 只算"这一趟有多险"，**具体到每个人还要看他自己的**
+   * 战斗天赋、性格与忠诚档 —— 铁甲体魄的弟子就是比别人扛得住。
+   * 这也是为什么天赋的减伤可以放心给"每人一份"：伤亡本来就是逐人判的，
+   * 带 50 个人不会因此变成全员免伤。
+   */
   const casualties: { id: string; name: string }[] = [];
   const survivors: string[] = [];
-  for (const id of alive) {
-    if (random() < casualtyRate) {
-      const d = working.sect.disciples.find((x) => x.id === id);
-      if (d) casualties.push({ id, name: d.name });
+  for (const d of party) {
+    const personal = getDiscipleCasualtyReduction(d);
+    const personalRate = casualtyRate * (1 - personal);
+    if (random() < personalRate) {
+      casualties.push({ id: d.id, name: d.name });
     } else {
-      survivors.push(id);
+      survivors.push(d.id);
     }
   }
 
@@ -444,6 +547,7 @@ export function resolveExpedition(
   const extra = [
     seedGains.map((s) => `${s.icon}${s.name}`).join(' '),
     blueprintGains.map((b) => `${b.icon}${b.name}`).join(' '),
+    fragmentGain ? `${fragmentGain.name}碎片×${fragmentGain.amount}` : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -487,6 +591,61 @@ export function resolveExpedition(
     realmCooldowns: { ...working.realmCooldowns, [def.id]: def.cooldown },
     journal,
   };
+
+  /*
+   * ---- 3b. 忠诚度与心魔的结算（设定集第 8.6 / 14.3 章） ----
+   *
+   * 放在"写回状态"之后、器物损耗之前：它只动弟子本身，
+   * 与后面的保命丹 / 器物损耗互不影响。
+   */
+  gearState = settlePartyAfterExpedition(gearState, survivors, casualties.length, casualties.length > 0);
+
+  /*
+   * ---- 3b2. 陨落弟子的功法回收（设定集第 7 章：60% 回收、40% 损毁）----
+   *
+   * 必须在"从名册里剔除"**之后**做，但对象要取自剔除**之前**的快照 ——
+   * 死了的人身上那本书才有可能回来。
+   */
+  if (casualties.length > 0) {
+    const diedIds = new Set(casualties.map((c) => c.id));
+    const died = working.sect.disciples.filter((d) => diedIds.has(d.id));
+    const salvage = salvageManualsOnDeath(gearState, died, random);
+    gearState = salvage.state;
+    if (salvage.salvaged.length > 0 || salvage.lost.length > 0) {
+      gearState = {
+        ...gearState,
+        journal: pushJournal(gearState.journal, {
+          time: gearState.playTime,
+          kind: 'info',
+          text: `清点遗物：${[
+            salvage.salvaged.length > 0 ? `回收 ${salvage.salvaged.join('、')}` : '',
+            salvage.lost.length > 0 ? `损毁 ${salvage.lost.join('、')}` : '',
+          ]
+            .filter(Boolean)
+            .join('，')}`,
+        }),
+      };
+    }
+  }
+
+  /*
+   * ---- 3c. 叛逃判定（设定集第 8.6 章）----
+   * 只对**本趟参战且活着回来**的人掷骰，且发生在忠诚已经被上面那步改过之后 ——
+   * 所以"同门陨落导致忠诚跌破阈值"有可能当场就变成下一趟的叛逃，
+   * 这条因果链是刻意留着的。
+   */
+  const desertion = rollDesertion(gearState, survivors, random);
+  if (desertion.deserters.length > 0) {
+    gearState = desertion.state;
+    journal = pushJournal(gearState.journal, {
+      time: gearState.playTime,
+      kind: 'bad',
+      text: `${def.name}途中生变：${desertion.deserters
+        .map((d) => `${d.name}${d.greedy ? '（卷走一批材料）' : ''}`)
+        .join('、')} 叛出宗门`,
+    });
+    gearState = { ...gearState, journal };
+  }
 
   if (working.buffs.safetyOnce) {
     gearState = {
@@ -548,6 +707,9 @@ export function resolveExpedition(
       realmName: def.name,
       gains,
       pills: pillGains,
+      fragments: fragmentGain
+        ? [{ id: fragmentGain.manualId, amount: fragmentGain.amount, name: fragmentGain.name, grade: fragmentGain.grade }]
+        : [],
       seeds: seedGains,
       blueprints: blueprintGains,
       discovered,
@@ -792,6 +954,11 @@ export function resolveSurvey(
     }
   }
 
+  /* 3b. 功法残页（设定集第 7.3 章）：普通探索按区域的境界档次抽 */
+  const surveyFragmentRoll = rollFragmentDrop(working, Math.min(9, Math.max(1, region.requiresRealm + 1)), random);
+  working = surveyFragmentRoll.state;
+  const surveyFragmentDrop = surveyFragmentRoll.drop;
+
   /* 4. 心得：普通探索也给，但只有秘境的一半 —— 见闻不如亲历 */
   const minRealm = Math.max(0, region.requiresRealm - 1);
   const insightGain = Math.max(
@@ -811,7 +978,9 @@ export function resolveSurvey(
   journal = pushJournal(journal, {
     time: working.playTime,
     kind: 'good',
-    text: `${region.name}普通探索归来（${partySize} 人）：${summary || '一无所获'}`,
+    text: `${region.name}普通探索归来（${partySize} 人）：${summary || '一无所获'}${
+      surveyFragmentDrop ? `，另得 ${surveyFragmentDrop.name}碎片×${surveyFragmentDrop.amount}` : ''
+    }`,
   });
   if (discovered) {
     journal = pushJournal(journal, {
@@ -869,6 +1038,17 @@ export function resolveSurvey(
       realmName: `${region.name}（普通探索）`,
       gains,
       pills: [],
+      // 普通探索也能碰上散落的功法残页（它本来就是"翻山越岭找东西"）
+      fragments: surveyFragmentDrop
+        ? [
+            {
+              id: surveyFragmentDrop.manualId,
+              amount: surveyFragmentDrop.amount,
+              name: surveyFragmentDrop.name,
+              grade: surveyFragmentDrop.grade,
+            },
+          ]
+        : [],
       seeds: [],
       blueprints: [],
       discovered,

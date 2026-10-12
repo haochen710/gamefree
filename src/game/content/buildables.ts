@@ -173,6 +173,13 @@ export interface StructureDef extends BuildableBase {
    */
   sectDefense?: number;
   /**
+   * 每座每分钟为**每名**弟子压制多少心魔（设定集第 14.3 章的静心阁）。
+   *
+   * 与其它加成一样按"座数求和"，上限由 `max` 兜住 —— 免得盖满之后
+   * 全宗心魔永远是 0，"心魔"这条压力线就消失了。
+   */
+  mindDrain?: number;
+  /**
    * 炼丹 / 炼器成功率加成（需求 2）。
    *
    * 丹炉阵与地火熔炉原来给的是"丹房 / 炼器房名额"，但需求 2 把丹房与炼器房
@@ -767,6 +774,51 @@ export const STRUCTURES: StructureDef[] = [
       // 不写 requiresSectLevel：宗门本身要金丹期才存在，而这座建筑声明的是
       // 筑基期 —— 写 1 品就变成"要求一个此刻还达不到的门槛"了
       max: 8,
+    },
+    {
+      id: 'mindPavilion',
+      kind: 'structure',
+      group: 'hall',
+      name: '静心阁',
+      icon: '🕯',
+      desc: '一间蒲团、一炉清香。每座每分钟为全宗弟子压制 0.02 点心魔（最多 12 座）。',
+      /*
+       * 设定集第 14.3 章「压制/清除手段」的第 3 条。
+       *
+       * 它是**持续**的，也是唯一"不用玩家去点"的那一条：另外几条
+       * （清心丹 / 论道大比 / 长老开导）都得主动操作。心魔如果只能主动清，
+       * 玩家一忙别的事就会眼看着弟子一个个入魔 —— 总得有条被动底线。
+       */
+      mindDrain: 0.02,
+      baseCost: { qi: 2e4, wood: 1800, stone: 600, herb: 800 },
+      costGrowth: 1.3,
+      unlock: { stone: 300 },
+      requiresRealm: 1,
+      // 与悟道石同理：不写 requiresSectLevel
+      max: 12,
+    },
+    {
+      id: 'library',
+      kind: 'structure',
+      group: 'hall',
+      name: '藏经阁',
+      icon: '📚',
+      desc: '典籍与功法碎片都收在这里。每座让碎片合成的成功率 +3%，并解锁「参悟」（用灵气换碎片）。',
+      /*
+       * 设定集第 7 章「功法获取途径」的枢纽建筑。
+       *
+       * 它同时承担三件事，所以刻意**不设 requiresTech**：
+       *   1. 参悟（凡品~极品碎片可以用灵气换）；
+       *   2. 碎片合成的成功率（`manuals.getSynthRate` 直接读它的座数）；
+       *   3. 「藏书」这个身份本身 —— 宗门有座藏经阁，弟子才有功法可用。
+       * 门槛只有筑基期与一笔资源，是为了让"功法"这条线在**中期**就能开张。
+       */
+      insightBonus: 0.02,
+      baseCost: { qi: 6e4, wood: 3000, stone: 1500, herb: 1200 },
+      costGrowth: 1.32,
+      unlock: { stone: 500 },
+      requiresRealm: 1,
+      max: 10,
     },
 
   /* ---------------- 宗门奇珍（技术 / 图纸） ---------------- */

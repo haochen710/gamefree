@@ -17,6 +17,7 @@ import { useState } from 'react';
 import { fmt, fmtDuration } from '../game/decimal';
 import {
   APTITUDE_MAP,
+  HIGH_RISK_CASUALTY,
   ITEM_MAP,
   MAJOR_REGIONS,
   MAP_REGIONS,
@@ -69,6 +70,7 @@ import {
 } from '../game/expeditions';
 import { canStartSoloRealm, canStartTravel, getTravelRemaining } from '../game/travel';
 import { getPartyPower } from '../game/disciples';
+import { isRefusingTask, refusesHighRisk } from '../game/disciples';
 import { useGame } from '../game/store';
 import { canStartSoloSurvey, getSoloSurveyDuration } from '../game/travel';
 import type { GameState } from '../game/state';
@@ -87,6 +89,8 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
   const [repeat, setRepeat] = useState(1);
 
   const idle = getIdleDisciples(state).filter((d) => d.realmIndex >= def.minRealm);
+  // 高危秘境（基础伤亡 ≥ 30%）会让性情恬淡的弟子拒绝前往
+  const highRisk = def.baseCasualty >= HIGH_RISK_CASUALTY;
   const cooldown = getRealmCooldown(state, def.id);
   const gate = getRealmGate(state, def);
   // 需求 1：资源富集区的秘境要先花一笔资源"开启"
@@ -182,21 +186,34 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
       {picking && (
         <div className="picker">
           {idle.length === 0 && <p className="panel__note">没有符合条件的空闲弟子。</p>}
-          {idle.map((d) => (
-            <button
-              key={d.id}
-              type="button"
-              className={selected.includes(d.id) ? 'picker__item picker__item--on' : 'picker__item'}
-              onClick={() => toggle(d.id)}
-            >
-              <span className="picker__name">{d.name}</span>
-              <span className="picker__apt" style={{ color: APTITUDE_MAP[d.aptitude].color }}>
-                {APTITUDE_MAP[d.aptitude].name}
-              </span>
-              <span className="picker__realm">{REALMS[d.realmIndex].name}</span>
-              <span className="picker__power">心得 {Math.round(d.insight)}</span>
-            </button>
-          ))}
+          {idle.map((d) => {
+            /*
+             * 心魔缠身（≥61）会拒绝出征，性格恬淡的拒绝高危秘境
+             * （设定集第 8.5 / 14.3 章）。这里**灰掉并写明原因**，
+             * 而不是把这些人从名单里藏起来 —— 藏起来玩家只会觉得"我的人去哪了"。
+             */
+            const refuseDemon = isRefusingTask(d);
+            const refuseRisk = !refuseDemon && highRisk && refusesHighRisk(d);
+            const refused = refuseDemon || refuseRisk;
+            return (
+              <button
+                key={d.id}
+                type="button"
+                className={selected.includes(d.id) ? 'picker__item picker__item--on' : 'picker__item'}
+                disabled={refused}
+                title={refuseDemon ? '心魔缠身，拒绝出征：先服清心丹或建静心阁' : refuseRisk ? '性情恬淡，拒绝前往如此凶险之地' : undefined}
+                onClick={() => toggle(d.id)}
+              >
+                <span className="picker__name">{d.name}</span>
+                <span className="picker__apt" style={{ color: APTITUDE_MAP[d.aptitude].color }}>
+                  {APTITUDE_MAP[d.aptitude].name}
+                </span>
+                <span className="picker__realm">{REALMS[d.realmIndex].name}</span>
+                <span className="picker__power">心得 {Math.round(d.insight)}</span>
+                {refused && <span className="picker__tag">拒绝出征</span>}
+              </button>
+            );
+          })}
         </div>
       )}
 

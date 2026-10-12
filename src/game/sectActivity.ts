@@ -15,6 +15,7 @@ import {
   ARENA_INSIGHT_REWARD,
   ARENA_INTERVAL_GAME_YEARS,
   ARENA_REQUIRED_BUILDING,
+  DEMON_RELIEF_ARENA,
   EVENT_CULTIVATE_RATIO,
   EVENT_MARTIAL_INSIGHT,
   EVENT_TOWER_DISCOVERY_PITY,
@@ -28,7 +29,8 @@ import {
   type SectEventKind,
 } from './content';
 import { getBuildingCount, getInsightMax, getStructureBonus } from './engine';
-import { pushJournal } from './disciples';
+import { clampDemon, pushJournal } from './disciples';
+import { grantArenaManuals } from './manuals';
 import { gameRandom, type RandomSource } from './random';
 import type { Disciple, GameState } from './state';
 
@@ -82,7 +84,7 @@ export interface ArenaResult {
   participants: number;
 }
 
-/** 举办一次大比：全宗弟子得心得，并获得一年的修行加速 */
+/** 举办一次大比：全宗弟子得心得、心魔稍减，并获得一年的修行加速 */
 export function runArena(state: GameState): ArenaResult {
   const disciples = state.sect.disciples;
   if (disciples.length === 0) {
@@ -92,22 +94,38 @@ export function runArena(state: GameState): ArenaResult {
   const bonus = 1 + getStructureBonus(state, 'insightBonus');
   const reward = Math.max(1, Math.round(ARENA_INSIGHT_REWARD * bonus));
 
-  return {
-    state: {
+  /*
+   * 论道大比也是功法碎片的一条来源（设定集第 7 章：第一名上品碎片×2、
+   * 二三名良品碎片×2、参与奖凡品碎片×1）。这里按名额各抽一本功法发碎片 ——
+   * 具体发给谁不影响结果（碎片进的是宗门仓库），所以不必真的排名。
+   */
+  const manualReward = grantArenaManuals(
+    {
       ...state,
       sect: {
         ...state.sect,
         disciples: disciples.map((d) => ({
           ...d,
           insight: Math.min(getInsightMax(state), d.insight + reward),
+          demon: clampDemon(d.demon - DEMON_RELIEF_ARENA),
         })),
       },
+    },
+    gameRandom,
+  );
+
+  return {
+    state: {
+      ...manualReward.state,
       arenaTimer: ARENA_INTERVAL_SECONDS,
       arenaBuffSeconds: ARENA_BUFF_SECONDS,
       journal: pushJournal(state.journal, {
         time: state.playTime,
         kind: 'good',
-        text: `宗门大比落幕，弟子们各有所得（心得 +${reward}），全宗修行速度大增，持续一年`,
+        text:
+          `宗门大比落幕，弟子们各有所得（心得 +${reward}、心魔 −${DEMON_RELIEF_ARENA}` +
+          `${manualReward.notes.length > 0 ? `、${manualReward.notes.join('、')}` : ''}），` +
+          '全宗修行速度大增，持续一年',
       }),
     },
     participants: disciples.length,
