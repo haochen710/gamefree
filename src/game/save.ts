@@ -25,6 +25,7 @@ import {
   MAX_ENLIGHTEN_LEVEL,
   MAX_SPACE_RINGS,
   DISCOVERY_PITY_FAILURES,
+  DISCIPLE_CAP_BY_SECT_LEVEL,
   MAP_REGION_MAP,
   FINAL_REALM_INDEX,
   INSIGHT_MAX_ABSOLUTE,
@@ -119,7 +120,11 @@ export interface SerializedGame {
   ar: Record<string, number>;
   ri: number;
   li: number;
-  bp: number[];
+  /**
+   * `bp`（每个境界累积的突破保底加成）**已废弃**（需求 9 删除保底机制）。
+   * 字段声明保留成可选，只为让旧存档能原样读进来而不报错；不再序列化。
+   */
+  bp?: number[];
   gb: number;
   mi: number;
   mp: number;
@@ -223,7 +228,6 @@ export function serialize(state: GameState): SerializedGame {
     gc: { ...state.gearCharges },
     ri: state.realmIndex,
     li: state.layer,
-    bp: [...state.breakthroughPity],
     gb: state.globalBreakthroughBonus,
     mi: state.mind,
     mp: state.mindProgress,
@@ -750,16 +754,23 @@ export function deserialize(raw: unknown): GameState | null {
   const realmIndex = toInt(data.ri, 0, 0, FINAL_REALM_INDEX);
   const layer = toInt(data.li, 0, 0, REALMS[realmIndex].layerCount);
 
-  const pityRaw = Array.isArray(data.bp) ? data.bp : [];
-  const breakthroughPity = pityRaw
-    .slice(0, REALMS.length)
-    .map((value) => toFloat(value, 0, 0, 1));
+  /*
+   * 需求 9 删掉了突破保底：旧存档里的 `bp`（失败累积成功率）直接忽略，
+   * 不迁移 —— 保底本来就是「失败攒出来的」，把它折成别的数只会凭空送进度。
+   */
 
   /* ---- 宗门 ---- */
   const rawSect = (data.sec ?? {}) as Record<string, unknown>;
   const disciplesRaw = Array.isArray(rawSect.d) ? rawSect.d : [];
   const disciples: Disciple[] = [];
-  for (let i = 0; i < disciplesRaw.length && i < 500; i += 1) {
+  /*
+   * ⚠️ 这里原来夹的是 `i < 500`。需求 1 把弟子总数上限抬到 2048，
+   * 于是这个"防作弊上限"变成了**真实的数据丢失**：读档时第 501 名以后的弟子
+   * 会被静默丢掉 —— 每次刷新页面掉一批人，而且看不出来是谁。
+   * 现在按 `DISCIPLE_CAP_BY_SECT_LEVEL` 的最大值夹，与游戏内上限同源。
+   */
+  const discipleHardMax = Math.max(...DISCIPLE_CAP_BY_SECT_LEVEL);
+  for (let i = 0; i < disciplesRaw.length && i < discipleHardMax; i += 1) {
     const d = sanitizeDisciple(disciplesRaw[i], i);
     if (d) disciples.push(d);
   }
@@ -808,7 +819,6 @@ export function deserialize(raw: unknown): GameState | null {
     gearCharges,
     realmIndex,
     layer,
-    breakthroughPity,
     globalBreakthroughBonus: toFloat(data.gb, 0, 0, 10),
     mind: toFloat(data.mi, fresh.mind, 0, 1e6),
     mindProgress: toFloat(data.mp, 0, 0, 1e6),

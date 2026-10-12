@@ -117,7 +117,7 @@ export function PlantationPanel() {
 
         {capacity === 0 && (
           <p className="panel__note">
-            还没有地块。先钻研「灵植之术」，再在洞府建设里建一座<strong>灵植园</strong>。
+            还没有地块。先钻研「灵植之术」，再在「建筑」页里建一座<strong>灵植园</strong>。
             种子来自探索（稀有材料只有探索才掉）与商行（只卖基础材料种子）。
           </p>
         )}

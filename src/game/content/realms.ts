@@ -21,11 +21,20 @@ export interface RealmDef {
   realmMultiplier: number;
   /** 突破到下一境界所需灵气 */
   breakthroughQi: number;
-  /** 突破到下一境界所需丹药数量（丹药 id 见 breakthroughPill） */
-  breakthroughPills: number;
-  /** 突破该境界时建议服用的境界丹 */
+  /*
+   * ⚠️ 这里原来还有一个 `breakthroughPills: number`（"突破要几颗丹"）：
+   * 10 个境界**全写 0**，而且**全仓库没有一处读它** —— 实际消耗固定为 1 颗
+   * （`engine.breakthrough` 与 `disciples.tickDisciples` 各自扣 1）。
+   * 声明了、赋了 0、没人读，正是「死配置」那一类坑，本轮删掉。
+   */
+  /** 突破该境界时**必须**服用的境界丹 */
   breakthroughPill: string;
-  /** 不吃丹药的基础突破成功率 */
+  /**
+   * **未服丹**的基础突破成功率。
+   *
+   * 需求 9 之后丹药是硬门槛，所以这个数玩家看不到成品率 ——
+   * 它只参与 `丹药加成 = (1 − baseSuccess) × 62%` 的计算。
+   */
   baseSuccess: number;
 
   /* ---- 以下服务于弟子与秘境 ---- */
@@ -48,7 +57,6 @@ export const REALMS: RealmDef[] = [
     layerBonus: 0.04,
     realmMultiplier: 1,
     breakthroughQi: 600,
-    breakthroughPills: 0,
     breakthroughPill: 'foundationPill',
     baseSuccess: 0.8,
     cultivationYears: 50,
@@ -64,7 +72,6 @@ export const REALMS: RealmDef[] = [
     layerBonus: 0.04,
     realmMultiplier: 2.5,
     breakthroughQi: 1.2e4,
-    breakthroughPills: 0,
     breakthroughPill: 'goldenCorePill',
     baseSuccess: 0.68,
     cultivationYears: 80,
@@ -80,7 +87,6 @@ export const REALMS: RealmDef[] = [
     layerBonus: 0.04,
     realmMultiplier: 8,
     breakthroughQi: 1.5e5,
-    breakthroughPills: 0,
     breakthroughPill: 'nascentPill',
     baseSuccess: 0.58,
     cultivationYears: 120,
@@ -96,7 +102,6 @@ export const REALMS: RealmDef[] = [
     layerBonus: 0.04,
     realmMultiplier: 25,
     breakthroughQi: 8e5,
-    breakthroughPills: 0,
     breakthroughPill: 'spiritPill',
     baseSuccess: 0.5,
     cultivationYears: 250,
@@ -112,7 +117,6 @@ export const REALMS: RealmDef[] = [
     layerBonus: 0.04,
     realmMultiplier: 80,
     breakthroughQi: 1.2e7,
-    breakthroughPills: 0,
     breakthroughPill: 'voidPill',
     baseSuccess: 0.42,
     cultivationYears: 400,
@@ -128,7 +132,6 @@ export const REALMS: RealmDef[] = [
     layerBonus: 0.04,
     realmMultiplier: 250,
     breakthroughQi: 2e8,
-    breakthroughPills: 0,
     breakthroughPill: 'unityPill',
     baseSuccess: 0.35,
     cultivationYears: 700,
@@ -144,7 +147,6 @@ export const REALMS: RealmDef[] = [
     layerBonus: 0.04,
     realmMultiplier: 780,
     breakthroughQi: 3.2e9,
-    breakthroughPills: 0,
     breakthroughPill: 'grandPill',
     baseSuccess: 0.3,
     cultivationYears: 1200,
@@ -160,7 +162,6 @@ export const REALMS: RealmDef[] = [
     layerBonus: 0.04,
     realmMultiplier: 2400,
     breakthroughQi: 6e10,
-    breakthroughPills: 0,
     breakthroughPill: 'tribulationPill',
     baseSuccess: 0.25,
     cultivationYears: 2000,
@@ -176,7 +177,6 @@ export const REALMS: RealmDef[] = [
     layerBonus: 0.04,
     realmMultiplier: 7200,
     breakthroughQi: 1.2e12,
-    breakthroughPills: 0,
     breakthroughPill: 'ascensionPill',
     baseSuccess: 0.18,
     cultivationYears: 5000,
@@ -192,7 +192,6 @@ export const REALMS: RealmDef[] = [
     layerBonus: 0.1,
     realmMultiplier: 19683,
     breakthroughQi: 0,
-    breakthroughPills: 0,
     breakthroughPill: '',
     baseSuccess: 1,
     cultivationYears: 0,
@@ -219,14 +218,32 @@ export const SECT_MIN_REALM = 2;
 /* 突破成功率                                                          */
 /* ------------------------------------------------------------------ */
 
-/** 服用对应的境界丹，突破成功率提升多少 */
-export const BREAKTHROUGH_PILL_BONUS = 0.35;
-/** 每次失败累积的保底加成（失败也长经验，避免卡死） */
-export const BREAKTHROUGH_FAIL_BONUS = 0.05;
-/** 保底加成上限 */
-export const BREAKTHROUGH_FAIL_BONUS_CAP = 0.5;
-/** 成功率上限，留一点失败余地 */
-export const BREAKTHROUGH_MAX_SUCCESS = 0.98;
+/**
+ * 突破丹的加成 = **未服丹时差的那一截的 62%**。
+ *
+ * ⚠️ 本轮需求 9：「玩家和弟子突破应当对**丹药的需求很强烈**，
+ * 取消突破失败后叠加概率的设定」。所以这里做了两件事：
+ *
+ *   1. **丹药从"可选加成"变成"硬门槛"** —— 没有对应境界丹，连试都不能试
+ *      （见 `engine.getBreakthroughStatus`）。这是需求的那半句"需求很强烈"。
+ *   2. 加成改成"补掉剩余差距的 62%"，而不是原来那个固定的 +35 个百分点。
+ *
+ * 为什么用"补差距"而不是固定值：固定值在高境界会失真 ——
+ * 渡劫期基础只有 18%，+35 也只是 53%；而炼气期 80% + 35 直接撞上限，
+ * 于是"这颗丹值不值"在低境界看不出来、在高境界又救不了命。
+ * 补差距的形式让丹药**在每一个境界都同样关键**：
+ *   炼气 80% → 92%、金丹 58% → 84%、渡劫 18% → 69%。
+ * （`baseSuccess` 从此是**无丹药**的成功率；没丹药压根不允许突破，
+ *   所以这个数只用来算"丹药补了多少"，不会直接展示给玩家。）
+ */
+export const BREAKTHROUGH_PILL_GAP_RECOVERY = 0.62;
+
+/**
+ * 成功率上限（对齐设定集第 6、16 章的「总成功率上限 95%」）。
+ *
+ * 留 5% 的失败余地：一个"必定成功"的按钮会让丹药与所有加成同时失去意义。
+ */
+export const BREAKTHROUGH_MAX_SUCCESS = 0.95;
 
 /* ------------------------------------------------------------------ */
 /* 突破失败的代价（按境界分级）                                          */
@@ -310,10 +327,12 @@ export const MEDITATE_SECONDS = 1.5;
  *
  *   1. **季节**：一季 = 480 / 4 = 120 真实秒（见 seasons.ts 的 SEASON_SECONDS）。
  *      上一轮因为"一个游戏年只有 12 秒"而不敢把季节挂到日历上，现在可以了。
- *   2. **弟子寿元**：`lifespan` 是以**游戏年**计的（炼气 300 年、渡劫 10 万年），
+ *   2. **弟子寿元**：`lifespan` 是以**游戏年**计的（炼气 60 年、渡劫 5 万年），
  *      所以日历一慢，寿元对应的真实时间也慢了 39 倍 ——
- *      炼气弟子从"活 1 小时"变成"活 40 小时"，化神以上在 30 天模拟里基本不会老死。
+ *      炼气弟子从"活 1 小时"变成"活 8 小时"，化神以上在 30 天模拟里基本不会老死。
  *      这是"年"这个单位被拉长的必然结果，不是 bug。
+ *      （⚠️ 这里原先写的是"炼气 300 年、渡劫 10 万年"，那是改日历**之前**的旧表，
+ *        与本文件下面的 `lifespan` 已经对不上了。）
  *   3. ⚠️ **商行刷新与大比间隔不能跟着日历走**：它们的节奏是给真人看的，
  *      跟着日历一慢就会变成"40 分钟刷新一次货架"，所以那两个改成直接按真实秒定义。
  */

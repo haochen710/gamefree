@@ -20,6 +20,7 @@ import {
   ITEM_MAP,
   MAJOR_REGIONS,
   MAP_REGIONS,
+  MAP_REGION_MAP,
   MATERIAL_MAP,
   REALMS,
   SECRET_REALMS,
@@ -665,9 +666,19 @@ export function MapPanel() {
   const cancelTravel = useGame((s) => s.cancelTravel);
   const range = getExplorationRange(game);
   const travel = game.personalTravel;
-  // 需求 5：掌门出门可能是游历，也可能是独自探秘境
+  /*
+   * 需求 5：掌门出门可能是游历，也可能是独自探秘境。
+   *
+   * ⚠️ 本轮需求 11：「掌门亲自探索，有时会没有进度条显示」——
+   * 根因就在下面这三个变量。掌门出行有三种 `kind`：
+   *   travel（游历）/ realm（独自探秘境）/ survey（**亲自普通探索**），
+   * 而进度条原来只在 `kind === 'travel' || kind === 'realm'` 时才渲染 ——
+   * 也就是说**只有第三种没有进度条**，正好对上"有时"这两个字。
+   * 玩家会以为卡住了，其实只是界面上少画了一根条。
+   */
   const travelDef = travel && travel.kind === 'travel' ? TRAVEL_REGION_MAP[travel.regionId] : null;
   const soloDef = travel && travel.kind === 'realm' ? SECRET_REALM_MAP[travel.regionId] : null;
+  const soloSurvey = travel && travel.kind === 'survey' ? MAP_REGION_MAP[travel.regionId] : null;
   const undiscovered = getUndiscoveredCount(game);
   const compassBonus = getDiscoveryBonusFromArtifacts(game);
   const pityLeft = getDiscoveryPityRemaining(game);
@@ -714,11 +725,25 @@ export function MapPanel() {
             </span>
           </div>
 
-          {travel && (travelDef || soloDef) && (
+          {/*
+            ⚠️ 这里的守卫只能是 `travel` 本身。
+            原来写的是 `travel && (travelDef || soloDef || soloSurvey)` ——
+            只要有一个 def 查不到（旧存档里改名/删掉的区域、或者以后又加了一种 kind），
+            整块「进行中」就会**静默消失**：看不到进度、看不到剩余时间、
+            也没有「中止」按钮，掌门永远"在外"而玩家无从操作。
+            这正是需求 11 那一类问题的另一种形态，所以必须兜底成"照样显示"。
+          */}
+          {travel && (
             <div className="running">
               <div className="running__head">
                 <span>
-                  {soloDef ? `🧘 掌门独自探索 ${soloDef.name}` : `🧭 掌门游历 ${travelDef?.name ?? ''}`}
+                  {soloDef
+                    ? `🧘 掌门独自探索 ${soloDef.name}`
+                    : soloSurvey
+                      ? `🧘 掌门亲自查探 ${soloSurvey.name}`
+                      : travelDef
+                        ? `🧭 掌门游历 ${travelDef.name}`
+                        : `🧭 掌门在外（${travel.regionId}）`}
                 </span>
                 <span className="running__time">
                   剩余{' '}
@@ -735,7 +760,7 @@ export function MapPanel() {
               </div>
               <div className="btn-row">
                 <button type="button" className="btn btn--danger" onClick={cancelTravel}>
-                  {soloDef ? '中止探索' : '中止游历'}
+                  {soloDef || soloSurvey ? '中止探索' : '中止游历'}
                 </button>
               </div>
             </div>

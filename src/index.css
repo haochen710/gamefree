@@ -1,22 +1,53 @@
 /* ==========================================================================
-   仙途 —— 水墨宣纸风格样式
+   仙途 —— 水墨黑白风格样式
    纯 CSS，没有引入 UI 框架，方便你随手改配色
+
+   本轮需求 3：「UI 改为黑白风」。做法是把色相整个抽掉，只留墨与纸：
+   层级、优先级、稀有度全部改由**明度 + 描边 + 字重**表达。
+   唯一的颜色是 --warn（资源不足 / 伤亡 / 危险 / 锁定 / 满仓）——
+   需求要的是"黑白风"，不是"绝对不能有颜色"，而这些状态必须在一屏灰里跳出来。
+
+   ⚠️ 改配色时注意两件事：
+     1. 写死的 hex 会让主题"漏色"。新增样式请一律用 :root 里的令牌；
+        下面的色值已经全部令牌化或严格灰阶（R = G = B，--warn 家族除外）。
+     2. 资质与稀有度的颜色在 **TS** 里（content/sect.ts 的 APTITUDES、
+        content/resources.ts 的 RARITY_COLORS），改主题时要一起改，
+        冒烟测试里有断言在看着它们是不是灰阶。
    ========================================================================== */
 
 :root {
-  --paper: #f4eee2;
-  --paper-2: #fffdf7;
-  --paper-3: #ece3d2;
-  --ink: #2e2a24;
-  --ink-soft: #6d6455;
-  --ink-faint: #a2988a;
-  --line: rgba(122, 96, 60, 0.24);
-  --line-strong: rgba(122, 96, 60, 0.45);
-  --accent: #93404a;
-  --accent-soft: rgba(147, 64, 74, 0.12);
-  --jade: #3d7a63;
-  --gold: #a8792a;
-  --shadow: 0 2px 10px rgba(80, 62, 38, 0.08);
+  /*
+   * 水墨黑白（本轮需求 3：「UI 改为黑白风」）。
+   *
+   * 做法不是"换个皮肤"，而是**把色相整个抽掉**：整个界面只剩墨（黑）与纸（白），
+   * 层级、优先级、稀有度全部改由**明度 + 描边 + 字重**承担。
+   *
+   * 唯一的例外是 --warn：需求是「黑白风」而不是"绝对不能有颜色"，
+   * 而"资源不足 / 伤亡 / 危险 / 锁定 / 满仓"这些状态必须在一屏灰里跳出来 ——
+   * 否则玩家会漏掉最该看见的东西。所以**只留一种颜色**，且只给警示用。
+   *
+   * 旧令牌 → 新令牌的对应关系：
+   *   --accent 朱红 → 焦墨（它本来就兼着"强调"与"主按钮"，去色后靠黑度强调）
+   *   --jade   青碧 → 中墨（表示"正向 / 加成"）
+   *   --gold   赭金 → 浅墨（表示"数值 / 次要强调"）
+   *   （新增）--warn 警示红：唯一保留的颜色
+   */
+  --paper: #f3f3f3;
+  --paper-2: #fbfbfb;
+  --paper-3: #e7e7e7;
+  --ink: #171717;
+  --ink-soft: #5b5b5b;
+  --ink-faint: #9b9b9b;
+  --line: rgba(0, 0, 0, 0.16);
+  --line-strong: rgba(0, 0, 0, 0.34);
+  --accent: #171717;
+  --accent-soft: rgba(0, 0, 0, 0.08);
+  --jade: #4f4f4f;
+  --gold: #6e6e6e;
+  /* 警示色。rgba 版本请用同一组通道值 rgba(156, 47, 39, α) */
+  --warn: #9c2f27;
+  --warn-soft: rgba(156, 47, 39, 0.12);
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.07);
   --radius: 10px;
   --font-body: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system,
     "Segoe UI", sans-serif;
@@ -39,7 +70,7 @@ body {
   background-color: var(--paper);
   background-image:
     radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.7), transparent 45%),
-    radial-gradient(circle at 82% 78%, rgba(200, 182, 150, 0.28), transparent 50%);
+    radial-gradient(circle at 82% 78%, rgba(0, 0, 0, 0.28), transparent 50%);
   background-attachment: fixed;
   font-size: 14px;
   line-height: 1.6;
@@ -213,19 +244,19 @@ a {
   margin-left: 5px;
 }
 
-/* 灵气装满：产量全部溢出，是实打实的进度损失 */
+/* 灵气装满：产量全部溢出，是实打实的进度损失 —— 黑白风里它是唯一的警示色 */
 .resource--full {
-  border-color: var(--accent);
-  background: linear-gradient(180deg, #fff8f6, var(--accent-soft));
+  border-color: var(--warn);
+  background: linear-gradient(180deg, #f9f9f9, var(--warn-soft));
 }
 
 .resource--full .resource__amount {
-  color: var(--accent);
+  color: var(--warn);
 }
 
 /* 副资源装满：只是提醒，不构成问题 */
 .resource--capped {
-  border-color: rgba(184, 134, 11, 0.5);
+  border-color: rgba(0, 0, 0, 0.5);
 }
 
 .resource--capped .resource__amount {
@@ -237,7 +268,7 @@ a {
 }
 
 .resource__rate--full {
-  color: var(--accent);
+  color: var(--warn);
   font-weight: 700;
 }
 
@@ -302,7 +333,7 @@ a {
   font-family: inherit;
   font-size: 13px;
   color: var(--ink);
-  background: linear-gradient(180deg, #fffefa, var(--paper-3));
+  background: linear-gradient(180deg, #fefefe, var(--paper-3));
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   padding: 6px 12px;
@@ -311,8 +342,8 @@ a {
 }
 
 .btn:hover:not(:disabled) {
-  background: linear-gradient(180deg, #fff, #e6dbc6);
-  box-shadow: 0 2px 6px rgba(80, 62, 38, 0.14);
+  background: linear-gradient(180deg, #fff, #dcdcdc);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.14);
 }
 
 .btn:active:not(:disabled) {
@@ -325,23 +356,29 @@ a {
 }
 
 .btn--primary {
-  background: linear-gradient(180deg, #a24b55, var(--accent));
-  border-color: #7c333c;
-  color: #fff9f4;
+  background: linear-gradient(180deg, #242424, var(--accent));
+  border-color: #000000;
+  color: #fafafa;
 }
 
+/*
+ * ⚠️ 主按钮的 hover 曾经被机械去色脚本映射成了**警示红**（旧的主按钮 hover 色
+ * 是"朱红稍亮"，而脚本按红族一律归到 --warn 家族）。后果是：鼠标划过任何一个主按钮都会变红，
+ * 于是"红色 = 有危险"这条唯一的颜色语义当场失效。
+ * 黑白风里主按钮的 hover 应当是**更亮一档的墨**，而不是换一种颜色。
+ */
 .btn--primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, #b0545f, #8a3943);
+  background: linear-gradient(180deg, #3d3d3d, #262626);
 }
 
 .btn--danger {
-  background: linear-gradient(180deg, #8a6a3a, #6f5227);
-  border-color: #5a4220;
-  color: #fff8ec;
+  background: linear-gradient(180deg, #b03a30, #7f261f);
+  border-color: #6d1f19;
+  color: #f9f9f9;
 }
 
 .btn--danger:hover:not(:disabled) {
-  background: linear-gradient(180deg, #9a7842, #7a5b2c);
+  background: linear-gradient(180deg, #c4483c, #8f2b23);
 }
 
 .btn--big {
@@ -448,8 +485,8 @@ a {
   font-size: 10px;
   padding: 1px 7px;
   border-radius: 10px;
-  background: rgba(58, 110, 168, 0.16);
-  color: #2c5480;
+  background: rgba(0, 0, 0, 0.16);
+  color: #3a3a3a;
 }
 
 .generator__output {
@@ -494,8 +531,8 @@ a {
 }
 
 .cost--short {
-  background: rgba(147, 64, 74, 0.22);
-  color: #7d2b34;
+  background: rgba(156, 47, 39, 0.22);
+  color: #9c2f27;
   font-weight: 700;
 }
 
@@ -521,13 +558,13 @@ a {
 .bar {
   height: 7px;
   border-radius: 4px;
-  background: rgba(122, 96, 60, 0.15);
+  background: rgba(0, 0, 0, 0.15);
   overflow: hidden;
 }
 
 .bar__fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--jade), #6aa78c);
+  background: linear-gradient(90deg, var(--jade), #989898);
   transition: width 0.25s ease;
 }
 
@@ -554,13 +591,19 @@ a {
   margin-bottom: 6px;
 }
 
+/* 括号里的补充说明（例如「丹药与弟子共用仓库」）：不要斜体，暗一档 */
+.realm__req em {
+  font-style: normal;
+  color: var(--ink-faint);
+}
+
 .realm__done {
   margin-top: 12px;
   padding: 10px;
   text-align: center;
   font-family: var(--font-serif);
   color: var(--gold);
-  background: rgba(168, 121, 42, 0.1);
+  background: rgba(0, 0, 0, 0.1);
   border-radius: 7px;
 }
 
@@ -570,7 +613,7 @@ a {
   font-size: 14px;
   padding: 10px 12px;
   border-radius: 7px;
-  background: rgba(168, 121, 42, 0.1);
+  background: rgba(0, 0, 0, 0.1);
   color: var(--gold);
   text-align: center;
 }
@@ -623,7 +666,7 @@ a {
 .modal-mask {
   position: fixed;
   inset: 0;
-  background: rgba(46, 42, 36, 0.45);
+  background: rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -637,7 +680,7 @@ a {
   border: 1px solid var(--line-strong);
   border-radius: 12px;
   padding: 20px;
-  box-shadow: 0 12px 40px rgba(40, 30, 18, 0.3);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
 }
 
 .modal__title {
@@ -669,7 +712,7 @@ a {
   gap: 6px;
   padding: 6px 10px;
   border-radius: 6px;
-  background: rgba(61, 122, 99, 0.08);
+  background: rgba(0, 0, 0, 0.08);
 }
 
 .modal__list strong {
@@ -694,13 +737,13 @@ a {
   left: 50%;
   bottom: 28px;
   transform: translateX(-50%);
-  background: rgba(46, 42, 36, 0.9);
-  color: #fdf9f1;
+  background: rgba(0, 0, 0, 0.9);
+  color: #f9f9f9;
   font-size: 13px;
   padding: 9px 20px;
   border-radius: 22px;
   z-index: 60;
-  box-shadow: 0 6px 20px rgba(40, 30, 18, 0.3);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
   animation: notice-in 0.2s ease;
 }
 
@@ -821,10 +864,10 @@ a {
   padding: 9px 11px;
   margin-bottom: 10px;
   border-radius: 8px;
-  border: 1px solid rgba(147, 64, 74, 0.45);
-  background: var(--accent-soft);
+  border: 1px solid var(--warn);
+  background: var(--warn-soft);
   font-size: 12px;
-  color: #7d2b34;
+  color: #9c2f27;
 }
 
 .injury__icon {
@@ -858,17 +901,17 @@ a {
 }
 
 .realm__risk--safe {
-  background: rgba(61, 122, 99, 0.1);
-  color: #2c5c4a;
+  background: rgba(0, 0, 0, 0.1);
+  color: #4f4f4f;
 }
 
 .realm__risk--hard {
-  background: rgba(147, 64, 74, 0.1);
-  color: #7d2b34;
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .stat--injury .stat__value--injury {
-  color: var(--accent);
+  color: var(--warn);
 }
 
 /* ==========================================================================
@@ -981,7 +1024,7 @@ a {
   padding: 0 5px;
   border-radius: 9px;
   background: var(--accent);
-  color: #fff9f4;
+  color: #fafafa;
   font-size: 10px;
   font-family: var(--font-body);
   line-height: 17px;
@@ -1006,25 +1049,25 @@ a {
   height: 4px;
   margin-top: 3px;
   border-radius: 3px;
-  background: rgba(122, 96, 60, 0.18);
+  background: rgba(0, 0, 0, 0.18);
   overflow: hidden;
 }
 
 .mind-bar__fill {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, #6aa78c, var(--jade));
+  background: linear-gradient(90deg, #989898, var(--jade));
   transition: width 0.25s ease;
 }
 
 .resource--material {
-  background: linear-gradient(180deg, #fffdf7, #f6f0e2);
+  background: linear-gradient(180deg, #fbfbfb, #f0f0f0);
   border-style: dashed;
 }
 
 .panel__note--warn {
-  color: #8a5a1e;
-  background: rgba(184, 134, 11, 0.1);
+  color: var(--warn);
+  background: var(--warn-soft);
   padding: 8px 10px;
   border-radius: 6px;
 }
@@ -1041,10 +1084,6 @@ a {
 /* ==========================================================================
    境界面板补充
    ========================================================================== */
-
-.realm__pity {
-  color: var(--jade);
-}
 
 .realm__rates {
   display: flex;
@@ -1154,8 +1193,8 @@ a {
 }
 
 .disciple--busy {
-  background: rgba(61, 122, 99, 0.07);
-  border-color: rgba(61, 122, 99, 0.35);
+  background: rgba(0, 0, 0, 0.07);
+  border-color: rgba(0, 0, 0, 0.35);
 }
 
 .disciple__head {
@@ -1185,7 +1224,7 @@ a {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 8px;
-  background: rgba(61, 122, 99, 0.18);
+  background: rgba(0, 0, 0, 0.18);
   color: var(--jade);
 }
 
@@ -1199,7 +1238,7 @@ a {
   flex: 1;
   height: 5px;
   border-radius: 3px;
-  background: rgba(122, 96, 60, 0.15);
+  background: rgba(0, 0, 0, 0.15);
   overflow: hidden;
 }
 
@@ -1209,11 +1248,11 @@ a {
 }
 
 .mini-bar__fill--cultivation {
-  background: linear-gradient(90deg, #6aa78c, var(--jade));
+  background: linear-gradient(90deg, #989898, var(--jade));
 }
 
 .mini-bar__fill--age {
-  background: linear-gradient(90deg, #c9a86a, #b8860b);
+  background: linear-gradient(90deg, #ababab, #888888);
 }
 
 .disciple__foot {
@@ -1296,24 +1335,28 @@ a {
   opacity: 0.8;
 }
 
+/*
+ * 秘境战力四档：黑白风里用**黑度**排（good 最浅、bad 最重），
+ * 只有 --warn / --bad 两档才用警示色 —— 它们对应"这一趟可能出事"。
+ */
 .realm-card__power--good {
-  background: rgba(61, 122, 99, 0.12);
-  color: #2c5c4a;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--jade);
 }
 
 .realm-card__power--ok {
-  background: rgba(58, 110, 168, 0.12);
-  color: #2c5480;
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--ink-soft);
 }
 
 .realm-card__power--warn {
-  background: rgba(184, 134, 11, 0.14);
-  color: #7d5a12;
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .realm-card__power--bad {
-  background: rgba(147, 64, 74, 0.16);
-  color: #7d2b34;
+  background: rgba(156, 47, 39, 0.16);
+  color: var(--warn);
 }
 
 .chip-row {
@@ -1373,7 +1416,7 @@ a {
 }
 
 .picker__item--on {
-  background: rgba(61, 122, 99, 0.16);
+  background: rgba(0, 0, 0, 0.16);
   border-color: var(--jade);
 }
 
@@ -1400,8 +1443,8 @@ a {
 }
 
 .running {
-  border: 1px solid rgba(61, 122, 99, 0.3);
-  background: rgba(61, 122, 99, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.06);
   border-radius: 8px;
   padding: 9px 11px;
   margin-bottom: 8px;
@@ -1447,7 +1490,7 @@ a {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px 12px;
-  background: rgba(184, 134, 11, 0.06);
+  background: rgba(0, 0, 0, 0.06);
   margin-bottom: 14px;
 }
 
@@ -1526,15 +1569,15 @@ a {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: rgba(122, 96, 60, 0.14);
+  background: rgba(0, 0, 0, 0.14);
   color: var(--ink-soft);
 }
 
 .tier-badge--7,
 .tier-badge--8,
 .tier-badge--9 {
-  background: rgba(184, 134, 11, 0.2);
-  color: #7d5a12;
+  background: rgba(0, 0, 0, 0.2);
+  color: #5c5c5c;
 }
 
 .cat-badge {
@@ -1543,19 +1586,24 @@ a {
   border-radius: 4px;
 }
 
+/*
+ * 丹药类别徽章。黑白风之后三类**全是灰阶**，靠明度与文字区分 ——
+ * "战斗"原来是最红的那一类，但它是**分类**而不是**警告**，
+ * 留着红会让"红色 = 有危险"这条唯一的颜色语义被稀释。
+ */
 .cat-badge--combat {
-  background: rgba(147, 64, 74, 0.16);
-  color: #7d2b34;
+  background: rgba(0, 0, 0, 0.22);
+  color: #262626;
 }
 
 .cat-badge--support {
-  background: rgba(61, 122, 99, 0.16);
-  color: #2c5c4a;
+  background: rgba(0, 0, 0, 0.16);
+  color: #4f4f4f;
 }
 
 .cat-badge--breakthrough {
-  background: rgba(58, 110, 168, 0.16);
-  color: #2c5480;
+  background: rgba(0, 0, 0, 0.1);
+  color: #3a3a3a;
 }
 
 .recipe__desc {
@@ -1626,7 +1674,7 @@ a {
   font-size: 12px;
   padding: 5px 9px;
   border-radius: 6px;
-  background: rgba(61, 122, 99, 0.1);
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .buff__label {
@@ -1683,11 +1731,11 @@ a {
 }
 
 .journal__item--bad {
-  border-left-color: var(--accent);
+  border-left-color: var(--warn);
 }
 
 .journal__item--info {
-  border-left-color: #3a6ea8;
+  border-left-color: #676767;
 }
 
 .journal__time {
@@ -1712,15 +1760,15 @@ a {
 }
 
 .modal__list--material li {
-  background: rgba(58, 110, 168, 0.08);
+  background: rgba(0, 0, 0, 0.08);
 }
 
 .modal__list--material strong {
-  color: #3a6ea8;
+  color: #676767;
 }
 
 .modal__list--pill li {
-  background: rgba(184, 134, 11, 0.1);
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .modal__list--pill strong {
@@ -1750,7 +1798,7 @@ a {
 
 .plot--ready {
   border-color: var(--jade);
-  background: rgba(61, 122, 99, 0.09);
+  background: rgba(0, 0, 0, 0.09);
 }
 
 .plot__head {
@@ -1803,13 +1851,13 @@ a {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: rgba(147, 64, 74, 0.14);
-  color: #7d2b34;
+  background: rgba(156, 47, 39, 0.14);
+  color: #9c2f27;
 }
 
 .gate-tag--done {
-  background: rgba(61, 122, 99, 0.14);
-  color: #2c5c4a;
+  background: rgba(0, 0, 0, 0.14);
+  color: #4f4f4f;
 }
 
 /* 商行 / 种子列表：需要换行放下按钮 */
@@ -1829,13 +1877,13 @@ a {
   font-size: 9px;
   padding: 0 4px;
   border-radius: 3px;
-  background: rgba(122, 96, 60, 0.16);
+  background: rgba(0, 0, 0, 0.16);
   color: var(--ink-soft);
 }
 
 .material-tag--rare {
-  background: rgba(138, 79, 168, 0.18);
-  color: #6b3a86;
+  background: rgba(0, 0, 0, 0.18);
+  color: #4a4a4a;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1903,9 +1951,9 @@ a {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background:
-    radial-gradient(circle at 50% 92%, rgba(122, 96, 60, 0.14), transparent 58%),
-    radial-gradient(circle at 22% 28%, rgba(58, 110, 168, 0.12), transparent 52%),
-    radial-gradient(circle at 62% 12%, rgba(138, 79, 168, 0.14), transparent 48%),
+    radial-gradient(circle at 50% 92%, rgba(0, 0, 0, 0.14), transparent 58%),
+    radial-gradient(circle at 22% 28%, rgba(0, 0, 0, 0.12), transparent 52%),
+    radial-gradient(circle at 62% 12%, rgba(0, 0, 0, 0.14), transparent 48%),
     var(--paper-2);
 }
 
@@ -1927,7 +1975,7 @@ a {
 
 .map-node--on {
   border-color: var(--jade);
-  background: rgba(61, 122, 99, 0.12);
+  background: rgba(0, 0, 0, 0.12);
 }
 
 .map-node--off {
@@ -2039,9 +2087,9 @@ a {
   gap: 5px;
 }
 
-.season-strip__row--good { color: #2f7d4f; }
-.season-strip__row--bad { color: #a8471f; }
-.season-strip__row--mixed { color: #8a6a1f; }
+.season-strip__row--good { color: #4f4f4f; }
+.season-strip__row--bad { color: #9c2f27; }
+.season-strip__row--mixed { color: #6e6e6e; }
 
 .season-strip__icon { font-size: 14px; }
 .season-strip__name { flex: 1; }
@@ -2063,15 +2111,15 @@ a {
 }
 
 .season-chip--up {
-  background: rgba(60, 140, 90, 0.12);
-  border-color: rgba(60, 140, 90, 0.32);
-  color: #26663f;
+  background: rgba(0, 0, 0, 0.12);
+  border-color: rgba(0, 0, 0, 0.32);
+  color: #4f4f4f;
 }
 
 .season-chip--down {
-  background: rgba(180, 70, 40, 0.1);
-  border-color: rgba(180, 70, 40, 0.3);
-  color: #943d1c;
+  background: rgba(156, 47, 39, 0.1);
+  border-color: rgba(156, 47, 39, 0.3);
+  color: #9c2f27;
 }
 
 /* 当前天象 */
@@ -2083,9 +2131,9 @@ a {
   background: rgba(255, 255, 255, 0.6);
 }
 
-.weather--good { border-color: rgba(60, 140, 90, 0.45); background: rgba(60, 140, 90, 0.07); }
-.weather--bad { border-color: rgba(180, 70, 40, 0.45); background: rgba(180, 70, 40, 0.06); }
-.weather--mixed { border-color: rgba(180, 140, 40, 0.5); background: rgba(180, 140, 40, 0.08); }
+.weather--good { border-color: rgba(0, 0, 0, 0.45); background: rgba(0, 0, 0, 0.07); }
+.weather--bad { border-color: rgba(156, 47, 39, 0.45); background: rgba(156, 47, 39, 0.06); }
+.weather--mixed { border-color: rgba(0, 0, 0, 0.5); background: rgba(0, 0, 0, 0.08); }
 
 .weather__head {
   display: flex;
@@ -2111,9 +2159,9 @@ a {
   border: 1px solid currentColor;
 }
 
-.weather__tone--good { color: #2f7d4f; }
-.weather__tone--bad { color: #a8471f; }
-.weather__tone--mixed { color: #8a6a1f; }
+.weather__tone--good { color: #4f4f4f; }
+.weather__tone--bad { color: #9c2f27; }
+.weather__tone--mixed { color: #6e6e6e; }
 
 /* 全年图鉴 */
 .season__book {
@@ -2141,8 +2189,8 @@ a {
 }
 
 .season-card--current {
-  border-color: var(--accent, #7a603c);
-  background: rgba(122, 96, 60, 0.09);
+  border-color: var(--accent, #5b5b5b);
+  background: rgba(0, 0, 0, 0.09);
 }
 
 .season-card__head {
@@ -2157,7 +2205,7 @@ a {
 .season-card__now {
   margin-left: auto;
   font-size: 11px;
-  color: var(--accent, #7a603c);
+  color: var(--accent, #5b5b5b);
 }
 
 .season__table {
@@ -2231,11 +2279,11 @@ a {
 
 /* 到得了：正常颜色 */
 .subregion--on {
-  border-color: rgba(60, 140, 90, 0.4);
+  border-color: rgba(0, 0, 0, 0.4);
 }
 
 .subregion--on:hover {
-  background: rgba(60, 140, 90, 0.08);
+  background: rgba(0, 0, 0, 0.08);
 }
 
 /* 提前一个境界看得见，但还去不了 */
@@ -2251,12 +2299,12 @@ a {
 }
 
 .subregion--rich {
-  border-color: rgba(196, 150, 60, 0.65);
-  background: rgba(196, 150, 60, 0.09);
+  border-color: rgba(0, 0, 0, 0.65);
+  background: rgba(0, 0, 0, 0.09);
 }
 
 .subregion--open {
-  outline: 2px solid var(--accent, #7a603c);
+  outline: 2px solid var(--accent, #5b5b5b);
   outline-offset: -1px;
 }
 
@@ -2267,7 +2315,7 @@ a {
   padding: 0 5px;
   border-radius: 999px;
   font-size: 10px;
-  background: #c4963c;
+  background: #4a4a4a;
   color: #fff;
 }
 
@@ -2287,14 +2335,14 @@ a {
 
 /* 普通探索卡片 */
 .realm-card--survey {
-  border-color: rgba(70, 110, 170, 0.4);
-  background: rgba(70, 110, 170, 0.05);
+  border-color: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.05);
 }
 
 /* 特产秘境卡片 */
 .realm-card--specialty {
-  border-color: rgba(196, 150, 60, 0.6);
-  background: rgba(196, 150, 60, 0.07);
+  border-color: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 .realm-card__badge {
@@ -2303,9 +2351,9 @@ a {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 400;
-  background: rgba(196, 150, 60, 0.18);
-  color: #8a6a1f;
-  border: 1px solid rgba(196, 150, 60, 0.45);
+  background: rgba(0, 0, 0, 0.18);
+  color: #6e6e6e;
+  border: 1px solid rgba(0, 0, 0, 0.45);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2333,8 +2381,8 @@ a {
 }
 
 .queue__item--ready {
-  border-color: rgba(60, 140, 90, 0.5);
-  background: rgba(60, 140, 90, 0.07);
+  border-color: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 .queue__no {
@@ -2360,7 +2408,7 @@ a {
   text-align: right;
 }
 
-.queue__item--ready .queue__why { color: #2f7d4f; }
+.queue__item--ready .queue__why { color: #4f4f4f; }
 
 .queue__ops {
   display: flex;
@@ -2398,16 +2446,16 @@ a {
 }
 
 .queue__src--on {
-  color: #2f7d4f;
+  color: #4f4f4f;
   font-weight: 600;
 }
 
 .queue__upgrade {
   margin-top: 8px;
   padding: 8px 10px;
-  border: 1px solid rgba(196, 150, 60, 0.45);
+  border: 1px solid rgba(0, 0, 0, 0.45);
   border-radius: var(--radius);
-  background: rgba(196, 150, 60, 0.07);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 .queue__upgrade-head { font-size: 13px; }
@@ -2430,8 +2478,8 @@ a {
   font-size: 12px;
 }
 
-.karma-strip--good { color: #2f7d4f; }
-.karma-strip--evil { color: #a8471f; }
+.karma-strip--good { color: #4f4f4f; }
+.karma-strip--evil { color: #9c2f27; }
 .karma-strip--neutral { color: var(--muted); }
 
 .karma-strip__icon { font-size: 14px; }
@@ -2441,7 +2489,7 @@ a {
 .karma-strip__badge {
   padding: 0 5px;
   border-radius: 999px;
-  background: #b4552a;
+  background: #9c2f27;
   color: #fff;
   font-size: 10px;
 }
@@ -2472,8 +2520,8 @@ a {
   bottom: 0;
 }
 
-.karma-bar__fill--good { background: rgba(60, 140, 90, 0.35); }
-.karma-bar__fill--evil { background: rgba(180, 70, 40, 0.35); }
+.karma-bar__fill--good { background: rgba(0, 0, 0, 0.35); }
+.karma-bar__fill--evil { background: rgba(156, 47, 39, 0.35); }
 
 .karma-bar__min,
 .karma-bar__mid,
@@ -2504,24 +2552,24 @@ a {
 }
 
 .karma-chip--good {
-  color: #26663f;
-  border-color: rgba(60, 140, 90, 0.35);
-  background: rgba(60, 140, 90, 0.1);
+  color: #4f4f4f;
+  border-color: rgba(0, 0, 0, 0.35);
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .karma-chip--evil {
-  color: #943d1c;
-  border-color: rgba(180, 70, 40, 0.35);
-  background: rgba(180, 70, 40, 0.09);
+  color: #9c2f27;
+  border-color: rgba(156, 47, 39, 0.35);
+  background: rgba(156, 47, 39, 0.09);
 }
 
 /* 遭遇卡片 */
 .encounter {
   margin-top: 8px;
   padding: 10px 12px;
-  border: 1px solid rgba(196, 150, 60, 0.5);
+  border: 1px solid rgba(0, 0, 0, 0.5);
   border-radius: var(--radius);
-  background: rgba(196, 150, 60, 0.08);
+  background: rgba(0, 0, 0, 0.08);
 }
 
 .encounter__head {
@@ -2562,8 +2610,8 @@ a {
 }
 
 .encounter-option:not(:disabled):hover {
-  border-color: rgba(60, 140, 90, 0.5);
-  background: rgba(60, 140, 90, 0.07);
+  border-color: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 .encounter-option:disabled {
@@ -2572,20 +2620,20 @@ a {
 }
 
 .encounter-option--evil:not(:disabled):hover {
-  border-color: rgba(180, 70, 40, 0.5);
-  background: rgba(180, 70, 40, 0.07);
+  border-color: rgba(156, 47, 39, 0.5);
+  background: rgba(156, 47, 39, 0.07);
 }
 
 .encounter-option__label { font-weight: 600; font-size: 13px; }
 .encounter-option__desc { font-size: 12px; color: var(--muted); }
-.encounter-option__effect { font-size: 12px; color: #7a603c; }
+.encounter-option__effect { font-size: 12px; color: #5b5b5b; }
 .encounter-option__need { font-size: 11px; color: var(--muted); }
-.encounter-option__why { font-size: 11px; color: #a8471f; }
+.encounter-option__why { font-size: 11px; color: #9c2f27; }
 
 /* 进攻类事件：红边框 + 后果预告（需求 1） */
 .encounter--attack {
-  border-color: rgba(180, 70, 40, 0.6);
-  background: rgba(180, 70, 40, 0.09);
+  border-color: rgba(156, 47, 39, 0.6);
+  background: rgba(156, 47, 39, 0.09);
 }
 
 .encounter__timer {
@@ -2599,8 +2647,8 @@ a {
 }
 
 .encounter--attack .encounter__timer {
-  border-color: rgba(180, 70, 40, 0.5);
-  color: #943d1c;
+  border-color: rgba(156, 47, 39, 0.5);
+  color: #9c2f27;
 }
 
 .encounter__warning {
@@ -2610,10 +2658,10 @@ a {
   margin: 0 0 8px;
   padding: 6px 9px;
   border-radius: 8px;
-  border: 1px solid rgba(180, 70, 40, 0.45);
-  background: rgba(180, 70, 40, 0.08);
+  border: 1px solid rgba(156, 47, 39, 0.45);
+  background: rgba(156, 47, 39, 0.08);
   font-size: 12px;
-  color: #943d1c;
+  color: #9c2f27;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2659,12 +2707,12 @@ a {
 }
 
 .refine__in { color: var(--muted); }
-.refine__arrow { color: var(--accent, #7a603c); }
-.refine__out { font-weight: 600; color: #26663f; }
+.refine__arrow { color: var(--accent, #5b5b5b); }
+.refine__out { font-weight: 600; color: #4f4f4f; }
 
 .refine__down {
   font-size: 12px;
-  color: #7a603c;
+  color: #5b5b5b;
   margin-bottom: 6px;
 }
 
@@ -2750,7 +2798,7 @@ a {
 .year-badge__fill {
   display: block;
   height: 100%;
-  background: rgba(120, 150, 90, 0.7);
+  background: rgba(0, 0, 0, 0.7);
 }
 
 /* 资源分组折叠（需求 3） */
@@ -2789,9 +2837,9 @@ a {
 .tier-upgrade {
   margin-top: 8px;
   padding: 7px 9px;
-  border: 1px solid rgba(196, 150, 60, 0.5);
+  border: 1px solid rgba(0, 0, 0, 0.5);
   border-radius: var(--radius);
-  background: rgba(196, 150, 60, 0.09);
+  background: rgba(0, 0, 0, 0.09);
 }
 
 .tier-upgrade__head {
@@ -2838,18 +2886,18 @@ a {
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 12px;
-  border: 1px solid rgba(38, 102, 63, 0.4);
-  background: rgba(38, 102, 63, 0.08);
-  color: #26663f;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.08);
+  color: #4f4f4f;
 }
 
 /* 掌门亲自查探（需求 5） */
 .realm-card__solo {
   margin-top: 8px;
   padding: 8px 10px;
-  border: 1px solid rgba(90, 120, 170, 0.45);
+  border: 1px solid rgba(0, 0, 0, 0.45);
   border-radius: var(--radius);
-  background: rgba(90, 120, 170, 0.07);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 .realm-card__solo-head {
@@ -2864,9 +2912,9 @@ a {
 }
 
 .material-tag--refined {
-  border-color: rgba(196, 150, 60, 0.55);
-  color: #8a6a1f;
-  background: rgba(196, 150, 60, 0.12);
+  border-color: rgba(0, 0, 0, 0.55);
+  color: #6e6e6e;
+  background: rgba(0, 0, 0, 0.12);
 }
 
 /* 通用折叠区（需求 2 / 3 / 7）：建筑分组、丹药 / 器物按品阶分组 */
@@ -2923,9 +2971,9 @@ a {
 .auto-refine {
   margin: 8px 0 10px;
   padding: 8px 10px;
-  border: 1px solid rgba(90, 120, 170, 0.4);
+  border: 1px solid rgba(0, 0, 0, 0.4);
   border-radius: var(--radius);
-  background: rgba(90, 120, 170, 0.06);
+  background: rgba(0, 0, 0, 0.06);
 }
 
 .auto-refine__head {
@@ -2985,9 +3033,9 @@ a {
 .realm-card__open {
   margin-top: 8px;
   padding: 8px 10px;
-  border: 1px solid rgba(120, 90, 170, 0.45);
+  border: 1px solid rgba(0, 0, 0, 0.45);
   border-radius: var(--radius);
-  background: rgba(120, 90, 170, 0.07);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 .realm-card__open-head {
@@ -3001,11 +3049,11 @@ a {
 .recipe__rate {
   margin: 2px 0 6px;
   font-size: 12px;
-  color: #26663f;
+  color: #4f4f4f;
 }
 
 .recipe__rate--risk {
-  color: #943d1c;
+  color: #9c2f27;
   font-weight: 600;
 }
 
@@ -3014,15 +3062,15 @@ a {
   padding: 0 6px;
   border-radius: 999px;
   font-size: 11px;
-  border: 1px solid rgba(38, 102, 63, 0.45);
-  color: #26663f;
-  background: rgba(38, 102, 63, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.45);
+  color: #4f4f4f;
+  background: rgba(0, 0, 0, 0.08);
 }
 
 .gear-badge--broken {
-  border-color: rgba(148, 61, 28, 0.5);
-  color: #943d1c;
-  background: rgba(148, 61, 28, 0.08);
+  border-color: rgba(156, 47, 39, 0.5);
+  color: #9c2f27;
+  background: rgba(156, 47, 39, 0.08);
 }
 
 /* ------------------------------------------------------------------ */
@@ -3032,9 +3080,9 @@ a {
 .enlighten-jump {
   margin-top: 10px;
   padding: 9px 11px;
-  border: 1px solid rgba(120, 90, 170, 0.4);
+  border: 1px solid rgba(0, 0, 0, 0.4);
   border-radius: var(--radius);
-  background: rgba(120, 90, 170, 0.07);
+  background: rgba(0, 0, 0, 0.07);
 }
 
 .enlighten-jump__head {
@@ -3084,8 +3132,8 @@ a {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 400;
-  border: 1px solid rgba(120, 90, 170, 0.45);
-  color: #6b4f9e;
+  border: 1px solid rgba(0, 0, 0, 0.45);
+  color: #5b5b5b;
 }
 
 .enlighten__desc {
@@ -3118,21 +3166,21 @@ a {
 }
 
 .enlighten-stage--done {
-  border-color: rgba(120, 90, 170, 0.6);
-  background: rgba(120, 90, 170, 0.28);
-  color: #4d3676;
+  border-color: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.28);
+  color: #404040;
 }
 
 .enlighten-stage--now {
-  border-color: rgba(196, 150, 60, 0.7);
-  background: rgba(196, 150, 60, 0.18);
-  color: #8a6a1f;
+  border-color: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.18);
+  color: #6e6e6e;
   font-weight: 600;
 }
 
 .enlighten__gain {
   font-size: 12px;
-  color: #6b4f9e;
+  color: #5b5b5b;
   margin-bottom: 6px;
 }
 

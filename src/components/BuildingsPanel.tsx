@@ -1,5 +1,8 @@
 /**
- * 洞府建设：所有可建造物集中在一个模块里，按用途分组。
+ * 建造清单：所有可建造物集中在一个模块里，按用途分组。
+ *
+ * 本轮需求 7 起，它归在**独立的「建筑」页**（原先挂在「洞府」页里）——
+ * 于是"洞府"只剩存档，而"建造"有了自己的入口。
  *
  * 可见性规则（这里曾经有过一个 bug）：
  *   只要**曾经**达成过解锁条件，或者已经建过，就永远显示。
@@ -46,7 +49,9 @@ import { FoldSection } from './fold';
 /** 建筑效果的一行短说明（只用于不产出资源的建筑） */
 function describeEffect(def: StructureDef): string {
   const parts: string[] = [];
-  if (def.capacity) parts.push(`居所 +${def.capacity}`);
+  // 需求 2：仆役居所与弟子居所分开列，免得玩家以为两边通用
+  if (def.servantCapacity) parts.push(`仆役居所 +${def.servantCapacity}`);
+  if (def.discipleCapacity) parts.push(`弟子居所 +${def.discipleCapacity}`);
   if (def.plots) parts.push(`灵植地块 +${def.plots}`);
   if (def.alchemySlots) parts.push(`炼丹位 +${def.alchemySlots}`);
   if (def.refiningSlots) parts.push(`炼器位 +${def.refiningSlots}`);
@@ -307,11 +312,16 @@ export function BuildingsPanel({ collapsible = false }: { collapsible?: boolean 
   })).filter((entry) => entry.defs.length > 0);
 
   return (
-    <Panel title="洞府建设" hint="设施 · 居所 · 工坊" collapsible={collapsible} storageKey="buildings">
+    <Panel
+      title="营造"
+      hint="设施 · 仆役居所 · 弟子居所 · 工坊"
+      collapsible={collapsible}
+      storageKey="buildings"
+    >
       {visibleByGroup.length === 0 && <p className="panel__note">暂无可建造的项目。</p>}
 
       {visibleByGroup.map(({ group, defs }) => (
-        // 需求 2：各类建筑分组也可以折叠（洞府里设施 / 居所 / 工坊十几组）
+        // 需求 2：各类建筑分组也可以折叠（设施 / 仆役居所 / 弟子居所 / 工坊十几组）
         <FoldSection
           key={group.id}
           title={`${group.title}`}

@@ -31,17 +31,42 @@ import SavePanel from './components/SavePanel';
 import JournalPanel from './components/JournalPanel';
 import OfflineModal from './components/OfflineModal';
 
-type TabId = 'cultivation' | 'cave' | 'enlighten' | 'sect' | 'expedition' | 'craft' | 'farm';
+/*
+ * 页签顺序（本轮需求 8：「修行和洞府等大模块的排列顺序修改一下」）。
+ *
+ * 排法按"一天里点开的频率"从高到低，再往后是纯养成的模块：
+ *   修行（挂机时一直要看）→ 探索（有队伍在外面就要看）→ 宗门（弟子）
+ *   → 建筑 / 工坊 / 丹器（三件事一条线：盖房 → 合成钻研 → 炼丹炼器）
+ *   → 商行 → 灵植 → 感悟 → 洞府（存档，最后）
+ *
+ * 本轮同时新增了三个**与洞府同级**的模块（需求 5 / 6 / 7）：
+ *   商行、工坊（合成 + 钻研）、建筑（建造）。
+ * 建造从"洞府"里搬到了"建筑"，钻研与合成从"修行"里搬到了"工坊" ——
+ * 于是"洞府"就只剩存档了。
+ */
+type TabId =
+  | 'cultivation'
+  | 'expedition'
+  | 'sect'
+  | 'build'
+  | 'workshop'
+  | 'craft'
+  | 'shop'
+  | 'farm'
+  | 'enlighten'
+  | 'cave';
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'cultivation', label: '修行', icon: '☯' },
-  { id: 'cave', label: '洞府', icon: '🏔' },
-  // 需求 1：感悟升格为与洞府同级的页签
-  { id: 'enlighten', label: '感悟', icon: '🧘' },
-  { id: 'sect', label: '宗门', icon: '🏯' },
   { id: 'expedition', label: '探索', icon: '🗺' },
+  { id: 'sect', label: '宗门', icon: '🏯' },
+  { id: 'build', label: '建筑', icon: '🏗' },
+  { id: 'workshop', label: '工坊', icon: '⚒' },
   { id: 'craft', label: '丹器', icon: '⚗' },
+  { id: 'shop', label: '商行', icon: '🏪' },
   { id: 'farm', label: '灵植', icon: '🌱' },
+  { id: 'enlighten', label: '感悟', icon: '🧘' },
+  { id: 'cave', label: '洞府', icon: '🏔' },
 ];
 
 /** 提示条：3 秒后自动消失 */
@@ -74,6 +99,10 @@ function TabBadge({ tab }: { tab: TabId }) {
     const ready = getReadyPlantings(game).length;
     if (ready > 0) return <span className="tab__badge">{ready}</span>;
   }
+  // 建造队列里排着东西：让玩家知道工地上还有活
+  if (tab === 'build' && game.buildQueue.length > 0) {
+    return <span className="tab__badge tab__badge--soft">{game.buildQueue.length}</span>;
+  }
   return null;
 }
 
@@ -83,27 +112,61 @@ function CultivationTab() {
       <div className="layout__left">
         <ActionPanel />
         <ServantPanel />
-        {/*
-          需求 1：钻研与图纸挪到**仆役下面**（修行页左栏）。
-          原来它们在右栏最底下，得往下翻很久；而"我下一步该钻研什么"
-          是修行页最常看的信息之一，放在手边更合理。
-        */}
-        <ResearchPanel collapsible />
       </div>
       <div className="layout__right">
-        {/* 需求 2：开宗前的随机遭遇与善恶值，放在修行页最上面 */}
+        {/* 开宗前的随机遭遇与善恶值，放在修行页最上面 */}
         <EncounterPanel />
         <RealmPanel />
         <SeasonPanel />
-        {/* 需求 1：合成 · 精炼留在修行页右栏（灵石合成只在洞府，见 CaveTab） */}
-        <RefinePanel collapsible />
         <AscendPanel />
       </div>
     </main>
   );
 }
 
-/** 感悟（需求 1：从修行页里的一个面板升格为与洞府同级的页签） */
+/** 建筑（本轮需求 7：建造单独成为一个与洞府同级的模块） */
+function BuildTab() {
+  return (
+    <main className="layout">
+      <div className="layout__left">
+        {/*
+          洞府界面各个子门类都可以展开收起。
+          ⚠️ 组件写好了 `collapsible` 却忘了在这里传 —— 那样它永远是展开的，
+          折叠功能只生效了一半。所以这一处必须显式传参。
+        */}
+        <BuildingsPanel collapsible />
+      </div>
+      <div className="layout__right">
+        <BuildQueuePanel collapsible />
+      </div>
+    </main>
+  );
+}
+
+/** 工坊（本轮需求 6：合成与钻研都搬到这里） */
+function WorkshopTab() {
+  return (
+    <main className="layout">
+      <div className="layout__left">
+        <RefinePanel collapsible />
+      </div>
+      <div className="layout__right">
+        <ResearchPanel collapsible />
+      </div>
+    </main>
+  );
+}
+
+/** 商行（本轮需求 5：从灵植页里独立出来，与洞府同级） */
+function ShopTab() {
+  return (
+    <main className="layout layout--single">
+      <ShopPanel />
+    </main>
+  );
+}
+
+/** 感悟 */
 function EnlightenmentTab() {
   return (
     <main className="layout layout--single">
@@ -112,25 +175,17 @@ function EnlightenmentTab() {
   );
 }
 
+/**
+ * 洞府（本轮需求 8：保留这个页签）。
+ *
+ * 建造搬去「建筑」、感悟早已独立，所以洞府现在放的是"这一局本身"的事：
+ * 存档、导出导入、重开。留一个位置而不是把存档塞进别的页面，
+ * 是因为"我这局玩到哪了"值得有自己的入口。
+ */
 function CaveTab() {
   return (
-    <main className="layout">
-      <div className="layout__left">
-        {/*
-          需求 7：洞府界面各个子门类都可以展开收起。
-          ⚠️ 组件写好了 `collapsible` 却忘了在这里传 —— 那样它永远是展开的，
-          需求 7 只生效了一半。所以这一处必须显式传参。
-        */}
-        <BuildingsPanel collapsible />
-      </div>
-      <div className="layout__right">
-        <BuildQueuePanel collapsible />
-        {/*
-          本轮需求 1：洞府里的「灵石合成」栏已删除。
-          灵石合成的入口只剩修行页的「合成 · 精炼」—— 那里现在能自动合成**全部**配方。
-        */}
-        <SavePanel collapsible />
-      </div>
+    <main className="layout layout--single">
+      <SavePanel collapsible />
     </main>
   );
 }
@@ -174,13 +229,8 @@ function CraftTab() {
 
 function FarmTab() {
   return (
-    <main className="layout">
-      <div className="layout__left">
-        <PlantationPanel />
-      </div>
-      <div className="layout__right">
-        <ShopPanel />
-      </div>
+    <main className="layout layout--single">
+      <PlantationPanel />
     </main>
   );
 }
@@ -198,8 +248,8 @@ export default function App() {
       <nav className="tabs">
         {TABS.map((item) => {
           // 只有宗门本身需要开宗立派。
-          // 「探索」页不灰掉 —— 需求 1 的个人游历正是给"还没开宗"的玩家准备的；
-          // 「丹器」也不灰掉 —— 开宗前靠游历就能拿到炼丹材料。
+          // 「探索」页不灰掉 —— 个人游历正是给"还没开宗"的玩家准备的；
+          // 「丹器」「工坊」「商行」也不灰掉 —— 开宗前靠游历就能拿到材料。
           const gated = item.id === 'sect' && !sectFounded;
           return (
             <button
@@ -218,33 +268,26 @@ export default function App() {
         })}
       </nav>
 
-      {/*
-        需求 2：资源展示模块移到左边，不再压在其它模块上方。
-        所以这里改成「左侧固定资源栏 + 右侧内容区」的两列骨架。
-      */}
       <div className="shell">
         <aside className="shell__side" aria-label="资源">
-          {/*
-            需求 2 / 3：纪年已移到页头右上角，
-            资源栏下面**不再**挂季节与纪年的常驻条 —— 这里只剩资源本身。
-          */}
           <ResourceBar />
-          {/* 善恶值与"有遭遇待选"的提示（需求 2） */}
+          {/* 善恶值与"有遭遇待选"的提示 */}
           <KarmaStrip />
         </aside>
 
         <div className="shell__main">
           {tab === 'cultivation' && <CultivationTab />}
-          {tab === 'cave' && <CaveTab />}
-          {tab === 'enlighten' && <EnlightenmentTab />}
-          {tab === 'sect' && <SectTab />}
           {tab === 'expedition' && <ExpeditionTab />}
+          {tab === 'sect' && <SectTab />}
+          {tab === 'build' && <BuildTab />}
+          {tab === 'workshop' && <WorkshopTab />}
           {tab === 'craft' && <CraftTab />}
+          {tab === 'shop' && <ShopTab />}
           {tab === 'farm' && <FarmTab />}
+          {tab === 'enlighten' && <EnlightenmentTab />}
+          {tab === 'cave' && <CaveTab />}
         </div>
       </div>
-
-      {/* 本轮需求 3：底部那句「进度保存在你自己的浏览器里 · 数值设定见 BALANCE.md」已删除 */}
 
       <Notice />
       <OfflineModal />

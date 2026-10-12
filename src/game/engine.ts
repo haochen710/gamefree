@@ -18,10 +18,8 @@ import {
   type ArtifactDef,
   BASE_STORAGE,
   BLUEPRINT_MAP,
-  BREAKTHROUGH_FAIL_BONUS,
-  BREAKTHROUGH_FAIL_BONUS_CAP,
   BREAKTHROUGH_MAX_SUCCESS,
-  BREAKTHROUGH_PILL_BONUS,
+  BREAKTHROUGH_PILL_GAP_RECOVERY,
   BUILDABLES,
   BUILDABLE_MAP,
   BUILD_QUEUE_BASE_SLOTS,
@@ -52,6 +50,7 @@ import {
   MEDITATE_SECONDS,
   MIND_MAX,
   MIND_REGEN_SECONDS,
+  PILL_MAP,
   REALMS,
   REFINING_SLOT_REQUIREMENT,
   REGION_PREVIEW_REALMS,
@@ -614,16 +613,7 @@ export function getServantBonus(state: GameState, resource: ResourceId): number 
   return bonus;
 }
 
-/** 居所已被占用多少名额（仆人与弟子共用） */
-export function getHousingUsed(state: GameState): number {
-  return getServantCount(state) + state.sect.disciples.length;
-}
-
-export function getFreeHousing(state: GameState): number {
-  return Math.max(0, getHousingCapacity(state) - getHousingUsed(state));
-}
-
-/** 仆人的招收花费，随已有仆人数递增 */
+/** 仆人的招收花费（固定值，不再随人数增长：见 servants.ts 的 SERVANT_COST） */
 export function getServantCost(state: GameState): Decimal {
   return D(servantCost(getServantCount(state)));
 }
@@ -634,16 +624,38 @@ export interface RecruitCheck {
 }
 
 export function canRecruitServant(state: GameState): RecruitCheck {
-  if (getHousingCapacity(state) === 0) {
-    return { ok: false, reason: '尚无居所，先建一座茅屋' };
+  if (getServantHousing(state) === 0) {
+    return { ok: false, reason: '尚无仆役居所，先建一座茅屋' };
   }
-  if (getFreeHousing(state) <= 0) {
-    return { ok: false, reason: '居所已满，需先扩建或腾出房间' };
+  if (getFreeServantHousing(state) <= 0) {
+    return { ok: false, reason: '仆役居所已满，需再建一座（弟子居所不算数）' };
   }
   if (state.resources.qi.lt(getServantCost(state))) {
     return { ok: false, reason: '灵气不足' };
   }
   return { ok: true, reason: null };
+}
+
+/**
+ * 把 N 名仆人从某工种一次调到另一工种（本轮需求 4：批量转移）。
+ *
+ * 与 `assignServant` 的关系是"一次搬完"而不是"逐次搬"：
+ * 数量先夹到源工种现有的人数，所以传 `count` 大于实际人数也不会出错，
+ * 传 `Infinity`/`总数` 就是"这个岗位的人全搬过去"。
+ */
+export function assignServants(state: GameState, from: ServantJobId, to: ServantJobId, count: number): GameState {
+  if (from === to) return state;
+  const fromCount = state.servants[from] ?? 0;
+  if (fromCount <= 0) return state;
+  const move = Math.min(fromCount, Math.max(0, Math.floor(count)));
+  if (move <= 0) return state;
+
+  const servants = { ...state.servants };
+  if (fromCount > move) servants[from] = fromCount - move;
+  else delete servants[from];
+  servants[to] = (servants[to] ?? 0) + move;
+
+  return { ...state, servants };
 }
 
 export function recruitServant(state: GameState, job: ServantJobId = 'chores'): GameState {
@@ -669,7 +681,7 @@ export function assignServant(state: GameState, from: ServantJobId, to: ServantJ
   return { ...state, servants };
 }
 
-/** 遣散一名某工种的仆人（用来给弟子腾房间） */
+/** 遣散一名某工种的仆人（回收一个仆役床位 —— 与弟子床位无关，需求 2） */
 export function dismissServant(state: GameState, job: ServantJobId): GameState {
   const count = state.servants[job] ?? 0;
   if (count <= 0) return state;
@@ -1164,32 +1176,75 @@ export function tickBuildQueue(state: GameState): GameState {
 /* 建筑效果                                                            */
 /* ------------------------------------------------------------------ */
 
-/** 居所提供的弟子容量 */
-export function getHousingCapacity(state: GameState): number {
+/** 仆役居所提供的总床位（需求 2：与弟子居所分开算） */
+export function getServantHousing(state: GameState): number {
   let capacity = 0;
   for (const def of STRUCTURES) {
-    if (!def.capacity) continue;
-    capacity += getBuildingCount(state, def.id) * def.capacity;
+    if (!def.servantCapacity) continue;
+    capacity += getBuildingCount(state, def.id) * def.servantCapacity;
   }
   return capacity;
 }
 
 /**
- * 弟子总数上限 = min(居所容纳 - 仆人占用, 宗门等级上限)。
+ * 弟子居所提供的总床位（需求 2）。开宗前一定是 0 —— 这类建筑都要求已开宗。
  *
- * 居所名额是和仆人**共用**的：多收一个仆人，就少收一个弟子。
- * 于是「盖房 → 收仆人换产量」和「盖房 → 收弟子换战力/材料」之间
- * 始终存在取舍，居所在整局游戏里都有意义。
+ * ⚠️ 满配床位（四档各盖到上限是 1.2 万+）远超九品宗门的 2048 人上限，
+ * 也就是说"床位"在弟子这条线上只是**前期**（一品 ~100 人时）的真实约束，
+ * 中后期真正卡人的是宗门品阶。这是刻意的：居所是入门门槛，品阶是长期目标。
+ */
+export function getDiscipleHousing(state: GameState): number {
+  let capacity = 0;
+  for (const def of STRUCTURES) {
+    if (!def.discipleCapacity) continue;
+    capacity += getBuildingCount(state, def.id) * def.discipleCapacity;
+  }
+  return capacity;
+}
+
+/** 已占用的仆役床位 */
+export function getServantHousingUsed(state: GameState): number {
+  return getServantCount(state);
+}
+
+/** 已占用的弟子床位（开宗前弟子恒为 0，这里不必特判） */
+export function getDiscipleHousingUsed(state: GameState): number {
+  return state.sect.disciples.length;
+}
+
+export function getFreeServantHousing(state: GameState): number {
+  return Math.max(0, getServantHousing(state) - getServantHousingUsed(state));
+}
+
+export function getFreeDiscipleHousing(state: GameState): number {
+  return Math.max(0, getDiscipleHousing(state) - getDiscipleHousingUsed(state));
+}
+
+/**
+ * 弟子总数上限 = min(弟子居所床位, 宗门品阶上限)。
+ *
+ * 需求 1 给的是**品阶**这一条线（一品 100 → 九品 2048），
+ * 需求 2 给的是**建筑**这一条线（弟子居所要开宗后自己盖）。
+ * 两条都是硬上限，所以取较小值：品阶决定"你这个宗门配得上多少弟子"，
+ * 居所决定"你实际安顿得下多少弟子"。
+ *
+ * 与旧版的区别：仆人**不再**占弟子的名额。原先 `居所 - 仆人数` 让
+ * "养仆人换产量"和"收弟子换战力"变成零和题；现在两边各自盖各自的房子，
+ * 取舍从"抢床位"变成"资源先投哪一边"。
  */
 export function getDiscipleCapacity(state: GameState): number {
   if (!state.sect.founded) return 0;
-  const forDisciples = Math.max(0, getHousingCapacity(state) - getServantCount(state));
-  return Math.min(forDisciples, discipleCapBySect(state.sect.level));
+  return Math.min(getDiscipleHousing(state), discipleCapBySect(state.sect.level));
 }
 
-/** 仆人总数上限 = 居所容纳 - 弟子占用 */
+/**
+ * 仆人总数上限 = 仆役居所床位。
+ *
+ * 与弟子居所完全无关 —— 这是需求 2「仆役居所和弟子居所区分开」的直接结论：
+ * 想多收仆人，就再盖一间仆役居所，不必再看弟子的脸色。
+ */
 export function getServantCapacity(state: GameState): number {
-  return Math.max(0, getHousingCapacity(state) - state.sect.disciples.length);
+  return getServantHousing(state);
 }
 
 export function getAlchemySlots(state: GameState): number {
@@ -1282,7 +1337,7 @@ export function advanceLayer(state: GameState, random: RandomSource = gameRandom
 export interface BreakthroughStatus {
   possible: boolean;
   reason: string | null;
-  /** 该境界建议服用的境界丹 id（可能为空字符串） */
+  /** 该境界**必须**服用的境界丹 id（可能为空字符串） */
   pillId: string;
   /** 是否持有该丹药 */
   hasPill: boolean;
@@ -1318,19 +1373,44 @@ export function getBreakthroughStatus(state: GameState): BreakthroughStatus {
   if (state.resources.qi.lt(realm.breakthroughQi)) {
     return { possible: false, reason: '灵气不足', pillId, hasPill, injurySeconds, safe };
   }
+  /*
+   * 需求 9：「突破对丹药的需求很强烈」。
+   *
+   * 这是本轮最硬的一条规则 —— **没有对应境界丹就直接不允许尝试**。
+   * 原来的丹药只是一个 +35% 的可选项，于是它其实可有可无：
+   * 攒够灵气就能反复撞，撞几次总会过（还有失败保底）。
+   * 现在丹药是门票，宗门就必须真的把炼丹这条线跑起来。
+   */
+  if (!hasPill) {
+    const pill = PILL_MAP[pillId];
+    return {
+      possible: false,
+      reason: `需${pill?.name ?? '对应境界丹'}（丹房炼制，或秘境掉落）`,
+      pillId,
+      hasPill,
+      injurySeconds,
+      safe,
+    };
+  }
   return { possible: true, reason: null, pillId, hasPill, injurySeconds, safe };
 }
 
-/** 突破成功率（0~1），usePill 表示这次是否服用境界丹 */
-export function getSuccessRate(state: GameState, usePill: boolean): number {
+/**
+ * 突破成功率（0~1）。
+ *
+ * 需求 9 之后**不再有 `usePill` 开关** —— 丹药是硬门槛，能走到这里就一定在服丹，
+ * 所以丹药加成恒为「补掉 (1 − baseSuccess) 的 62%」。
+ *
+ * 另外两项加成照旧加在最上面：
+ *   - 建筑（雷池）与天象：`getStructureBonus` / `getWeatherEffects`；
+ *   - 「固本丹」之类的永久加成：`state.globalBreakthroughBonus`。
+ */
+export function getSuccessRate(state: GameState): number {
   const realm = getRealm(state);
   if (isFinalRealm(state)) return 1;
 
-  const pity = state.breakthroughPity[state.realmIndex] ?? 0;
-  const pill =
-    usePill && realm.breakthroughPill && (state.pills[realm.breakthroughPill] ?? 0) > 0
-      ? BREAKTHROUGH_PILL_BONUS
-      : 0;
+  const base = realm.baseSuccess;
+  const pill = (1 - base) * BREAKTHROUGH_PILL_GAP_RECOVERY;
   // 雷池等建筑也提供突破加成；天象（天雷劫云）也会临时加一点（需求 1）
   const building = getStructureBonus(state, 'breakthroughBonus');
   const weather = getWeatherEffects(state).breakthrough ?? 0;
@@ -1341,8 +1421,7 @@ export function getSuccessRate(state: GameState, usePill: boolean): number {
    */
   const thunder = getKarmaThunderPenalty(state);
 
-  const raw =
-    realm.baseSuccess + pity + state.globalBreakthroughBonus + pill + building + weather - thunder;
+  const raw = base + pill + state.globalBreakthroughBonus + building + weather - thunder;
   return Math.max(KARMA_SUCCESS_FLOOR, Math.min(raw, BREAKTHROUGH_MAX_SUCCESS));
 }
 
@@ -1357,27 +1436,34 @@ export interface BreakthroughResult {
 /**
  * 突破大境界。
  *
+ * 需求 9 起：**必须消耗一颗对应境界丹**（`getBreakthroughStatus` 已经把
+ * 没有丹药的情况挡在门外）。所以这个函数不再有 `usePill` 参数 ——
+ * 能进来就一定要吃丹，丹药在函数内部直接扣。
+ *
  * 失败的代价按境界分级：
  *   - **低境界（炼气 / 筑基 / 金丹）失败没有任何负面影响** ——
  *     灵气全额返还，没有冷却。前期是教学阶段，不该惩罚玩家。
  *   - **元婴期起失败会留下「道伤」**：一段时间内无法再次突破，
- *     且全局产量下降。失败仍返还一半灵气，并累积保底成功率，
- *     所以最坏情况也只是等一会儿，不会卡死。
+ *     且全局产量下降。失败仍返还一半灵气。
+ *
+ * ⚠️ 「失败后累积保底成功率」（breakthroughPity）本轮已按需求 9 删除。
+ * 那条机制的作用是"撞够次数总会过"，而它正好抵消了丹药的价值 ——
+ * 既然丹药现在是门票，就不该再有第二条不花丹药的路。
  */
 export function breakthrough(
   state: GameState,
-  usePill: boolean,
   random: RandomSource = gameRandom,
 ): BreakthroughResult | null {
   const status = getBreakthroughStatus(state);
   if (!status.possible) return null;
 
   const realm = getRealm(state);
-  const rate = getSuccessRate(state, usePill);
+  const rate = getSuccessRate(state);
   const success = random() < rate;
 
+  // 丹药是门票：无论成败都消耗（这是需求 9 的核心代价）
   const pills = { ...state.pills };
-  if (usePill && status.pillId && (pills[status.pillId] ?? 0) > 0) {
+  if (status.pillId && (pills[status.pillId] ?? 0) > 0) {
     const left = (pills[status.pillId] ?? 0) - 1;
     if (left > 0) pills[status.pillId] = left;
     else delete pills[status.pillId];
@@ -1389,11 +1475,6 @@ export function breakthrough(
   //   高境界失败  → 返还一半
   const qiSpent = success ? realm.breakthroughQi : status.safe ? 0 : realm.breakthroughQi * 0.5;
 
-  const pity = [...state.breakthroughPity];
-  pity[state.realmIndex] = success
-    ? 0
-    : Math.min((pity[state.realmIndex] ?? 0) + BREAKTHROUGH_FAIL_BONUS, BREAKTHROUGH_FAIL_BONUS_CAP);
-
   const injurySeconds =
     success || status.safe ? 0 : (INJURY_SECONDS[state.realmIndex] ?? INJURY_FALLBACK_SECONDS);
 
@@ -1401,7 +1482,6 @@ export function breakthrough(
     ...state,
     resources: { ...state.resources, qi: state.resources.qi.sub(qiSpent) },
     pills,
-    breakthroughPity: pity,
     realmIndex: success ? state.realmIndex + 1 : state.realmIndex,
     layer: success ? 0 : state.layer,
     // 新的道伤会覆盖旧的（取较长者，避免连败反而缩短惩罚）

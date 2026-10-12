@@ -112,52 +112,84 @@ export interface PillDef {
 }
 
 export const PILLS: PillDef[] = [
-  /* ---------------- 境界丹（突破用） ---------------- */
+  /* ---------------- 境界丹（突破用） ----------------
+   *
+   * ⚠️ 本轮需求 9 把这一组的**品阶整体下调了一档**（原来是 realm + 2，现在是 realm + 1）：
+   *   突破用丹      改前  改后
+   *   炼气→筑基      二品  一品
+   *   筑基→金丹      三品  二品
+   *   金丹→元婴      四品  三品
+   *   元婴→化神      五品  四品
+   *   化神→炼虚      六品  五品
+   *   炼虚→合体      七品  六品
+   *   合体→大乘      八品  七品
+   *   大乘→渡劫      九品  八品
+   *   渡劫→仙人      九品  九品
+   *
+   * 为什么必须动：品阶同时是**炼丹术的门槛**（`alchemyTier >= pill.tier`）。
+   * 丹药变成硬门槛之后，"realm + 2"意味着每次突破都要先把炼丹术升到
+   * **当前境界储存上限的尽头**——模拟器里第一次跑就死在两处：
+   * 筑基期要升三品（3e5 灵气 vs 上限 3.2e5，还要 2 份当时根本合不出的灵液），
+   * 化神期要升六品（120 份北境特产月华晶）。
+   * 改成 +1 之后，每一档炼丹术都在**当前境界内**轻松够得着，
+   * 真正的门槛回到丹药**本身**的用料上 —— 那才是需求 9 要的"对丹药需求强烈"。
+   *
+   * 顺带一提：这也更贴设定集 —— 那张表里「炼气突破丹」正是一品。
+   *
+   * ⚠️⚠️ 用料也整体压到了「一次突破 = 一次秘境产出的一小部分」的量级。
+   * 需求 9 之前，一颗突破丹一辈子只炼一颗（还是可选的），所以旧数字
+   * 是按"一次性大件"定的 —— 大乘丹要 400 份龙血、200 份仙玉。
+   * 现在**每次大境界突破都要一颗，弟子也一样要**：一个六百人的宗门
+   * 光是破境就要几千颗，那些数字直接把游戏变成"永远在凑龙血"。
+   * 新口径：稀有材料 ≈ 对应档次秘境一次产出的 1/3 上下，
+   * 灵气 ≈ 该境界储存上限的 3~6%。于是丹药仍然是"必须去凑"的东西，
+   * 但凑的是**几十份**而不是**几百份**。
+   */
   {
     id: 'foundationPill',
     name: '筑基丹',
     icon: '🟤',
-    tier: 2,
+    tier: 1,
     category: 'breakthrough',
     desc: '助修士凝练道基。突破至筑基期时服用，成功率大增。',
-    cost: { herb: 100, demonCore: 10, spiritSilk: 4, moonDew: 2, qi: 5e3 },
+    cost: { herb: 100, demonCore: 10, spiritSilk: 4, moonDew: 2, qi: 2e3 },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
     id: 'goldenCorePill',
     name: '凝金丹',
     icon: '🟡',
-    tier: 3,
+    tier: 2,
     category: 'breakthrough',
     desc: '以妖丹为引凝结金丹。突破至金丹期时服用。',
-    cost: { herb: 300, demonCore: 30, blackIron: 20, moonDew: 6, qi: 1e5 },
+    cost: { herb: 300, demonCore: 15, blackIron: 10, moonDew: 4, qi: 2e4 },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
     id: 'nascentPill',
     name: '化婴丹',
     icon: '🟠',
-    tier: 4,
+    tier: 3,
     category: 'breakthrough',
     desc: '金丹化婴之关键。突破至元婴期时服用。',
-    cost: { herb: 800, blackIron: 80, fireMarrow: 12, moonDew: 10, starSand: 12, qi: 2e6 },
+    cost: { herb: 800, blackIron: 40, fireMarrow: 6, moonDew: 5, starSand: 8, qi: 3e5 },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
   {
     id: 'spiritPill',
     name: '化神丹',
     icon: '🔵',
-    tier: 5,
+    tier: 4,
     category: 'breakthrough',
     desc: '神识化虚之资。突破至化神期时服用。',
     cost: {
       herb: 2000,
-      fireMarrow: 40,
-      coldJade: 20,
-      starSand: 60,
-      lunarCrystal: 8,
-      qi: 4e7,
-      spiritEssence: 6,
+      fireMarrow: 20,
+      coldJade: 10,
+      starSand: 25,
+      lunarCrystal: 4,
+      qi: 4e6,
+      spiritEssence: 2,
     },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
@@ -165,17 +197,17 @@ export const PILLS: PillDef[] = [
     id: 'voidPill',
     name: '炼虚丹',
     icon: '🟣',
-    tier: 6,
+    tier: 5,
     category: 'breakthrough',
     desc: '炼化虚空之凭依。突破至炼虚期时服用。',
     cost: {
       herb: 5000,
-      coldJade: 60,
-      fireMarrow: 80,
-      starSand: 150,
-      lunarCrystal: 25,
-      dragonBlood: 30,
-      qi: 8e8,
+      coldJade: 25,
+      fireMarrow: 30,
+      starSand: 60,
+      lunarCrystal: 8,
+      dragonBlood: 10,
+      qi: 6e7,
     },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
@@ -183,19 +215,19 @@ export const PILLS: PillDef[] = [
     id: 'unityPill',
     name: '合体丹',
     icon: '🟢',
-    tier: 7,
+    tier: 6,
     category: 'breakthrough',
     desc: '法体合一之契机。突破至合体期时服用。',
     cost: {
       herb: 1.2e4,
-      fireMarrow: 100,
-      coldJade: 120,
-      spiritSilk: 400,
-      lunarCrystal: 50,
-      dragonBlood: 150,
-      immortalJade: 20,
-      qi: 1.6e10,
-      spiritEssence: 60,
+      fireMarrow: 35,
+      coldJade: 40,
+      spiritSilk: 120,
+      lunarCrystal: 12,
+      dragonBlood: 40,
+      immortalJade: 4,
+      qi: 1.2e9,
+      spiritEssence: 15,
     },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
@@ -203,20 +235,20 @@ export const PILLS: PillDef[] = [
     id: 'grandPill',
     name: '大乘丹',
     icon: '🔶',
-    tier: 8,
+    tier: 7,
     category: 'breakthrough',
     desc: '大乘圆满之关窍。突破至大乘期时服用。',
     cost: {
       herb: 3e4,
-      fireMarrow: 300,
-      coldJade: 200,
-      spiritSilk: 500,
-      lunarCrystal: 80,
-      dragonBlood: 400,
-      netherFlame: 40,
-      immortalJade: 60,
-      spiritEssence: 260,
-      qi: 3e11,
+      fireMarrow: 80,
+      coldJade: 60,
+      spiritSilk: 150,
+      lunarCrystal: 20,
+      dragonBlood: 80,
+      netherFlame: 12,
+      immortalJade: 12,
+      spiritEssence: 50,
+      qi: 2.4e10,
     },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
@@ -224,21 +256,21 @@ export const PILLS: PillDef[] = [
     id: 'tribulationPill',
     name: '渡劫丹',
     icon: '⚡',
-    tier: 9,
+    tier: 8,
     category: 'breakthrough',
     desc: '抵御九重雷劫。突破至渡劫期时服用。',
     cost: {
       herb: 8e4,
-      fireMarrow: 600,
-      coldJade: 400,
-      spiritSilk: 800,
-      lunarCrystal: 200,
-      dragonBlood: 600,
-      netherFlame: 120,
-      immortalJade: 200,
-      chaosQi: 30,
-      spiritEssence: 900,
-      qi: 6e12,
+      fireMarrow: 150,
+      coldJade: 100,
+      spiritSilk: 200,
+      lunarCrystal: 40,
+      dragonBlood: 120,
+      netherFlame: 25,
+      immortalJade: 40,
+      chaosQi: 8,
+      spiritEssence: 120,
+      qi: 4e11,
     },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
@@ -251,17 +283,17 @@ export const PILLS: PillDef[] = [
     desc: '传说中打开仙门的最后一味。突破至仙人时服用。',
     cost: {
       herb: 2e5,
-      fireMarrow: 1000,
-      coldJade: 700,
-      spiritSilk: 1500,
-      lunarCrystal: 500,
-      dragonBlood: 1500,
-      netherFlame: 400,
-      immortalJade: 600,
-      chaosQi: 80,
-      primordialFruit: 15,
-      spiritEssence: 2500,
-      qi: 1.2e14,
+      fireMarrow: 200,
+      coldJade: 150,
+      spiritSilk: 300,
+      lunarCrystal: 80,
+      dragonBlood: 250,
+      netherFlame: 60,
+      immortalJade: 100,
+      chaosQi: 20,
+      primordialFruit: 5,
+      spiritEssence: 400,
+      qi: 3e12,
     },
     effect: { kind: 'productionBuff', multiplier: 1, duration: 0 },
   },
@@ -980,6 +1012,34 @@ export const ARTIFACT_MAP: Record<string, ArtifactDef> = ARTIFACTS.reduce(
  *   2. **升品越到高级越要吃稀有材料**：原来的花费只到 `immortalJade`，
  *      现在从第 4 品起一路吃**进阶资源**（灵液 / 精金，见需求 4 的合成系统），
  *      高品还要 `chaosQi` / `primordialFruit`。
+ *
+ * ⚠️⚠️ 本轮需求 9 又改了一次**定价的口径**，这一条很关键：
+ *
+ * 需求 9 让「大境界突破必须服对应境界丹」，于是**炼丹术品阶从"可选的后期爱好"
+ * 变成了主线必经之路** —— 要突破到第 N+1 个境界，就得先把炼丹术升到 N+2 品。
+ * 而下面这些数字原本是按"可选沉没成本"定的：每升高一品几乎要吃满**当前境界的
+ * 全部储存上限**（例如三品要 3e5 灵气，而筑基期的上限正好只有 3.2e5）。
+ * 后果是模拟器里第一次出现了**真死锁**：攒不满、又不能不升，卡死在筑基期。
+ *
+ * 所以本轮把灵气花费统一压到"该品阶对应境界储存上限的约 25%"：
+ *  品阶  用它的境界   该境界储存上限      新花费
+ *   2     炼气期        2.0e4           5e3
+ *   3     筑基期        3.2e5           8e4
+ *   4     金丹期        5.3e6           1.3e6
+ *   5     元婴期        1.1e8           2.6e7
+ *   6     化神期        2.1e9           5e8
+ *   7     炼虚期        4.2e10          1e10
+ *   8     合体期        8.4e11          2e11
+ *   9     大乘期        1.7e13          4e12
+ * 材料那部分**不动** —— 那才是"吃稀有材料"的味道所在；被压的是纯粹的灵气门槛。
+ *
+ * ⚠️⚠️⚠️ 材料也被压了一轮，原因同上、而且更要紧：
+ * 这些数字当初是按"一次高阶秘境能出多少"随手定的（例如 6 品要 120 份月华晶），
+ * 而月华晶是**北境特产**、一次秘境也就出 5~22 份 —— 那是"想升就慢慢攒"的定价。
+ * 一旦升品必须在突破前完成，它就变成了**几十趟**的硬墙：模拟器里 5 个种子有 4 个
+ * 卡死在化神期、后面 27 天什么都没发生。现在按"对应境界大约 2~3 趟秘境"来定，
+ * 进阶资源（灵液 / 精金）也同步减半 —— 它代表"你得把合成线跑起来"，
+ * 而不是"你得跑一百次合成"。
  */
 export const ALCHEMY_SLOT_REQUIREMENT = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
@@ -987,26 +1047,31 @@ export const REFINING_SLOT_REQUIREMENT = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 /** 提升到第 tier 品阶的炼丹术所需的消耗 */
 export const ALCHEMY_TIER_COST: Record<number, Partial<Record<ItemId, number>>> = {
-  2: { herb: 400, qi: 2e4 },
-  3: { herb: 1200, demonCore: 60, spiritEssence: 2, qi: 3e5 },
-  4: { herb: 4000, blackIron: 200, spiritEssence: 10, qi: 5e6 },
-  5: { herb: 1.2e4, starSand: 160, spiritEssence: 40, qi: 8e7 },
-  6: { herb: 4e4, starSand: 500, lunarCrystal: 120, spiritEssence: 150, qi: 1.5e9 },
-  7: { herb: 1.2e5, dragonBlood: 200, lunarCrystal: 400, spiritEssence: 400, qi: 3e10 },
-  8: { herb: 4e5, dragonBlood: 600, netherFlame: 200, spiritEssence: 1200, qi: 6e11 },
-  9: { herb: 1.2e6, immortalJade: 300, netherFlame: 600, spiritEssence: 3000, primordialFruit: 5, qi: 1e13 },
+  2: { herb: 400, qi: 5e3 },
+  // ⚠️ 三品**不吃**灵液：灵液要筑基期才能熬（见 refine.ts），
+  // 而三品正是筑基期要用的那一品 —— 一旦这里要灵液，就变成"想升三品先得有灵液、
+  // 想要灵液先得升三品"。本文件的注释一直写着"从第 4 品起吃进阶资源"，
+  // 数据却把它放在了三品，这一轮把它改回注释说的样子。
+  3: { herb: 1200, demonCore: 60, qi: 8e4 },
+  4: { herb: 4000, blackIron: 200, spiritEssence: 10, qi: 1.3e6 },
+  5: { herb: 1.2e4, starSand: 160, spiritEssence: 40, qi: 2.6e7 },
+  6: { herb: 4e4, starSand: 300, lunarCrystal: 30, spiritEssence: 80, qi: 5e8 },
+  7: { herb: 1.2e5, dragonBlood: 80, lunarCrystal: 100, spiritEssence: 150, qi: 1e10 },
+  8: { herb: 4e5, dragonBlood: 200, netherFlame: 60, spiritEssence: 300, qi: 2e11 },
+  9: { herb: 1.2e6, immortalJade: 100, netherFlame: 200, spiritEssence: 600, primordialFruit: 3, qi: 4e12 },
 };
 
 /** 提升到第 tier 品阶的炼器术所需的消耗 */
 export const REFINING_TIER_COST: Record<number, Partial<Record<ItemId, number>>> = {
-  2: { ore: 2000, qi: 3e4 },
-  3: { ore: 6000, demonCore: 80, refinedGold: 2, qi: 5e5 },
-  4: { ore: 2e4, blackIron: 300, refinedGold: 8, qi: 8e6 },
-  5: { ore: 6e4, starSand: 240, refinedGold: 30, qi: 1.2e8 },
-  6: { ore: 2e5, starSand: 700, lunarCrystal: 160, refinedGold: 120, qi: 2e9 },
-  7: { ore: 6e5, dragonBlood: 300, lunarCrystal: 500, refinedGold: 320, qi: 4e10 },
-  8: { ore: 2e6, dragonBlood: 800, netherFlame: 260, refinedGold: 900, qi: 8e11 },
-  9: { ore: 6e6, immortalJade: 400, netherFlame: 800, refinedGold: 2200, chaosQi: 40, qi: 1.5e13 },
+  2: { ore: 2000, qi: 5e3 },
+  // 同上：精金要金丹期才能炼，所以它从三品挪到四品
+  3: { ore: 6000, demonCore: 80, qi: 1e5 },
+  4: { ore: 2e4, blackIron: 300, refinedGold: 8, qi: 1.6e6 },
+  5: { ore: 6e4, starSand: 240, refinedGold: 30, qi: 3e7 },
+  6: { ore: 2e5, starSand: 500, lunarCrystal: 30, refinedGold: 120, qi: 6e8 },
+  7: { ore: 6e5, dragonBlood: 120, lunarCrystal: 100, refinedGold: 320, qi: 1.2e10 },
+  8: { ore: 2e6, dragonBlood: 250, netherFlame: 80, refinedGold: 900, qi: 2.4e11 },
+  9: { ore: 6e6, immortalJade: 130, netherFlame: 250, refinedGold: 800, chaosQi: 20, qi: 5e12 },
 };
 
 export const MAX_CRAFT_TIER = 9;

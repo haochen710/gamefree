@@ -65,7 +65,13 @@ export interface GameStore {
   /** 天工院的特殊升级：解锁一个建造名额 */
   upgradeQueue(): void;
   advanceLayer(): void;
-  breakthrough(usePill: boolean): void;
+  /**
+   * 突破大境界（需求 9：必须持有对应境界丹，丹药由函数内部扣除）。
+   *
+   * 原来这个动作带一个 `usePill` 开关 —— 现在丹药是硬门槛，
+   * 能突破就一定要吃丹，开关本身没有意义了。
+   */
+  breakthrough(): void;
   refineStone(times: number): void;
   setAutoRefine(level: number): void;
   ascend(): void;
@@ -92,6 +98,8 @@ export interface GameStore {
   /* 仆人 */
   recruitServant(job: string): void;
   assignServant(from: string, to: string): void;
+  /** 批量把 N 名仆人从某工种调到另一工种（本轮需求 4） */
+  assignServants(from: string, to: string, count: number): void;
   dismissServant(job: string): void;
   dismissAllServants(): void;
 
@@ -243,9 +251,11 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => (engine.canAdvanceLayer(s.game) ? nextGame(s.game, engine.advanceLayer(s.game)) : {}));
   },
 
-  breakthrough: (usePill) => {
+  breakthrough: () => {
     set((s) => {
-      const result = engine.breakthrough(s.game, usePill);
+      const status = engine.getBreakthroughStatus(s.game);
+      if (!status.possible) return { notice: status.reason ?? '还不能突破' };
+      const result = engine.breakthrough(s.game);
       if (!result) return {};
 
       const realm = engine.getRealm(result.state);
@@ -432,11 +442,28 @@ export const useGame = create<GameStore>()((set, get) => ({
     });
   },
 
+  /** 批量调岗（本轮需求 4）：一次把 N 名仆人从某工种搬到另一工种 */
+  assignServants: (from, to, count) => {
+    set((s) => {
+      if (from === to) return { notice: '源岗位与目标岗位相同' };
+      const available = s.game.servants[from] ?? 0;
+      const next = engine.assignServants(s.game, from as ServantJobId, to as ServantJobId, count);
+      if (next === s.game) return {};
+      const moved = Math.min(available, Math.max(0, Math.floor(count)));
+      const fromDef = SERVANT_JOB_MAP[from as ServantJobId];
+      const toDef = SERVANT_JOB_MAP[to as ServantJobId];
+      return {
+        ...nextGame(s.game, next),
+        notice: `${moved} 名仆人从${fromDef?.name ?? '原岗位'}调往${toDef?.name ?? '新岗位'}`,
+      };
+    });
+  },
+
   dismissServant: (job) => {
     set((s) => {
       const next = engine.dismissServant(s.game, job as ServantJobId);
       if (next === s.game) return {};
-      return { ...nextGame(s.game, next), notice: '已遣散一名仆人，腾出一间居所' };
+      return { ...nextGame(s.game, next), notice: '已遣散一名仆人，腾出一个仆役床位' };
     });
   },
 

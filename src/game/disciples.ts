@@ -14,10 +14,13 @@ import { gameRandom, type RandomSource } from './random';
 import {
   APTITUDE_MAP,
   APTITUDE_ORDER,
+  EXPEDITION_CULTIVATION_BONUS,
   GAME_DAYS_PER_SECOND,
   GAME_DAYS_PER_YEAR,
   INSIGHT_SPEED_PER_POINT,
+  PILL_MAP,
   REALMS,
+  discipleCapBySect,
   randomDiscipleName,
   recruitCost,
   rollAptitude,
@@ -27,6 +30,7 @@ import {
   getCultivationSpeedMultiplier,
   getInsightMax,
   getDiscipleCapacity,
+  getDiscipleHousing,
   getStructureBonus,
 } from './engine';
 import { JOURNAL_LIMIT, type Disciple, type GameState, type JournalEntry } from './state';
@@ -106,6 +110,18 @@ export function getDiscipleSpeed(state: GameState, disciple: Disciple): number {
   return aptitude * (getCultivationSpeedMultiplier(state) + getInsightSpeedBonus(state, disciple));
 }
 
+/**
+ * 弟子**实际**的修行速度 —— 即"派遣中"那一层加成也算进去（本轮需求 10）。
+ *
+ * 需求原文：「弟子应当可以在派遣（包括探索）的过程中，获取经验值，加快修炼速度」。
+ * `tickDisciples` 与界面都用这一个函数，免得"界面显示的速度"和
+ * "实际涨修为的速度"各算各的（这正是最容易被玩家抓到的那种 bug）。
+ */
+export function getDiscipleEffectiveSpeed(state: GameState, disciple: Disciple): number {
+  const base = getDiscipleSpeed(state, disciple);
+  return disciple.status === 'exploring' ? base * (1 + EXPEDITION_CULTIVATION_BONUS) : base;
+}
+
 export interface RecruitResult {
   state: GameState;
   disciple: Disciple | null;
@@ -119,7 +135,20 @@ export function getRecruitCost(state: GameState): Decimal {
 export function canRecruit(state: GameState): { ok: boolean; reason: string | null } {
   if (!state.sect.founded) return { ok: false, reason: '尚未开宗立派' };
   if (state.sect.disciples.length >= getDiscipleCapacity(state)) {
-    return { ok: false, reason: '居所已满，需扩建或提升宗门品阶' };
+    /*
+     * 需求 1 / 2：上限有两条线（弟子居所 / 宗门品阶），提示要说清是哪一条卡住了，
+     * 否则玩家会去升错东西。另外"一座弟子居所都没有"要说成"还没盖"，
+     * 而不是"已满"—— 老存档（房子都是仆役居所）一读进来就是这种状态。
+     */
+    const housing = getDiscipleHousing(state);
+    const bySect = discipleCapBySect(state.sect.level);
+    if (housing === 0) {
+      return { ok: false, reason: '尚无弟子居所，先去「建筑」页建一座（仆役居所不能住弟子）' };
+    }
+    return {
+      ok: false,
+      reason: housing <= bySect ? '弟子居所已满，需在「建筑」页再建居所' : '宗门品阶限制了弟子人数，需晋升品阶',
+    };
   }
   if (state.resources.stone.lt(getRecruitCost(state))) {
     return { ok: false, reason: '灵石不足' };
@@ -220,8 +249,13 @@ function pushJournal(journal: JournalEntry[], entry: JournalEntry): JournalEntry
 /**
  * 推进所有弟子的修炼与年龄。
  *
- * 返回新 state，同时把寿元耗尽 / 突破境界写进宗门记事。
+ * 返回新 state，同时把寿元耗尽 / 突破境界 / 卡在丹药上写进宗门记事。
  * 死去的弟子会从进行中的探索队伍里一并移除。
+ *
+ * 本轮需求 9 起，**弟子的大境界突破也要消耗仓库里的境界丹**：
+ * 修为攒满但仓库没有对应丹药时，弟子会**卡在瓶颈**（进度停在临界点，
+ * 不会浪费修为），并在宗门记事里说明"缺哪一味丹"。
+ * 这是"突破对丹药的需求很强烈"落在弟子身上的那一半。
  */
 export function tickDisciples(state: GameState, dt: number): GameState {
   if (state.sect.disciples.length === 0 || dt <= 0) return state;
@@ -232,6 +266,8 @@ export function tickDisciples(state: GameState, dt: number): GameState {
   const lifespanBonus = 1 + state.sect.lifespanBonus;
   const survivors: Disciple[] = [];
   const deadIds = new Set<string>();
+  // 弟子突破要吃的丹药从这里扣；一次 tick 内多名弟子共用这一份账
+  const pills = { ...state.pills };
   let journal = state.journal;
   let changed = false;
 
@@ -251,16 +287,42 @@ export function tickDisciples(state: GameState, dt: number): GameState {
     const realmCap = getDiscipleRealmCap(state, disciple);
     let realmIndex = disciple.realmIndex;
     let progress = disciple.progress;
-    // 心得与宗门建筑/大比都在这里一起生效（需求 4）
-    let remaining = years * getDiscipleSpeed(state, disciple);
+    // 心得、宗门建筑、大比、以及"在外历练"全都在这里一起生效
+    // （需求 4 / 本轮需求 10）
+    let remaining = years * getDiscipleEffectiveSpeed(state, disciple);
     let jumps = 0;
 
     while (remaining > 0 && realmIndex < realmCap && jumps < MAX_REALM_JUMPS) {
-      const need = REALMS[realmIndex].cultivationYears;
+      const def = REALMS[realmIndex];
+      const need = def.cultivationYears;
       if (need <= 0) break;
 
       const toNext = need - progress;
       if (remaining >= toNext) {
+        /*
+         * 需求 9：大境界突破**必须**有一颗对应境界丹。
+         * 仓库没有就把进度停在临界点上等 —— 攒下的修为不丢，
+         * 只是过不去（记一条日志说明缺什么，否则玩家只会看到"弟子不涨了"）。
+         */
+        const pillId = def.breakthroughPill;
+        const have = pillId ? (pills[pillId] ?? 0) : 0;
+        if (!pillId || have <= 0) {
+          // 只在"刚刚顶到瓶颈"的那一帧记日志，不然每帧都会刷一条
+          if (disciple.progress < need) {
+            const pill = PILL_MAP[pillId];
+            journal = pushJournal(journal, {
+              time: state.playTime,
+              kind: 'info',
+              text: `${disciple.name} 修为已满${def.name}，只差一味${pill?.name ?? '突破丹'}便可破境`,
+            });
+          }
+          progress = need;
+          break;
+        }
+
+        if (have > 1) pills[pillId] = have - 1;
+        else delete pills[pillId];
+
         remaining -= toNext;
         realmIndex += 1;
         progress = 0;
@@ -310,6 +372,7 @@ export function tickDisciples(state: GameState, dt: number): GameState {
 
   return {
     ...state,
+    pills,
     sect: { ...state.sect, disciples: survivors },
     expeditions,
     journal,

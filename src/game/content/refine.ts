@@ -68,7 +68,7 @@ export const REFINE_RECIPES: RefineRecipe[] = [
     id: 'spiritEssenceRefine',
     name: '熬炼灵液',
     icon: '💧',
-    desc: '以灵气反复煎熬灵草，取其精华。三品以上的丹方都要用它作引。',
+    desc: '以灵气反复煎熬灵草，取其精华。四品以上的丹方都要用它作引。',
     cost: { qi: 2e4, herb: 6000 },
     output: { item: 'spiritEssence', amount: 1 },
     /*
@@ -86,7 +86,7 @@ export const REFINE_RECIPES: RefineRecipe[] = [
     id: 'refinedGoldRefine',
     name: '百炼精金',
     icon: '🥇',
-    desc: '灵矿与灵石同炉百炼，去尽杂质。三品以上的器物非它不成。',
+    desc: '灵矿与灵石同炉百炼，去尽杂质。五品以上的器物非它不成。',
     cost: { ore: 9000, stone: 2500 },
     output: { item: 'refinedGold', amount: 1 },
     /*

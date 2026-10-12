@@ -251,8 +251,14 @@ export interface GameState {
   realmIndex: number;
   /** 当前大境界内已完成的小境界层数 */
   layer: number;
-  /** 每个境界累积的突破失败保底加成 */
-  breakthroughPity: number[];
+  /*
+   * ⚠️ 这里原来有一个 `breakthroughPity: number[]`（失败后累积的保底成功率）。
+   * 本轮需求 9 明文「取消突破失败后叠加概率的设定」，字段整个删掉了 ——
+   * 连字段一起删而不是留着不用，是因为留着的空字段迟早会被人当成"还在生效"
+   * 再接回去（这正是保底机制本来要解决的问题：撞够次数总会过，
+   * 而它恰好抵消了丹药作为门票的价值）。
+   * 旧存档里的 `bp` 字段在读档时静默忽略。
+   */
   /** 全局突破成功率永久加成（例如固本丹） */
   globalBreakthroughBonus: number;
 
@@ -443,7 +449,6 @@ export function createInitialState(now = Date.now()): GameState {
     gearCharges: {},
     realmIndex: 0,
     layer: 0,
-    breakthroughPity: [],
     globalBreakthroughBonus: 0,
     mind: 20,
     mindProgress: 0,

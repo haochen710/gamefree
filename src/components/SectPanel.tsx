@@ -8,7 +8,7 @@ import { fmt } from '../game/decimal';
 import { REALMS, SECT_LEVELS, discipleCapBySect, expeditionSlots } from '../game/content';
 import {
   getDiscipleCapacity,
-  getHousingCapacity,
+  getDiscipleHousing,
   getSectLevelDef,
   getSectUpgradeStatus,
   toCostMap,
@@ -56,9 +56,10 @@ export function SectPanel() {
   const recruit = canRecruit(game);
   const recruitCost = getRecruitCost(game);
 
-  const housing = getHousingCapacity(game);
+  // 需求 1 / 2：弟子上限有两条线 —— 弟子居所床位 与 宗门品阶上限
+  const housing = getDiscipleHousing(game);
+  const bySect = discipleCapBySect(game.sect.level);
   const capacity = getDiscipleCapacity(game);
-  const atHousingLimit = housing <= capacity;
 
   return (
     <section className="panel">
@@ -76,7 +77,7 @@ export function SectPanel() {
             <span className="save__label">弟子上限</span>
             <strong>{capacity}</strong>
             <em>
-              （居所 {housing} / 宗门 {discipleCapBySect(game.sect.level)}）
+              （弟子居所 {housing} / 宗门品阶 {bySect}）
             </em>
           </div>
           <div>
@@ -89,9 +90,15 @@ export function SectPanel() {
           </div>
         </div>
 
-        {atHousingLimit && capacity < discipleCapBySect(game.sect.level) && (
+        {capacity < bySect && (
           <p className="panel__note panel__note--warn">
-            居所已满 —— 去「修行」页建造更多茅屋 / 院落 / 洞天。
+            弟子居所不够 —— 去「建筑」页的<strong>弟子居所</strong>一组再盖几座
+            （仆役居所不算数，两边是分开的）。
+          </p>
+        )}
+        {capacity >= bySect && capacity < 2048 && (
+          <p className="panel__note">
+            已住满{levelDef.name}允许的 {bySect} 人 —— 想再收人就先晋升宗门品阶。
           </p>
         )}
 
@@ -108,7 +115,8 @@ export function SectPanel() {
             </span>
           </button>
           <p className="panel__note">
-            招收价格随宗门品阶和弟子人数上涨。宗门品阶越高，招到高资质弟子的概率越大 ——
+            招收价格只看宗门品阶（同一个品阶里招第一个和招最后一个一个价）。
+            宗门品阶越高，招到高资质弟子的概率越大 ——
             九品宗门有 30% 的概率招到天灵根。
           </p>
         </div>

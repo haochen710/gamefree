@@ -92,6 +92,23 @@ export function getTravelProgress(travel: PersonalTravel): number {
   return Math.min(1, Math.max(0, travel.progress / travel.duration));
 }
 
+/**
+ * 「掌门这次去哪儿了」——按 kind 分派到正确的名字表。
+ *
+ * ⚠️ 出行有三种 kind，而 `regionId` 的含义**随 kind 变化**：
+ *   travel → 游历目的地 id（TRAVEL_REGION_MAP）
+ *   realm  → 秘境 id      （SECRET_REALM_MAP）
+ *   survey → 小区域 id    （MAP_REGION_MAP）
+ * 原来顶栏与记事都一律按 TRAVEL_REGION_MAP 去查，于是「独自探秘境」和
+ * 「亲自查探」永远查不到名字：顶栏只剩「在外」、中止记事的文案变成
+ * 「掌门自外折返」。三选一这件事只该写在这里一处。
+ */
+export function describeTravelDestination(travel: PersonalTravel): string | null {
+  if (travel.kind === 'realm') return SECRET_REALM_MAP[travel.regionId]?.name ?? null;
+  if (travel.kind === 'survey') return MAP_REGION_MAP[travel.regionId]?.name ?? null;
+  return TRAVEL_REGION_MAP[travel.regionId]?.name ?? null;
+}
+
 export interface TravelCheck {
   ok: boolean;
   reason: string | null;
@@ -406,7 +423,8 @@ export function resolveSoloSurvey(
 export function cancelTravel(state: GameState): GameState {
   const travel = state.personalTravel;
   if (!travel) return state;
-  const def = TRAVEL_REGION_MAP[travel.regionId];
+  // 三种出行共用这一条路径，所以名字要按 kind 取（见 describeTravelDestination）
+  const name = describeTravelDestination(travel);
 
   return {
     ...state,
@@ -414,7 +432,7 @@ export function cancelTravel(state: GameState): GameState {
     journal: pushJournal(state.journal, {
       time: state.playTime,
       kind: 'info',
-      text: `掌门自${def?.name ?? '外'}折返，此行无功而返`,
+      text: `掌门自${name ?? '外'}折返，此行无功而返`,
     }),
   };
 }

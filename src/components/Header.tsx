@@ -1,6 +1,7 @@
 /** 顶部：境界、小境界层数、全局倍率、道韵、心神 */
 import { fmt, fmtDuration, fmtMultiplier } from '../game/decimal';
-import { MIND_MAX, TRAVEL_REGION_MAP, gameYearOf, yearProgressOf } from '../game/content';
+import { MIND_MAX, gameYearOf, yearProgressOf } from '../game/content';
+import { describeTravelDestination } from '../game/travel';
 import { getSeason } from '../game/season';
 import {
   getDiscipleCapacity,
@@ -124,7 +125,12 @@ export function Header() {
           <div className="stat">
             <span className="stat__label">掌门在外</span>
             <span className="stat__value">
-              {TRAVEL_REGION_MAP[game.personalTravel.regionId]?.name ?? '在外'}
+              {/*
+                ⚠️ 掌门出行的 regionId 含义随 kind 变化（游历目的地 / 秘境 / 小区域），
+                原来一律拿 TRAVEL_REGION_MAP 去查，于是"独自探秘境"和"亲自查探"
+                永远查不到名字、只显示「在外」—— 顶栏看起来像坏了。
+              */}
+              {describeTravelDestination(game.personalTravel) ?? '在外'}
               <em className="stat__layer">已出行</em>
             </span>
           </div>

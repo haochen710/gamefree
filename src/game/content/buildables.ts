@@ -4,14 +4,18 @@
  * 两者共用同一套「等比递增价格」机制，所以共用一个基类。
  * engine.ts 里的价格计算、批量购买对它俩是通用的。
  *
- * 门槛共有六种，全部满足才能建造：
+ * 门槛共有**七**道，全部满足才能建造：
  *   1. unlock             —— 曾经拥有过若干资源（一次性，永久记录）
  *   2. requiresTech       —— 钻研出对应技术
  *   3. requiresBlueprint  —— 持有对应图纸（只能探索或商行获取）
  *   4. requiresBuilding   —— 先建成某座前置建筑（宗门建筑用）
- *   5. requiresRealm      —— 掌门境界
- *   6. requiresSectLevel  —— 宗门品阶
+ *   5. requiresSect       —— 必须先开宗立派（弟子居所、宗门建筑用，需求 2）
+ *   6. requiresRealm      —— 掌门境界
+ *   7. requiresSectLevel  —— 宗门品阶
  * 只有基础资源设施不需要 2~4（也正因为如此，开局永远有路可走）。
+ *
+ * ⚠️ 这里原先写的是"六种"，漏掉了 `requiresSect` —— 而它恰恰是需求 2 给
+ * 弟子居所整组加上的那一道门，写漏了会让读者以为"没开宗也能盖弟子舍"。
  */
 import type { ItemId, ResourceId } from './resources';
 
@@ -20,6 +24,7 @@ export type BuildGroupId =
   | 'resource'
   | 'storage'
   | 'housing'
+  | 'discipleHousing'
   | 'workshop'
   | 'farm'
   | 'trade'
@@ -36,7 +41,8 @@ export interface BuildGroupDef {
 export const BUILD_GROUPS: BuildGroupDef[] = [
   { id: 'resource', title: '资源设施', hint: '持续产出各类资源，无需钻研即可建造' },
   { id: 'storage', title: '储物建筑', hint: '提高资源储存上限，部分需要钻研储物之术' },
-  { id: 'housing', title: '弟子居所', hint: '每位弟子与仆人都需要一个住处' },
+  { id: 'housing', title: '仆役居所', hint: '只住凡人仆役 —— 与弟子居所完全分开' },
+  { id: 'discipleHousing', title: '弟子居所', hint: '开宗立派之后才能建，只住弟子（需求 2）' },
   { id: 'workshop', title: '丹器工坊', hint: '决定炼丹炼器的品阶上限，需先钻研' },
   { id: 'farm', title: '灵植药圃', hint: '种植材料种子的地块，需先钻研灵植之术' },
   { id: 'trade', title: '坊市商行', hint: '定期刷新货物，可用灵石换取物资与图纸' },
@@ -102,8 +108,17 @@ export interface GeneratorDef extends BuildableBase {
 /** 建筑：不产出资源，提供容量、地块、加成或功能 */
 export interface StructureDef extends BuildableBase {
   kind: 'structure';
-  /** 提供多少居所名额（弟子与仆人共用） */
-  capacity?: number;
+  /**
+   * 提供多少**仆役**居所名额（需求 2）。
+   *
+   * ⚠️ 本轮需求：「仆役居所和弟子居所区分开」。
+   * 原先只有一个 `capacity`，仆人和弟子抢同一批床位 —— 于是"收仆人换产量"
+   * 和"收弟子换战力"变成了一道零和题，而玩家真正想要的往往是"我全都要"。
+   * 拆成两个字段之后，两条线各自成长，取舍从"抢床位"变成"资源先投哪边"。
+   */
+  servantCapacity?: number;
+  /** 提供多少**弟子**居所名额（需求 2）。只有弟子居所与掌门大殿会给 */
+  discipleCapacity?: number;
   /** 提供多少炼丹位 */
   alchemySlots?: number;
   /** 提供多少炼器位 */
@@ -339,15 +354,15 @@ export const GENERATORS: GeneratorDef[] = [
 /* ------------------------------------------------------------------ */
 
 export const STRUCTURES: StructureDef[] = [
-  /* ---------------- 居所 ---------------- */
+  /* ---------------- 仆役居所（需求 2：与弟子居所分开） ---------------- */
   {
     id: 'thatchHut',
     kind: 'structure',
     group: 'housing',
     name: '茅屋',
     icon: '🛖',
-    desc: '最简陋的居所，仅能容纳 3 人 —— 仆人也能住。',
-    capacity: 3,
+    desc: '最简陋的仆役居所，能住 3 名凡人。弟子不住这里 —— 弟子的住处在「弟子居所」一组里。',
+    servantCapacity: 3,
     baseCost: { qi: 200, wood: 80 },
     costGrowth: 1.25,
     unlock: { wood: 30 },
@@ -358,8 +373,8 @@ export const STRUCTURES: StructureDef[] = [
     group: 'housing',
     name: '院落',
     icon: '🏯',
-    desc: '有山有水的独立院落，可容纳 10 人。需钻研营造之术。',
-    capacity: 10,
+    desc: '有山有水的独立院落，可安置 10 名仆役。需钻研营造之术。',
+    servantCapacity: 10,
     baseCost: { qi: 5e4, wood: 1500, stone: 300 },
     costGrowth: 1.3,
     unlock: { stone: 50 },
@@ -371,8 +386,8 @@ export const STRUCTURES: StructureDef[] = [
     group: 'housing',
     name: '洞天',
     icon: '⛩',
-    desc: '以大法力开辟的洞天福地，可容纳 30 人。需钻研洞天开辟。',
-    capacity: 30,
+    desc: '以大法力开辟的洞天福地，可安置 30 名仆役。需钻研洞天开辟。',
+    servantCapacity: 30,
     baseCost: { qi: 2e6, stone: 2e4, herb: 5000 },
     costGrowth: 1.35,
     unlock: { stone: 5000 },
@@ -390,8 +405,8 @@ export const STRUCTURES: StructureDef[] = [
     group: 'housing',
     name: '仙府',
     icon: '🏛',
-    desc: '自成一方小世界的府邸，可容纳 100 人。需钻研洞天开辟。',
-    capacity: 100,
+    desc: '自成一方小世界的府邸，可安置 100 名仆役。需钻研洞天开辟。',
+    servantCapacity: 100,
     baseCost: { qi: 5e9, stone: 2e6, starSand: 3000 },
     costGrowth: 1.4,
     unlock: { starSand: 1000 },
@@ -403,6 +418,68 @@ export const STRUCTURES: StructureDef[] = [
      */
     requiresSectLevel: 2,
     max: 5,
+  },
+
+  /* ---------------- 弟子居所（本轮需求 2：开宗之后才能建） ---------------- */
+  {
+    id: 'discipleDorm',
+    kind: 'structure',
+    group: 'discipleHousing',
+    name: '弟子舍',
+    icon: '🏠',
+    desc: '开宗后给弟子住的通铺，一舍 12 人。只住弟子，仆役另有住处。',
+    discipleCapacity: 12,
+    baseCost: { qi: 3000, wood: 600 },
+    costGrowth: 1.2,
+    unlock: {},
+    // 需求 2 的核心：弟子居所**开宗之后**才出现
+    requiresSect: true,
+    max: 30,
+  },
+  {
+    id: 'discipleCourt',
+    kind: 'structure',
+    group: 'discipleHousing',
+    name: '精舍',
+    icon: '🏘',
+    desc: '一人一间的清净精舍，一院 40 人，弟子修行不易互相打扰。需钻研营造之术。',
+    discipleCapacity: 40,
+    baseCost: { qi: 1.2e5, wood: 3000, stone: 800 },
+    costGrowth: 1.26,
+    unlock: { stone: 500 },
+    requiresSect: true,
+    requiresTech: 'architecture',
+    max: 30,
+  },
+  {
+    id: 'discipleManor',
+    kind: 'structure',
+    group: 'discipleHousing',
+    name: '静院',
+    icon: '⛩',
+    desc: '依山势开出的静修院落，一院 120 人。需钻研洞天开辟。',
+    discipleCapacity: 120,
+    baseCost: { qi: 4e6, stone: 4e4, herb: 1e4 },
+    costGrowth: 1.3,
+    unlock: { stone: 2e4 },
+    requiresSect: true,
+    requiresTech: 'caveHeavenArt',
+    max: 25,
+  },
+  {
+    id: 'disciplePalace',
+    kind: 'structure',
+    group: 'discipleHousing',
+    name: '仙居',
+    icon: '🏛',
+    desc: '自成一界的弟子居所，一居 400 人 —— 九品宗门的万人规模全靠它。',
+    discipleCapacity: 400,
+    baseCost: { qi: 1e10, stone: 4e6, starSand: 6000 },
+    costGrowth: 1.35,
+    unlock: { starSand: 2000 },
+    requiresSect: true,
+    requiresTech: 'caveHeavenArt',
+    max: 20,
   },
 
   /* ---------------- 丹器工坊 ---------------- */
@@ -569,8 +646,8 @@ export const STRUCTURES: StructureDef[] = [
     group: 'hall',
     name: '掌门大殿',
     icon: '🏯',
-    desc: '宗门中枢，议事事、藏典籍、供掌门起居。可容纳 20 人，其余宗门建筑皆以此为基。',
-    capacity: 20,
+    desc: '宗门中枢，议事事、藏典籍、供掌门起居。可容纳 20 名弟子，其余宗门建筑皆以此为基。',
+    discipleCapacity: 20,
     baseCost: { qi: 5e4, wood: 3000, stone: 2000 },
     costGrowth: 1,
     unlock: {},

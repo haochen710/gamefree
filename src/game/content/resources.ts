@@ -374,14 +374,24 @@ export const RESOURCE_MAP: Record<ResourceId, ResourceDef> = RESOURCES.reduce(
   {} as Record<ResourceId, ResourceDef>,
 );
 
-/** 稀有度 → 界面配色 */
+/**
+ * 稀有度 → 界面配色（本轮需求 3：UI 改黑白风）。
+ *
+ * 原来是绿 / 蓝 / 紫 / 金 / 红五色。去掉色相之后，
+ * 稀有度靠**明度**表达：越稀有越黑（墨越浓）。
+ * 于是"道品"是近乎纯黑、凡品是浅灰 —— 在一屏浅色底上，
+ * 一眼仍能看出哪一行更重。
+ *
+ * ⚠️ 颜色写在这里而不是 CSS 里，所以改主题时必须回来改这一处，
+ * 否则"黑白风"只改了外壳、物品名字还是彩色。
+ */
 export const RARITY_COLORS: Record<number, string> = {
-  1: '#8a8578',
-  2: '#3d7a63',
-  3: '#3a6ea8',
-  4: '#8a4fa8',
-  5: '#b8860b',
-  6: '#c0392b',
+  1: '#b3b3b3',
+  2: '#969696',
+  3: '#7a7a7a',
+  4: '#5c5c5c',
+  5: '#3d3d3d',
+  6: '#151515',
 };
 
 export const RARITY_NAMES: Record<number, string> = {

@@ -17,7 +17,7 @@
  */
 import { D, fmt, fmtDuration } from '../src/game/decimal';
 import {
-  ALCHEMY_SLOT_REQUIREMENT,
+  ALCHEMY_TIER_COST,
   BUILDABLE_MAP,
   GENERATORS,
   MATERIAL_IDS,
@@ -31,7 +31,7 @@ import {
   SECRET_REALM_MAP,
   PILL_MAP,
   REALMS,
-  REFINING_SLOT_REQUIREMENT,
+  REFINING_TIER_COST,
   RESOURCE_IDS,
   SECT_LEVELS,
   SERVANT_JOBS,
@@ -41,7 +41,7 @@ import {
   TRAVEL_REGIONS,
   isResourceId,
 } from '../src/game/content';
-import type { ItemId } from '../src/game/content';
+import type { ItemId, MaterialId } from '../src/game/content';
 import { createInitialState, type GameState } from '../src/game/state';
 import * as engine from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
@@ -68,6 +68,13 @@ interface SimConfig {
   clicksPerSecond: number;
   /** 跑多少个随机种子 */
   seeds: number;
+  /**
+   * 迭代次数上限（每个"动作"占一次）。
+   *
+   * 这只是护栏：跑满 30 天在主种子上一百万次上下。撞上它时报告会明确警告
+   * 「时间没跑满」—— 免得把"模拟提前结束"读成"AI 卡住不动"。
+   */
+  maxIterations: number;
 }
 
 const CONFIG: SimConfig = {
@@ -82,6 +89,7 @@ const CONFIG: SimConfig = {
   budget: 60 * 60 * 24 * 30,
   clicksPerSecond: 4,
   seeds: 5,
+  maxIterations: 1200000,
 };
 
 /** 固定种子线性同余伪随机数，保证结果可复现 */
@@ -113,9 +121,42 @@ interface SimResult {
   finalState: GameState;
   /** 路上遇到的随机遭遇次数（需求 2） */
   encountersSeen: number;
+  /** 时间加权的平均弟子人数（需求 1 的人口指标） */
+  popAverage: number;
+  /** 弟子人数峰值 */
+  popPeak: number;
+  /** 掌门出门采办的趟数 */
+  tripsStarted: number;
+  /** 是不是撞上了迭代上限（撞上时"30 天"其实没跑满） */
+  hitIterationCap: boolean;
 }
 
 /* -------------------------- 估值辅助 ------------------------------ */
+
+/**
+ * 「下一颗突破丹 / 下一次炼丹升品 / 下一次炼器升品」里，缺的第一味**材料**。
+ *
+ * 只挑材料：灵气、灵草这些有产率，等着就行；缺的是那种"不出去拿就没有"的东西。
+ * AI 用这个来决定掌门该往哪儿走，报告也用它来解释"为什么卡住了"—— 同一份判断，
+ * 免得两边各算一次然后读出来的结论不一样。
+ */
+function nextMissingMaterial(state: GameState): MaterialId | null {
+  const costs: Partial<Record<ItemId, number>>[] = [];
+  const pillId = engine.getRealm(state).breakthroughPill;
+  if (pillId) costs.push(PILL_MAP[pillId]?.cost ?? {});
+  const alTier = crafting.getAlchemyUpgradeStatus(state).nextTier;
+  if (alTier !== null) costs.push(ALCHEMY_TIER_COST[alTier] ?? {});
+  const rfTier = crafting.getRefiningUpgradeStatus(state).nextTier;
+  if (rfTier !== null) costs.push(REFINING_TIER_COST[rfTier] ?? {});
+
+  for (const cost of costs) {
+    for (const [id, amount] of Object.entries(cost) as [ItemId, number][]) {
+      if (isResourceId(id)) continue;
+      if (engine.getAmount(state, id).lt(amount)) return id as MaterialId;
+    }
+  }
+  return null;
+}
 
 function shadowPrices(state: GameState): Record<string, number> {
   const production = engine.getProduction(state);
@@ -161,17 +202,33 @@ function payback(state: GameState, id: string, prices: Record<string, number>): 
     const value = def.arena ? 0.1 : def.sectEvent ? 0.15 : isPrereq ? 0.5 : 0.05;
     return qiCost / (mult * value);
   }
-  if (def.capacity) {
-    // 空房间少于 4 间就该扩建了（弟子和仆人都要住）
-    const need = engine.getFreeHousing(state) < 4;
+  if (def.discipleCapacity) {
+    /*
+     * 需求 1 / 2：弟子上限现在卡在**弟子居所床位**上（仆役居所不算数）。
+     * 空床位少于 8 就该再盖 —— 这是整条弟子成长线的物理前提，
+     * 优先级给得比仆役居所高。
+     */
+    const need = state.sect.founded && engine.getFreeDiscipleHousing(state) < 8;
+    return need ? qiCost / (mult * 0.45) : Infinity;
+  }
+  if (def.servantCapacity) {
+    // 仆役居所只影响产量加成，空床少于 4 才值得扩建
+    const need = engine.getFreeServantHousing(state) < 4;
     return need ? qiCost / (mult * 0.5) : Infinity;
   }
   if (def.alchemySlots) {
-    const need = (ALCHEMY_SLOT_REQUIREMENT[state.alchemyTier + 1] ?? 0) > engine.getAlchemySlots(state);
+    /*
+     * ⚠️ 这里原来问的是「下一品需要几座丹房」—— 但需求 2 把丹房改成唯一建筑、
+     * 升品只看资源之后，`ALCHEMY_SLOT_REQUIREMENT` 整条数组变成全 0，
+     * 于是这个判断恒为 false、回本时间恒为 Infinity：**AI 永远不建丹房**。
+     * 本轮需求 9 让丹药变成突破的硬门槛，这个洞才暴露出来（模拟直接卡在炼气 9 层）。
+     * 现在改成"还没有就建"—— 它本来就是全宗唯一的那一座。
+     */
+    const need = engine.getBuildingCount(state, def.id) === 0;
     return need ? qiCost / (mult * 0.4) : Infinity;
   }
   if (def.refiningSlots) {
-    const need = (REFINING_SLOT_REQUIREMENT[state.refiningTier + 1] ?? 0) > engine.getRefiningSlots(state);
+    const need = engine.getBuildingCount(state, def.id) === 0;
     return need ? qiCost / (mult * 0.4) : Infinity;
   }
   if (def.plots) {
@@ -238,9 +295,29 @@ function runSimulation(seed: number): SimResult {
   let openedRealms = 0;
   let gearCrafted = 0;
   let seenServant = false;
+  /*
+   * 弟子人口统计（需求 1：一品约一百人、九品 2048）。
+   *
+   * 只看"结束时有多少人"会被**快照**骗到：弟子成批阵亡之后、下一轮招收之前
+   * 的那一帧可能就是 0 人，于是报告读起来像"人口崩了"。
+   * 所以这里按时间加权统计平均与峰值 —— 那才是"这个宗门养着多少人"。
+   */
+  let popIntegral = 0;
+  let popSeconds = 0;
+  let popPeak = 0;
+  const notePopulation = (s: GameState, dt: number) => {
+    const n = s.sect.disciples.length;
+    popIntegral += n * dt;
+    popSeconds += dt;
+    if (n > popPeak) popPeak = n;
+  };
 
   const milestones: Milestone[] = [];
   const realmTimes = new Map<string, number>();
+  /** 已经出门采办过的材料（只为里程碑不刷屏） */
+  const farmedItems = new Set<string>();
+  /** 掌门出门采办的趟数（用来判断"是不是真的在跑"） */
+  let tripsStarted = 0;
   const record = (label: string) => milestones.push({ seconds, label });
 
   const sectFlags = { founded: false, firstDisciple: false, firstExpedition: false, firstPill: false };
@@ -260,18 +337,31 @@ function runSimulation(seed: number): SimResult {
 
   record('开局');
 
-  while (seconds < CONFIG.budget && iterations < 400000) {
+  /*
+   * 迭代上限。
+   *
+   * ⚠️ 这个数是**真实的护栏**，不是形式：每个"动作"占一次迭代，而中后期
+   * 弟子伤亡率很高（每人平均只活一两小时），AI 会把大量迭代花在"招人补员"上 ——
+   * 实测主种子要 100 万次以上才跑得满 30 天。本轮需求 1 把弟子容量从 54 抬到
+   * 1408 之后，这个开销按人口线性放大，所以上限也跟着抬。
+   * 报告里会印"实际推进了多久 + 用了多少次迭代"，撞上限时还会明确警告 ——
+   * 免得读的人把"模拟提前结束"看成"AI 卡住不动"（本轮就误判过一次）。
+   */
+  while (seconds < CONFIG.budget && iterations < CONFIG.maxIterations) {
     iterations += 1;
 
     /* ---------------- 0. 自动合成（需求 4；本轮需求 2 扩到全部配方） ----------------
        本轮起自动合成是"按目标存量补齐"，所以 AI 只需要把目标填上：
        灵石（通货）、灵液 / 精金 / 阵枢（炼丹炼器与阵法）。
-       档位仍然只在"还在刷小境界层数、灵气产量足够大"时才开 ——
-       灵气是突破的硬通货，理性玩家不会一直开着。 */
+       ⚠️ 本轮需求 9 之后，这个档位**不能再只看"还在刷小境界"**：
+       丹药成了突破的硬门槛，而升炼丹术品阶要吃灵液 ——
+       于是"小境界刷满了、卡在等丹药"的那段时间恰恰是**最需要**灵液的时候。
+       旧条件（layer < layerCount）会在这一刻把合成线关掉，
+       模拟器于是卡在金丹 9 层：缺灵液 → 升不了炼丹 4 品 → 炼不出化婴丹。
+       现在只要灵气产量够就开着，这也更接近理性玩家 ——
+       灵气是硬通货，但灵液是主线上的一环，不该省。 */
     const stockOf = (id: string) => state.materials[id as keyof typeof state.materials]?.toNumber() ?? 0;
-    const realmNow = engine.getRealm(state);
-    const wantAuto =
-      state.layer < realmNow.layerCount && engine.getProduction(state).qi.gt(1e5) ? 2 : 0;
+    const wantAuto = engine.getProduction(state).qi.gt(1e5) ? 2 : 0;
     const wantTargets: Record<string, number> = {
       stoneRefine: 4000,
       spiritEssenceRefine: 2000,
@@ -333,12 +423,12 @@ function runSimulation(seed: number): SimResult {
     const breakthrough = engine.getBreakthroughStatus(state);
     if (breakthrough.possible) {
       const from = engine.getRealm(state).name;
-      const pillId = breakthrough.pillId;
-      const usePill =
-        Boolean(pillId) &&
-        (state.pills[pillId] ?? 0) > 0 &&
-        engine.getSuccessRate(state, true) > engine.getSuccessRate(state, false);
-      const result = engine.breakthrough(state, usePill, random);
+      /*
+       * 需求 9：丹药是硬门槛，`possible` 就已经保证了仓库里有丹 ——
+       * 原来那句 `usePill = 有丹 && 服丹更划算` 的判断整个失去了意义
+       * （没丹时根本走不到这里），参数也从 API 里去掉了。
+       */
+      const result = engine.breakthrough(state, random);
       if (result) {
         state = result.state;
         if (result.success) {
@@ -350,6 +440,173 @@ function runSimulation(seed: number): SimResult {
         }
       }
       continue;
+    }
+
+    /* ---------------- 1b. 炼丹（需求 9：丹药是突破的硬门槛） ----------------
+       这一段**必须放在"开宗"判断之前**：炼气 → 筑基 的那颗筑基丹是二品丹，
+       而要炼二品丹得先把炼丹术升到二品 —— 全是开宗之前的事。
+       早先这段写在 `else`（已开宗）分支里，于是模拟器里出现了死锁：
+       没丹药 → 突破不了 → 修不到金丹 → 开不了宗 → 永远升不了炼丹术。
+       那不是数值问题，是 AI 的行动顺序问题。 */
+    {
+      const alchemy = crafting.getAlchemyUpgradeStatus(state);
+      if (alchemy.possible) {
+        const next = crafting.upgradeAlchemy(state);
+        if (next !== state) {
+          state = next;
+          if (!seenAlchemy.has(next.alchemyTier)) {
+            seenAlchemy.add(next.alchemyTier);
+            record(`炼丹术 ${next.alchemyTier} 品`);
+          }
+          continue;
+        }
+      }
+
+      const refining = crafting.getRefiningUpgradeStatus(state);
+      if (refining.possible) {
+        const next = crafting.upgradeRefining(state);
+        if (next !== state) {
+          state = next;
+          if (!seenRefining.has(next.refiningTier)) {
+            seenRefining.add(next.refiningTier);
+            record(`炼器术 ${next.refiningTier} 品`);
+          }
+          continue;
+        }
+      }
+
+      /*
+       * 需求 9 的连带需求：升炼丹 / 炼器品阶从四品起要吃**进阶资源**
+       * （灵液 / 精金），而"进阶资源"只能靠合成。于是 AI 必须**按需补料**：
+       * 看下一品缺几份，就合几份。
+       *
+       * 为什么不指望自动合成那套：它设的是长期目标（存 2000 份），
+       * 而这里要的是"卡在金丹 9 层、只差 10 份灵液"这种一次性缺口 ——
+       * 等自动合成的档位（要灵气产量 > 1e5/秒）跟上，早就卡死了。
+       */
+      const topUp = (recipeId: string, missing: number) => {
+        if (missing <= 0) return false;
+        const affordable = engine.maxRefine(state, recipeId);
+        if (affordable <= 0) return false;
+        const next = engine.refine(state, recipeId, Math.min(missing, affordable));
+        if (next === state) return false;
+        state = next;
+        return true;
+      };
+      const alchemyNext = crafting.getAlchemyUpgradeStatus(state).nextTier;
+      if (alchemyNext !== null) {
+        const cost = ALCHEMY_TIER_COST[alchemyNext] ?? {};
+        if (topUp('spiritEssenceRefine', (cost.spiritEssence ?? 0) - stockOf('spiritEssence'))) continue;
+      }
+      const refiningNext = crafting.getRefiningUpgradeStatus(state).nextTier;
+      if (refiningNext !== null) {
+        const cost = REFINING_TIER_COST[refiningNext] ?? {};
+        if (topUp('refinedGoldRefine', (cost.refinedGold ?? 0) - stockOf('refinedGold'))) continue;
+      }
+
+      /*
+       * 需求 9 之后的又一个连带需求：**炼丹术品阶可能被某一种稀有材料卡住**。
+       *
+       * 例：化神期要炼「炼虚丹」得先把炼丹术升到 6 品，而 6 品要 120 份月华晶 ——
+       * 月华晶只在北境一带出。灵气、灵草堆成山也没用，缺的就是那一味。
+       * 这时的正确做法（真人都是这么做的）是**掌门亲自出门去出产它的地方**。
+       *
+       * 判据合并成一处：看"下一颗丹 + 下一次升品"要什么，缺哪样就去哪样。
+       * 只挑**材料**（资源有产率，等着就行）。
+       */
+      const missingItem = nextMissingMaterial(state);
+      if (missingItem && !state.personalTravel) {
+        /*
+         * ⚠️ 必须**先筛出真的走得成的地方**再挑掉落。
+         *
+         * 第一版写的是 `regions.find(r => r.loot.some(...))`，取"第一个产这种材料的目的地"，
+         * 而 `getAvailableRegions` 只看**地图区域**能不能到、不看 `minRealm`。
+         * 于是当第一个匹配的目的地境界不够时，`startTravel` 原样返回、
+         * 这个分支什么也没做 —— 下一轮还是选中它，永远出不了门。
+         * 表现就是"卡在化神 9 层 22 天没动静"。
+         */
+        const target = travel
+          .getAvailableRegions(state)
+          .find(
+            (r) => travel.canStartTravel(state, r.id).ok && r.loot.some((entry) => entry.item === missingItem),
+          );
+        if (target) {
+          const next = travel.startTravel(state, target.id);
+          if (next !== state) {
+            state = next;
+            tripsStarted += 1;
+            if (!farmedItems.has(missingItem)) {
+              farmedItems.add(missingItem);
+              record(`掌门出门采办${MATERIAL_MAP[missingItem]?.name ?? missingItem}（${target.name}）`);
+            }
+            continue;
+          }
+        } else if (!farmedItems.has(missingItem)) {
+          farmedItems.add(missingItem);
+          record(`⚠️ 无处采办${MATERIAL_MAP[missingItem]?.name ?? missingItem}，只能等秘境掉落`);
+        }
+      }
+
+      // 自己突破要用的那一味丹，备两颗（失败一次还能再来）
+      const neededPill = engine.getRealm(state).breakthroughPill;
+      if (neededPill) {
+        const def = PILL_MAP[neededPill];
+        if (
+          def &&
+          state.alchemyTier >= def.tier &&
+          (state.pills[neededPill] ?? 0) < 2 &&
+          /*
+           * ⚠️ 材料不够时**不能** `continue`：那等于"这一步什么也没发生却重新开始"，
+           * 循环会原地空转到 40 万次迭代上限（这一轮就这么卡住了 ——
+           * 灵气不足 5000，每次都想炼丹、每次都失败、每次都 continue，
+           * 时间一秒都没往前走）。缺材料时必须让它落到"推进到下一件事"那一步去攒灵气。
+           */
+          crafting.canCraftPill(state, neededPill).ok
+        ) {
+          const craft = crafting.craftPill(state, neededPill, 1, random);
+          // 失败也扣材料，所以无论如何都要接住新状态
+          state = craft.state;
+          if (craft.made > 0 && !sectFlags.firstPill) {
+            sectFlags.firstPill = true;
+            record(`首次炼成丹药（${def.name}）`);
+          }
+          continue;
+        }
+      }
+
+      /*
+       * 需求 9：**弟子**的大境界突破也要吃丹药，所以 AI 必须替弟子备丹 ——
+       * 否则弟子的修为会永远卡在瓶颈上（这正是"对丹药需求很强烈"的表现）。
+       *
+       * 策略：统计各境界"修为已满却卡着"的人数，优先补缺口最大的那一味；
+       * 一味只炼一颗（真实的玩家也是这么点的），循环会自然把它补够。
+       */
+      const stalledByPill = new Map<string, number>();
+      for (const d of state.sect.disciples) {
+        const def = REALMS[d.realmIndex];
+        if (!def || !def.breakthroughPill) continue;
+        if (d.realmIndex >= disciples.getDiscipleRealmCap(state, d)) continue;
+        if (def.cultivationYears <= 0) continue;
+        if (d.progress < def.cultivationYears) continue;
+        stalledByPill.set(def.breakthroughPill, (stalledByPill.get(def.breakthroughPill) ?? 0) + 1);
+      }
+      let worstPill = '';
+      let worstNeed = 0;
+      for (const [pillId, need] of stalledByPill) {
+        const gap = need - (state.pills[pillId] ?? 0);
+        if (gap > worstNeed) {
+          worstNeed = gap;
+          worstPill = pillId;
+        }
+      }
+      if (worstPill) {
+        const def = PILL_MAP[worstPill];
+        if (def && state.alchemyTier >= def.tier && crafting.canCraftPill(state, worstPill).ok) {
+          const craft = crafting.craftPill(state, worstPill, 1, random);
+          state = craft.state;
+          continue;
+        }
+      }
     }
 
     /* ---------------- 2. 宗门 ---------------- */
@@ -425,9 +682,24 @@ function runSimulation(seed: number): SimResult {
 
       if (state.expeditions.length < expeditions.getMaxExpeditions(state)) {
         let started = false;
-        // 从最远的已发现秘境往前找：收益最高的优先。
-        // 冷却中或暂时去不了的会被 canStartExpedition 挡掉。
-        for (const realm of [...SECRET_REALMS].reverse()) {
+        /*
+         * 从最远的已发现秘境往前找：收益最高的优先。
+         * 冷却中或暂时去不了的会被 canStartExpedition 挡掉。
+         *
+         * ⚠️ 本轮需求 9 之后多了一条排序：**掉缺料的那种秘境优先**。
+         * 炼丹术升品和突破丹都要特定材料（例如合体期的大乘丹要 400 份龙血），
+         * 而"掌门出门采办"一趟只带回 3~30 份 —— 真正的大头在秘境（8 档一次 130 份）。
+         * 不这么排的话，AI 会一直派队伍去打"档次最高但那味不掉"的秘境，
+         * 于是手持 2240 趟采办记录、仓库里却只有 27 份龙血。
+         * `sort` 是稳定的，所以同一优先级内仍然保持"从高档到低档"。
+         */
+        const missing = nextMissingMaterial(state);
+        const realmOrder = [...SECRET_REALMS].reverse().sort((a, b) => {
+          const am = missing && a.loot.some((entry) => entry.item === missing) ? 1 : 0;
+          const bm = missing && b.loot.some((entry) => entry.item === missing) ? 1 : 0;
+          return bm - am;
+        });
+        for (const realm of realmOrder) {
           if (!engine.isRealmDiscovered(state, realm)) continue;
           const party = expeditions.autoSelectParty(state, realm.id);
           if (party.length < realm.minParty) continue;
@@ -454,72 +726,18 @@ function runSimulation(seed: number): SimResult {
         if (started) continue;
       }
 
-      const alchemy = crafting.getAlchemyUpgradeStatus(state);
-      if (alchemy.possible) {
-        const next = crafting.upgradeAlchemy(state);
-        if (next !== state) {
-          state = next;
-          if (!seenAlchemy.has(next.alchemyTier)) {
-            seenAlchemy.add(next.alchemyTier);
-            record(`炼丹术 ${next.alchemyTier} 品`);
-          }
-          continue;
-        }
-      }
-
-      const refining = crafting.getRefiningUpgradeStatus(state);
-      if (refining.possible) {
-        const next = crafting.upgradeRefining(state);
-        if (next !== state) {
-          state = next;
-          if (!seenRefining.has(next.refiningTier)) {
-            seenRefining.add(next.refiningTier);
-            record(`炼器术 ${next.refiningTier} 品`);
-          }
-          continue;
-        }
-      }
-
-      const neededPill = engine.getRealm(state).breakthroughPill;
-      if (neededPill) {
-        const def = PILL_MAP[neededPill];
-        if (def && state.alchemyTier >= def.tier && (state.pills[neededPill] ?? 0) < 2) {
-          const craft = crafting.craftPill(state, neededPill, 1, random);
-          // ⚠️ 不管成没成都得接住新状态：失败也扣材料（需求 2）
-          state = craft.state;
-          if (craft.made > 0) {
-            if (!sectFlags.firstPill) {
-              sectFlags.firstPill = true;
-              record(`首次炼成丹药（${def.name}）`);
-            }
-            continue;
-          }
-          continue;
-        }
-      }
+      const started = false;
+      void started;
     }
 
     /* ---------------- 2b. 仆役 ----------------
-       仆人和弟子共用居所名额，AI 的策略是：
-         - 开宗前：有多少空房就收多少仆人换产量
-         - 开宗后：始终给弟子留 8 个空位，其余照收；
-                   真的一个空位都没有时才腾退仆人 */
-    const freeHousing = engine.getFreeHousing(state);
-    // 开宗之后要给弟子留够位置：留 10 间，够招满一品宗门的 6 名弟子
-    const servantReserve = state.sect.founded ? 10 : 0;
+       需求 2 起仆役居所与弟子居所**完全分开**，所以这里不再有"给弟子留几个空位"
+       的算计 —— 两边各盖各的房子。AI 的策略简化成一句：
+         有仆役空床、灵气够、且仆人数还没到收益递减得离谱的地步，就收。
+       弟子床位那边由 payback 里的 discipleCapacity 分支负责扩建。 */
+    const freeServantBeds = engine.getFreeServantHousing(state);
 
-    if (freeHousing <= 0 && state.sect.founded && engine.getServantCount(state) > 0) {
-      // 从人数最多的工种里遣散一个，给弟子腾位置
-      const busiest = SERVANT_JOBS.map((job) => ({ job, count: state.servants[job.id] ?? 0 }))
-        .sort((a, b) => b.count - a.count)[0];
-      if (busiest.count > 0) {
-        const next = engine.dismissServant(state, busiest.job.id);
-        if (next !== state) {
-          state = next;
-          continue;
-        }
-      }
-    } else if (freeHousing > servantReserve && engine.canRecruitServant(state).ok) {
+    if (freeServantBeds > 0 && engine.canRecruitServant(state).ok) {
       // 派去影子价格最高的资源（也就是最紧缺的那种）
       const prices = shadowPrices(state);
       let best = SERVANT_JOBS[0];
@@ -960,6 +1178,9 @@ function runSimulation(seed: number): SimResult {
       }
       const dt = 120;
       seconds += dt;
+      // 取样要在推进**之前**：这一段 dt 里宗门养着的是"推进前"那批人，
+      // 推进后可能刚好赶上一次大阵亡 —— 那属于下一段，不该算进这一段
+      notePopulation(state, dt);
       state = applyTick(state, dt, random);
       continue;
     }
@@ -967,6 +1188,7 @@ function runSimulation(seed: number): SimResult {
     const dt = Math.max(wait, 0.05);
     seconds += dt;
     const travelingBefore = state.personalTravel;
+    notePopulation(state, dt);
     state = applyTick(state, dt, random);
     if (travelingBefore && !state.personalTravel && !flags.firstTravelBack) {
       flags.firstTravelBack = true;
@@ -974,7 +1196,20 @@ function runSimulation(seed: number): SimResult {
     }
   }
 
-  return { seed, seconds, iterations, deadlock, realmTimes, milestones, finalState: state, encountersSeen };
+  return {
+    seed,
+    seconds,
+    iterations,
+    deadlock,
+    realmTimes,
+    milestones,
+    finalState: state,
+    encountersSeen,
+    popAverage: popSeconds > 0 ? popIntegral / popSeconds : 0,
+    popPeak,
+    tripsStarted,
+    hitIterationCap: iterations >= CONFIG.maxIterations,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1007,9 +1242,50 @@ function printDetail(result: SimResult): void {
   const caps = engine.getStorageCaps(state);
 
   console.log(`  境界：${engine.getRealm(state).name} ${state.layer} 层`);
+  /*
+   * 突破门槛的诊断（需求 9）：丹药变成硬门槛之后，"为什么卡在这里"
+   * 最常见的答案就是"缺某一味丹"。这一行让报告自己说出来。
+   */
+  {
+    const bt = engine.getBreakthroughStatus(state);
+    const pillId = bt.pillId;
+    const owned = pillId ? (state.pills[pillId] ?? 0) : 0;
+    console.log(
+      `  突破：${bt.possible ? '可以尝试' : (bt.reason ?? '未知')}` +
+        (pillId ? ` · ${PILL_MAP[pillId]?.name ?? pillId} ×${owned}` : ''),
+    );
+  }
   console.log(`  灵气产量：${fmt(production.qi)}/秒 · 全局倍率 ×${fmt(engine.getGlobalMultiplier(state))}`);
   console.log(`  宗门：${state.sect.founded ? SECT_LEVELS[state.sect.level - 1].name : '未开宗'}`);
   console.log(`  弟子：${state.sect.disciples.length} 人，累计招收 ${state.sect.totalRecruited} 人`);
+  if (state.sect.founded) {
+    // 招不了人的时候，"为什么招不了"必须能从报告里读出来
+    const can = disciples.canRecruit(state);
+    console.log(
+      `  招收：${can.ok ? '可以招' : (can.reason ?? '未知')}` +
+        ` · 弟子床位 ${engine.getDiscipleHousing(state)}（上限 ${engine.getDiscipleCapacity(state)}）`,
+    );
+  }
+  /*
+   * ⚠️ 实际推进了多久 + 用了多少次迭代。
+   *
+   * 循环的退出条件是「时间到 30 天」**或**「迭代到 40 万次」，而报告原来只写
+   * "模拟时长上限 30天" —— 于是"其实只跑了 8 天就撞上迭代上限"这种情况
+   * 完全看不出来（这一轮就被它误导过一次：以为 AI 卡了 22 天没动，
+   * 实际是模拟早就结束了）。两个数都打出来，这种误读就不会再发生。
+   */
+  console.log(
+    `  实际推进：${fmtDuration(result.seconds)}（上限 ${fmtDuration(CONFIG.budget)}）` +
+      ` · 迭代 ${result.iterations} 次${result.hitIterationCap ? '（⚠️ 撞上迭代上限，时间没跑满）' : ''}`,
+  );
+  /*
+   * 人口指标（需求 1）。"结束时 0 人"经常只是**快照**（成批阵亡之后、
+   * 下一轮招收之前），所以真正该看的是时间加权的平均与峰值。
+   */
+  console.log(
+    `  人口：平均 ${result.popAverage.toFixed(1)} 人 · 峰值 ${result.popPeak} 人` +
+      ` · 宗门上限 ${engine.getDiscipleCapacity(state)}`,
+  );
 
   const servantTotal = engine.getServantCount(state);
   const servantDetail = SERVANT_JOBS.filter((job) => (state.servants[job.id] ?? 0) > 0)
@@ -1023,6 +1299,22 @@ function printDetail(result: SimResult): void {
   }
 
   console.log(`  炼丹术 ${state.alchemyTier} 品 · 炼器术 ${state.refiningTier} 品`);
+  /*
+   * 升品的卡点（需求 9 的连带影响）：炼丹术现在在主线上了，
+   * "为什么升不上去"必须能从报告里直接读出来，否则每次都要回去翻代码。
+   */
+  {
+    const al = crafting.getAlchemyUpgradeStatus(state);
+    const rf = crafting.getRefiningUpgradeStatus(state);
+    console.log(
+      `  升品卡点：炼丹 ${al.nextTier ?? '—'} 品 ${al.possible ? '可升' : (al.reason ?? '')}` +
+        ` · 炼器 ${rf.nextTier ?? '—'} 品 ${rf.possible ? '可升' : (rf.reason ?? '')}`,
+    );
+    const missing = nextMissingMaterial(state);
+    console.log(
+      `  卡点材料：${missing ? `${MATERIAL_MAP[missing]?.name ?? missing}（存量 ${fmt(engine.getAmount(state, missing))}）` : '无（要么不缺、要么卡在资源上）'}`,
+    );
+  }
 
   /* ---- 需求 6：钻研与图纸 ---- */
   const learned = TECHS.filter((t) => state.techs[t.id] === true);
@@ -1144,6 +1436,7 @@ function printDetail(result: SimResult): void {
   } else {
     console.log('  掌门：在洞府中');
   }
+  console.log(`  采办出行：${result.tripsStarted} 趟${nextMissingMaterial(state) ? ` · 仍缺 ${MATERIAL_MAP[nextMissingMaterial(state)!]?.name ?? ''}` : ''}`);
 
   console.log(
     `  储存占用：${RESOURCE_IDS.map((id) => `${id} ${fmt(state.resources[id])}/${fmt(caps[id])}`).join('，')}`,
@@ -1185,7 +1478,14 @@ function printDetail(result: SimResult): void {
 function printSweep(results: SimResult[]): void {
   const stageNames = REALMS.map((r) => r.name);
 
-  console.log('\n【多种子对照】到达各境界所需时间');
+  /*
+   * ⚠️ 标题里的口径要写准：`realmTimes` 存的是**进入该境界那一刻的总秒数**
+   * （见 runSeed 里的 `realmTimes.set(to, seconds)`），所以这张表印的是**累计**用时。
+   * 而下面【各阶段耗时波动】用的是同一批值 —— 那也就同样是累计值，
+   * 不是"这一段花了多久"。两处口径必须一致，否则读的人会把
+   * "筑基 29 分 / 金丹 2 小时24分"读成"金丹这一跳花了 2 小时24分"。
+   */
+  console.log('\n【多种子对照】到达各境界的**累计**用时（从开局算起）');
   console.log(`  ${'种子'.padEnd(8)}${stageNames.slice(1, 7).map((n) => n.padStart(12)).join('')}   死锁`);
 
   for (const result of results) {
@@ -1205,8 +1505,9 @@ function printSweep(results: SimResult[]): void {
     console.log(`\n✅ ${results.length} 个种子全程均未死锁。`);
   }
 
-  // 各阶段耗时的波动范围，用来判断曲线是数值问题还是运气问题
-  console.log('\n【各阶段耗时波动】');
+  // 各阶段耗时的波动范围，用来判断曲线是数值问题还是运气问题。
+  // ⚠️ 与上表同源：这里也是**累计**用时（见 printSweep 开头的说明）
+  console.log('\n【各阶段累计耗时波动】');
   for (let i = 1; i < 7 && i < stageNames.length; i += 1) {
     const name = stageNames[i];
     const times: number[] = [];

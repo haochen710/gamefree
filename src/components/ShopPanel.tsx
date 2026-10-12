@@ -1,8 +1,10 @@
 /**
- * 商行（需求 3 / 6）
+ * 商行
  *
  * 货架每隔一段时间整体重摇一次，每次只上架商品池里的一小部分 ——
  * 这就是需求里那句「商行每次售卖一部分资源」。
+ *
+ * ⚠️ 本轮需求 5 起它是**与洞府同级的独立页签**（原先挤在灵植页的右栏里）。
  */
 import { fmt, fmtDuration } from '../game/decimal';
 import { BLUEPRINT_MAP, SHOP_OFFER_COUNT, SHOP_REFRESH_SECONDS } from '../game/content';
@@ -19,10 +21,10 @@ export function ShopPanel() {
       <section className="panel">
         <div className="panel__head">
           <h2>商行</h2>
-          <span className="panel__hint">需求 3</span>
+          <span className="panel__hint">尚未开设</span>
         </div>
         <p className="panel__note">
-          尚未开设商行。先钻研「商道」（需先有营造之术），再在洞府建设里建一座
+          尚未开设商行。先钻研「商道」（需先有营造之术），再在「建筑」页里建一座
           <strong>商行</strong>，即可用灵石换取资源、基础材料、基础种子，偶尔还能买到图纸。
         </p>
       </section>

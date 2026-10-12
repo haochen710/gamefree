@@ -1,11 +1,24 @@
 /**
  * 境界面板：参悟小境界、突破大境界。
  *
- * 突破现在是概率事件（需求 5）：可以选择服用对应的境界丹把成功率拉高，
- * 失败也不会卡死 —— 每次失败累积保底加成，并返还一半灵气。
+ * 突破现在是概率事件，而且**必须消耗一颗对应境界丹**（本轮需求 9）。
+ * 也就是说这个面板上有两条独立的路：
+ *   - 小境界（参悟）：花灵气，不受丹药影响；
+ *   - 大境界（突破）：灵气 + 一颗境界丹，缺一不可。
+ *
+ * ⚠️ 本轮删掉了「失败累积保底成功率」（原先这里会显示「保底加成 +N%」）。
+ * 那条机制让"不花丹药反复撞"成为可行策略，正好抵消了丹药的价值 ——
+ * 既然丹药已经是门票，就不该再有第二条路。
  */
 import { fmt, fmtDuration } from '../game/decimal';
-import { BREAKTHROUGH_FAIL_BONUS, INJURY_FROM_REALM, INJURY_PRODUCTION_PENALTY, PILL_MAP, REALMS } from '../game/content';
+import {
+  BREAKTHROUGH_MAX_SUCCESS,
+  BREAKTHROUGH_PILL_GAP_RECOVERY,
+  INJURY_FROM_REALM,
+  INJURY_PRODUCTION_PENALTY,
+  PILL_MAP,
+  REALMS,
+} from '../game/content';
 import {
   canAdvanceLayer,
   getBreakthroughStatus,
@@ -30,26 +43,23 @@ export function RealmPanel() {
   const final = isFinalRealm(game);
 
   const progress = realm.layerCount > 0 ? game.layer / realm.layerCount : 1;
-  const rateWithout = getSuccessRate(game, false);
-  const rateWith = getSuccessRate(game, true);
+  // 丹药是硬门槛，所以只有一个成功率（服丹之后的那一个）
+  const rate = getSuccessRate(game);
   const pillDef = status.pillId ? PILL_MAP[status.pillId] : null;
-  const pity = game.breakthroughPity[game.realmIndex] ?? 0;
+  const pillOwned = status.pillId ? (game.pills[status.pillId] ?? 0) : 0;
 
-  const handleBreakthrough = (usePill: boolean) => {
+  const handleBreakthrough = () => {
     if (!status.possible) return;
-    const rate = usePill ? rateWith : rateWithout;
-    const extra = usePill && pillDef ? `\n将服用 ${pillDef.name}（剩余 ${game.pills[status.pillId] ?? 0} 颗）` : '';
     const risk = status.safe
-      ? `\n失败无任何负面影响：灵气全额返还，可立即再试。`
-      : `\n失败将道伤缠身，一段时间内无法再度突破，且期间产量下降。\n失败返还一半灵气，并累积 +${Math.round(
-          BREAKTHROUGH_FAIL_BONUS * 100,
-        )}% 保底成功率。`;
+      ? `\n失败无任何负面影响：灵气全额返还，可立即再试（但丹药已消耗）。`
+      : `\n失败将道伤缠身，一段时间内无法再度突破，且期间产量下降。\n失败返还一半灵气（丹药不返还）。`;
     const ok = window.confirm(
       `确定突破至${realm.name}之后的境界？\n\n` +
-        `消耗 ${fmt(realm.breakthroughQi)} 灵气${extra}\n` +
+        `消耗 ${fmt(realm.breakthroughQi)} 灵气\n` +
+        `消耗 ${pillDef?.name ?? '境界丹'} ×1（现有 ${pillOwned} 颗）\n` +
         `成功率 ${Math.round(rate * 100)}%${risk}`,
     );
-    if (ok) breakthrough(usePill);
+    if (ok) breakthrough();
   };
 
   return (
@@ -84,6 +94,7 @@ export function RealmPanel() {
               参悟下一层
               <span className="btn__sub">☯ {fmt(layerCost)} 灵气</span>
             </button>
+            <p className="panel__note">小境界只需积累灵气，不耗丹药。</p>
           </div>
         )}
 
@@ -105,26 +116,40 @@ export function RealmPanel() {
             )}
 
             <div className="realm__req">
-              突破消耗：☯ {fmt(realm.breakthroughQi)} 灵气
-              {pity > 0 && <span className="realm__pity"> · 保底加成 +{Math.round(pity * 100)}%</span>}
+              突破消耗：☯ {fmt(realm.breakthroughQi)} 灵气 +{' '}
+              {pillDef ? `${pillDef.icon}${pillDef.name} ×1` : '境界丹 ×1'}
+              <em>（丹药与弟子共用仓库）</em>
             </div>
 
             <div className="realm__rates">
-              <span>
-                基础成功率 <strong>{Math.round(rateWithout * 100)}%</strong>
-              </span>
               {pillDef && (
                 <span className={status.hasPill ? 'realm__rate--pill' : 'realm__rate--nopill'}>
-                  {pillDef.icon} 服{pillDef.name} <strong>{Math.round(rateWith * 100)}%</strong>
-                  <em>（{game.pills[status.pillId] ?? 0} 颗）</em>
+                  {pillDef.icon} {pillDef.name}
+                  <strong>
+                    {status.hasPill ? `已有 ${pillOwned} 颗` : '仓库无货'}
+                  </strong>
                 </span>
               )}
+              <span>
+                成功率 <strong>{Math.round(rate * 100)}%</strong>
+                <em>
+                  （丹药补足差额的 {Math.round(BREAKTHROUGH_PILL_GAP_RECOVERY * 100)}%，上限{' '}
+                  {Math.round(BREAKTHROUGH_MAX_SUCCESS * 100)}%）
+                </em>
+              </span>
             </div>
 
-            <div className={status.safe ? 'realm__risk realm__risk--safe' : 'realm__risk realm__risk--hard'}>
-              {status.safe
-                ? `境界尚浅，突破失败没有任何负面影响（灵气全额返还，可立即再试）——从${REALMS[INJURY_FROM_REALM].name}起才会留下道伤`
-                : `突破失败将道伤缠身，一段时间内无法再度突破，且期间产量下降`}
+            {/* 需求 9 的核心提示：丹药是门票，不是可选项 */}
+            <div
+              className={
+                status.hasPill ? 'realm__risk realm__risk--safe' : 'realm__risk realm__risk--hard'
+              }
+            >
+              {!status.hasPill
+                ? `缺 ${pillDef?.name ?? '境界丹'} —— 大境界突破必须服丹，去「丹器」页的丹房炼制，或让弟子从秘境带回来`
+                : status.safe
+                  ? `境界尚浅，突破失败没有负面影响（灵气全额返还，可立即再试）——但丹药照扣；从${REALMS[INJURY_FROM_REALM].name}起才会留下道伤`
+                  : `突破失败将道伤缠身，一段时间内无法再度突破，且期间产量下降`}
             </div>
 
             <div className="btn-row">
@@ -132,15 +157,7 @@ export function RealmPanel() {
                 type="button"
                 className="btn btn--primary"
                 disabled={!status.possible}
-                onClick={() => handleBreakthrough(false)}
-              >
-                直接突破
-              </button>
-              <button
-                type="button"
-                className="btn btn--primary"
-                disabled={!status.possible || !status.hasPill || !pillDef}
-                onClick={() => handleBreakthrough(true)}
+                onClick={handleBreakthrough}
               >
                 服丹突破
               </button>

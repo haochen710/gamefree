@@ -20,6 +20,15 @@ export interface AptitudeDef {
   speed: number;
   /** 能修到的最高境界下标（对应 REALMS） */
   capRealm: number;
+  /**
+   * 界面配色（本轮需求 3：UI 改黑白风）。
+   *
+   * 这里**必须**跟着一起改：颜色是写在 TS 里的 hex，
+   * 只改 CSS 令牌的话，界面上照样会冒出六种彩色。
+   * 黑白之后"档次"靠**明度**承担 —— 越好的资质越黑（墨越浓），
+   * 于是天灵根是近乎纯黑、凡品灵根是浅灰，一眼仍能排出高低。
+   * 抽出来放在这里而不是散在组件里，也是为了让冒烟测试能直接断言它们是不是灰阶。
+   */
   color: string;
   desc: string;
 }
@@ -30,7 +39,7 @@ export const APTITUDES: AptitudeDef[] = [
     name: '凡品灵根',
     speed: 0.25,
     capRealm: 4,
-    color: '#8a8578',
+    color: '#a9a9a9',
     desc: '勉强感应到灵气，终其一生难成气候。',
   },
   {
@@ -38,7 +47,7 @@ export const APTITUDES: AptitudeDef[] = [
     name: '下品灵根',
     speed: 0.35,
     capRealm: 5,
-    color: '#5c7a4a',
+    color: '#919191',
     desc: '资质平平，可入修行之门，难登大雅之堂。',
   },
   {
@@ -46,7 +55,7 @@ export const APTITUDES: AptitudeDef[] = [
     name: '中品灵根',
     speed: 0.45,
     capRealm: 6,
-    color: '#3d7a63',
+    color: '#787878',
     desc: '中人之姿，勤修苦练可成一方修士。',
   },
   {
@@ -54,7 +63,7 @@ export const APTITUDES: AptitudeDef[] = [
     name: '上品灵根',
     speed: 0.6,
     capRealm: 7,
-    color: '#3a6ea8',
+    color: '#5e5e5e',
     desc: '资质上佳，各大宗门争抢的好苗子。',
   },
   {
@@ -62,7 +71,7 @@ export const APTITUDES: AptitudeDef[] = [
     name: '极品灵根',
     speed: 0.8,
     capRealm: 8,
-    color: '#8a4fa8',
+    color: '#3f3f3f',
     desc: '百年难遇的良才，未来的一派之主。',
   },
   {
@@ -70,7 +79,7 @@ export const APTITUDES: AptitudeDef[] = [
     name: '天灵根',
     speed: 1.0,
     capRealm: 9,
-    color: '#b8860b',
+    color: '#141414',
     desc: '天生道体，五百年可至化神，仙途不可限量。',
   },
 ];
@@ -109,6 +118,30 @@ export const RECRUIT_WEIGHTS: Record<number, number[]> = {
   8: [4, 9, 17, 24, 25, 21],
   9: [2, 5, 12, 22, 29, 30],
 };
+
+/* ------------------------------------------------------------------ */
+/* 弟子修炼：派遣期间的额外进境（本轮需求 10）                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 弟子**在派遣中**（秘境探索 / 普通探索）的额外修行速度加成。
+ *
+ * 需求原文：「弟子应当可以在派遣（包括探索）的过程中，获取经验值，加快修炼速度」。
+ *
+ * 落地方式是"在外的每一秒都按更高的速度累积修为"—— 也就是历练即修行。
+ * 0.5 = 在外比在家快 50%。
+ *
+ * 为什么是 +50% 而不是翻倍：弟子即使不出门也在照常修炼，
+ * 所以这条本质上是"在外比在家快一半"的**额外**一层。
+ * 翻倍的话"把所有人一直挂在外面"会变成最优解，而秘境本身还有伤亡代价，
+ * 于是玩家会被推着去打不该打的仗。+50% 足够让"队伍一直在外面"明显划算，
+ * 又不至于让"留在家修行"变成错误答案。
+ *
+ * 这条与「心得」是两回事，可以叠加：
+ *   - 本系数：在外期间的**过程**收益（每秒都在涨修为）；
+ *   - 心得：归来时的**里程碑**收益（永久提高修行倍率，见 getInsightSpeedBonus）。
+ */
+export const EXPEDITION_CULTIVATION_BONUS = 0.5;
 
 /* ------------------------------------------------------------------ */
 /* 宗门品阶                                                            */
@@ -193,9 +226,32 @@ export const SECT_LEVELS: SectLevelDef[] = [
   },
 ];
 
-/** 宗门等级 → 弟子上限（还会再受居所容量限制，取两者较小值） */
+/**
+ * 宗门品阶 → 弟子上限（还会再受**弟子居所**床位限制，取两者较小值）。
+ *
+ * 需求原文：「宗门弟子数量设定不合理，一品宗门弟子人数一百左右，九品最高2048」。
+ *
+ * 原先是 `level * 6` —— 九品宗门也只收得下 54 人，于是"九品宗门"这四个字
+ * 完全没有分量：弟子数在第 10 分钟就摸到天花板，之后升品阶只是多了几个床位。
+ * 现在改成**几何增长**：一品 100 人，每升一品 ×1.459
+ * （`(2048 / 100) ^ (1 / 8)`），九品正好 2048。
+ *
+ * 为什么是几何而不是等差：弟子是**乘法级**的资源（每个人的产出彼此叠加、
+ * 又一起吃宗门倍率），而升品阶的成本也是乘法级的（每品约 ×10 灵石）。
+ * 两条乘法曲线才对得上；等差的话中期（四五品）就会先宽松得没有意义、
+ * 后期又突然不够用。
+ *
+ * ⚠️ 这个数只是**上限**：真正能收多少还取决于弟子居所盖了多少（见
+ * `engine.getDiscipleCapacity`）。所以"九品能收 2048 人"是一句承诺，
+ * 兑现它需要玩家一路盖房子。
+ */
+export const DISCIPLE_CAP_BY_SECT_LEVEL: number[] = [
+  100, 146, 213, 311, 453, 661, 965, 1408, 2048,
+];
+
 export function discipleCapBySect(level: number): number {
-  return level * 6;
+  const index = Math.min(Math.max(Math.floor(level), 1), DISCIPLE_CAP_BY_SECT_LEVEL.length) - 1;
+  return DISCIPLE_CAP_BY_SECT_LEVEL[index];
 }
 
 /**
@@ -229,9 +285,6 @@ export const MIN_EXPEDITION_SLOTS = 3;
 /* 招收弟子                                                            */
 /* ------------------------------------------------------------------ */
 
-/** 招收基础花费系数 */
-export const RECRUIT_BASE_COST = 60;
-
 /**
  * 招收一名弟子所需的灵石（需求 3）。
  *
@@ -243,6 +296,9 @@ export const RECRUIT_BASE_COST = 60;
  * 一品 60、九品 4860 灵石（`60 × 品阶²`）。
  *
  * `currentDisciples` 参数保留（调用点很多），但**已经不参与计算**。
+ *
+ * （早先还有一个 `RECRUIT_BASE_COST = 60` 的常量与这里同值、却没有任何调用点，
+ *  本轮删掉了 —— 两份同值的"基准价"迟早会漂成两个数。）
  */
 export const RECRUIT_COST_PER_LEVEL = 60;
 

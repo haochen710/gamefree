@@ -27,6 +27,8 @@ import SectHallPanel from '../src/components/SectHallPanel';
 import Header from '../src/components/Header';
 import ResourceBar from '../src/components/ResourceBar';
 import ActionPanel from '../src/components/ActionPanel';
+import EncounterPanel from '../src/components/EncounterPanel';
+import SeasonPanel from '../src/components/SeasonPanel';
 import ServantPanel from '../src/components/ServantPanel';
 import RealmPanel from '../src/components/RealmPanel';
 import AscendPanel from '../src/components/AscendPanel';
@@ -39,6 +41,7 @@ import JournalPanel from '../src/components/JournalPanel';
 import { useGame } from '../src/game/store';
 import { D, fmt } from '../src/game/decimal';
 import {
+  APTITUDES,
   APTITUDE_MAP,
   AUTO_REFINE_LEVEL_MAX,
   AUTO_REFINE_RATES,
@@ -59,7 +62,12 @@ import {
   INSIGHT_MAX_PER_REALM,
   INSIGHT_SPEED_PER_POINT,
   ARENA_BUFF_BONUS,
+  BREAKTHROUGH_MAX_SUCCESS,
+  BREAKTHROUGH_PILL_GAP_RECOVERY,
   BUILD_GROUPS,
+  DISCIPLE_CAP_BY_SECT_LEVEL,
+  discipleCapBySect,
+  EXPEDITION_CULTIVATION_BONUS,
   GENERATORS,
   INJURY_PRODUCTION_PENALTY,
   INJURY_SECONDS,
@@ -75,6 +83,7 @@ import {
   ARTIFACTS,
   RARE_KINDS_MIN,
   RARE_MATERIAL_IDS,
+  RARITY_COLORS,
   REFINED_MATERIAL_IDS,
   REFINE_RECIPES,
   RESOURCE_IDS,
@@ -217,7 +226,7 @@ import {
   canRollEncounter,
 } from '../src/game/encounter';
 import { applyTick } from '../src/game/tick';
-import { gameRandom } from '../src/game/random';
+import { gameRandom, type RandomSource } from '../src/game/random';
 import { applyOffline, deserialize, exportCode, importCode, serialize } from '../src/game/save';
 
 /* ------------------------------------------------------------------ */
@@ -268,6 +277,23 @@ function forceBuild(state: GameState, id: string, count: number): GameState {
 }
 
 /**
+ * 测试用：招收弟子**之前先保证有弟子居所**。
+ *
+ * 需求 2 起「弟子居所」与「仆役居所」是分开的两条线，而这份冒烟测试里
+ * 有十几处场景只是为了"造几个弟子来测别的东西"（修炼、寿元、探索、大比…），
+ * 它们在旧规则下盖一间茅屋就够了。与其在每一处都补一句建房，
+ * 不如让这个入口统一补上 —— 这样一来那些测试仍然只测它们自己的主题，
+ * 而"居所怎么限制人数"由 §44 那几条专门断言来负责。
+ */
+function recruitHoused(state: GameState, random?: RandomSource): ReturnType<typeof disciples.recruitDisciple> {
+  const housed =
+    engine.getDiscipleHousing(state) > 0 ? state : forceBuild(state, 'discipleDorm', 20);
+  // ⚠️ 这里必须走 `disciples.` 命名空间：批量替换时把这一行也换成了 recruitHoused，
+  // 于是它自己调自己 —— 冒烟测试直接爆栈。
+  return disciples.recruitDisciple(housed, random);
+}
+
+/**
  * 给齐所有材料。
  *
  * 需求 2 之后配方由「基础材料 + 稀有材料」构成，种类还会随品阶增加；
@@ -309,7 +335,12 @@ section('[1] 界面渲染');
     check('组件树渲染成功', false, String(error));
   }
 
-  const expected = ['仙途', '打坐', '境界', '灵石合成', '修行', '洞府', '宗门', '探索', '丹器', '灵植'];
+  /*
+   * 首屏默认停在「修行」页。本轮需求 6 把合成与钻研搬去了「工坊」，
+   * 所以首屏断言里不再有「灵石合成」—— 换成新模块的名字。
+   * （合成栏本身仍然存在，见 §44 对工坊页的断言。）
+   */
+  const expected = ['仙途', '打坐', '境界', '修行', '洞府', '宗门', '探索', '丹器', '灵植', '工坊', '建筑', '商行'];
   for (const text of expected) {
     check(`包含「${text}」`, html.includes(text));
   }
@@ -391,10 +422,11 @@ section('[2b] 随机源');
   check('连续取值不重复（说明不是固定序列）', samples.size > 190, `${samples.size}/200 个不同值`);
 
   // 招收弟子/突破等入口默认都用 gameRandom，不传参也能正常工作
-  const state = grant(forceBuild(createInitialState(0), 'thatchHut', 5), { stone: '1e6' });
+  // 需求 2 起招收弟子要求「弟子居所」，所以这里给的是弟子舍而不是茅屋
+  const state = grant(forceBuild(createInitialState(0), 'discipleDorm', 5), { stone: '1e6' });
   const withSect: GameState = { ...state, sect: { ...state.sect, founded: true } };
-  const a = disciples.recruitDisciple(withSect).disciple;
-  const b = disciples.recruitDisciple(withSect).disciple;
+  const a = recruitHoused(withSect).disciple;
+  const b = recruitHoused(withSect).disciple;
   check('招收弟子默认走真随机', a !== null && b !== null);
   check('两次招收得到的弟子不同', a!.name !== b!.name || a!.aptitude !== b!.aptitude, `${a!.name}/${a!.aptitude} vs ${b!.name}/${b!.aptitude}`);
 }
@@ -502,24 +534,53 @@ section('[2c] 仆役（杂役）');
   const full: GameState = { ...many, servants: { chores: engine.getServantCapacity(many) } };
   check('居所满员后无法再招收', !engine.canRecruitServant(full).ok, engine.canRecruitServant(full).reason ?? '');
 
-  // 关键取舍：仆人与弟子共用居所名额
-  // （把宗门品阶调高，让「居所」而不是「宗门等级」成为瓶颈，才能看出共用效果）
+  /*
+   * 本轮需求 2：「仆役居所和弟子居所区分开」。
+   *
+   * 这一段**替换**了原来那组「仆人与弟子共用居所名额」的断言 ——
+   * 那条规则本身就是这一轮要拆掉的东西，留着它测的就不是游戏了。
+   */
   const sectState: GameState = {
     ...grant(forceBuild(createInitialState(0), 'thatchHut', 10), { stone: '1e9', qi: '1e9' }),
     sect: { founded: true, level: 5, disciples: [], totalRecruited: 0, lifespanBonus: 0 },
   };
-  check('测试场景：居所容量 30', engine.getHousingCapacity(sectState) === 30);
-  const beforeServants = engine.getDiscipleCapacity(sectState);
+  check('测试场景：仆役居所容量 30', engine.getServantHousing(sectState) === 30);
+  check('需求 2：茅屋不给弟子床位', engine.getDiscipleHousing(sectState) === 0);
+  check('需求 2：没有弟子居所就收不了弟子', engine.getDiscipleCapacity(sectState) === 0);
+
+  const beforeCapacity = engine.getDiscipleCapacity(sectState);
   const withServants: GameState = { ...sectState, servants: { chores: 6 } };
   check(
-    '多收仆人就会少收弟子（共用居所）',
-    engine.getDiscipleCapacity(withServants) === beforeServants - 6,
-    `${beforeServants} → ${engine.getDiscipleCapacity(withServants)}`,
+    '需求 2：多收仆人不占弟子名额',
+    engine.getDiscipleCapacity(withServants) === beforeCapacity,
+    `${beforeCapacity} → ${engine.getDiscipleCapacity(withServants)}`,
   );
 
-  // 遣散仆人能给弟子腾出名额
-  const freed = engine.dismissAllServants(withServants);
-  check('遣散仆人可腾出弟子名额', engine.getDiscipleCapacity(freed) === beforeServants);
+  const withDorms = forceBuild(sectState, 'discipleDorm', 3);
+  check('需求 2：弟子舍提供弟子床位（3×12）', engine.getDiscipleHousing(withDorms) === 36);
+  check(
+    '需求 2：弟子上限取「居所」与「品阶」的较小值',
+    engine.getDiscipleCapacity(withDorms) === Math.min(36, discipleCapBySect(5)),
+    `居所 36 / 品阶 ${discipleCapBySect(5)} → ${engine.getDiscipleCapacity(withDorms)}`,
+  );
+  const dummyDisciples = Array.from({ length: 20 }, (_, i) => ({
+    id: `t${i}`,
+    name: `测试弟子${i}`,
+    aptitude: 'mortal' as const,
+    realmIndex: 0,
+    progress: 0,
+    age: 20,
+    status: 'idle' as const,
+    insight: 0,
+  }));
+  check(
+    '需求 2：弟子不占仆役床位',
+    engine.getServantCapacity({ ...withDorms, sect: { ...withDorms.sect, disciples: dummyDisciples } }) === 30,
+  );
+  check(
+    '需求 2：仆役满员也不影响弟子床位',
+    engine.getDiscipleCapacity({ ...withDorms, servants: { chores: 30 } }) === Math.min(36, discipleCapBySect(5)),
+  );
 
   // 存档往返
   const saved = deserialize(JSON.parse(JSON.stringify(serialize(withServants))));
@@ -553,9 +614,10 @@ section('[3] 建筑与价格');
   const bulk = cost10.qi ?? D(0);
   check('买 10 个的总价高于 10 倍单价', bulk.gt(single.mul(10)), `${bulk.toString()} vs ${single.toString()}`);
 
-  // 居所提供弟子容量
+  // 仆役居所提供仆役床位（需求 2：它不再给弟子床位了）
   const housed = forceBuild(state, 'thatchHut', 3);
-  check('茅屋提供弟子容量', engine.getHousingCapacity(housed) === 9, `${engine.getHousingCapacity(housed)}`);
+  check('茅屋提供仆役床位', engine.getServantHousing(housed) === 9, `${engine.getServantHousing(housed)}`);
+  check('茅屋不给弟子床位', engine.getDiscipleHousing(housed) === 0);
 
   // 丹房提供炼丹位（需求 2 起丹房唯一，所以"位"只剩展示意义，不再决定品阶上限）
   const withRooms = forceBuild(state, 'alchemyRoom', 2);
@@ -752,69 +814,79 @@ section('[4] 储存上限与储物建筑');
 }
 
 /* ------------------------------------------------------------------ */
-/* 5. 突破成功率与境界丹（需求 5）                                      */
+/* 5. 突破成功率与境界丹（需求 5 / 本轮需求 9）                          */
 /* ------------------------------------------------------------------ */
-section('[5] 突破成功率与境界丹（需求 5）');
+section('[5] 突破成功率与境界丹（需求 9：丹药是硬门槛）');
 {
   // 构造一个「小境界已满、灵气充足」的炼气期
   let state = grant(createInitialState(0), { qi: '1e6' });
   state = { ...state, layer: REALMS[0].layerCount };
 
-  const status = engine.getBreakthroughStatus(state);
-  check('满层且有灵气时可以突破', status.possible);
-  check('炼气期对应的境界丹是筑基丹', status.pillId === 'foundationPill', status.pillId);
+  /*
+   * 本轮需求 9：「玩家和弟子突破应当对丹药的需求很强烈」。
+   * 一条规则从这里开始是硬性的：**仓库没有对应境界丹，连试都不能试**。
+   */
+  const noPill = engine.getBreakthroughStatus(state);
+  check('需求 9：没有境界丹时无法突破', !noPill.possible, noPill.reason ?? '');
+  check('需求 9：缺丹提示点名是哪一味', (noPill.reason ?? '').includes('筑基丹'), noPill.reason ?? '');
+  check('需求 9：缺丹时调用 breakthrough 无任何效果', engine.breakthrough(state, fixedRandom(0)) === null);
 
-  const baseRate = engine.getSuccessRate(state, false);
-  check('基础成功率符合设定', Math.abs(baseRate - REALMS[0].baseSuccess) < 1e-9, `${baseRate}`);
-
-  // 没有丹药时，即使要求服用也拿不到加成
-  check('无丹药时服丹不产生加成', engine.getSuccessRate(state, true) === baseRate);
-
-  // 给一颗筑基丹
   const withPill: GameState = { ...state, pills: { foundationPill: 1 } };
-  const boosted = engine.getSuccessRate(withPill, true);
-  check(
-    '服丹加成会被 98% 上限截断',
-    Math.abs(boosted - 0.98) < 1e-9,
-    `0.80 + 0.35 = 1.15 → ${boosted.toFixed(2)}`,
-  );
+  const status = engine.getBreakthroughStatus(withPill);
+  check('有丹药 + 满层 + 灵气足 → 可以突破', status.possible, status.reason ?? '');
+  check('炼气期对应的境界丹是筑基丹', status.pillId === 'foundationPill' && status.hasPill);
 
-  // 在高境界（基础成功率低）验证 +35% 不被截断
+  const rate = engine.getSuccessRate(withPill);
+  const expectedRate =
+    REALMS[0].baseSuccess + (1 - REALMS[0].baseSuccess) * BREAKTHROUGH_PILL_GAP_RECOVERY;
+  check('需求 9：丹药补足「差额的 62%」', Math.abs(rate - expectedRate) < 1e-9, `${rate.toFixed(3)}`);
+  check('需求 9：成功率上限对齐设定集的 95%', rate <= BREAKTHROUGH_MAX_SUCCESS + 1e-9, `${rate.toFixed(3)}`);
+
+  // 高境界：丹药同样关键，而且服丹之后仍然比低境界难 —— 这是丹药"每个境界都值"的前提
   const highRealm: GameState = {
-    ...state,
-    realmIndex: 3, // 元婴期，基础 0.50
+    ...withPill,
+    realmIndex: 3, // 元婴期
     layer: REALMS[3].layerCount,
     pills: { spiritPill: 1 },
   };
-  const highBase = engine.getSuccessRate(highRealm, false);
-  const highBoosted = engine.getSuccessRate(highRealm, true);
+  const highRate = engine.getSuccessRate(highRealm);
+  check('境界越高越难（服丹之后仍递减）', highRate < rate, `${rate.toFixed(3)} → ${highRate.toFixed(3)}`);
   check(
-    '高境界服丹确为 +35%',
-    Math.abs(highBoosted - (highBase + 0.35)) < 1e-9,
-    `${highBase.toFixed(2)} → ${highBoosted.toFixed(2)}`,
+    '需求 9：丹药在高境界补的绝对值更大（越难越依赖丹药）',
+    (1 - REALMS[3].baseSuccess) * BREAKTHROUGH_PILL_GAP_RECOVERY >
+      (1 - REALMS[0].baseSuccess) * BREAKTHROUGH_PILL_GAP_RECOVERY,
   );
 
-  // 强制失败（炼气期属于「低境界」，失败应毫无代价）
-  const failed = engine.breakthrough(withPill, true, fixedRandom(0.999));
+  // 强制失败（炼气期属于「低境界」，失败应毫无代价 —— 但丹药照扣）
+  const failed = engine.breakthrough(withPill, fixedRandom(0.999));
   check('失败时境界不变', failed !== null && !failed.success && failed.state.realmIndex === 0);
   check('失败时消耗了丹药', (failed?.state.pills.foundationPill ?? 0) === 0);
-  check('失败累积保底加成', (failed?.state.breakthroughPity[0] ?? 0) > 0, `+${failed?.state.breakthroughPity[0]}`);
+  check(
+    '需求 9：失败不再累积保底（字段整个删掉了）',
+    !('breakthroughPity' in (failed!.state as unknown as Record<string, unknown>)),
+  );
   check(
     '低境界失败：灵气全额返还',
     Math.abs(failed!.state.resources.qi.toNumber() - 1e6) < 1,
     `${failed!.state.resources.qi.toString()}`,
   );
   check('低境界失败：不产生道伤', failed!.state.injurySeconds === 0 && failed!.injurySeconds === 0);
-  check('低境界标记为 safe', engine.getBreakthroughStatus(state).safe);
+  check('低境界标记为 safe', engine.getBreakthroughStatus(withPill).safe);
 
-  // 保底让下次更容易
-  const nextRate = engine.getSuccessRate(failed!.state, false);
-  check('保底加成提高了下次成功率', nextRate > baseRate, `${baseRate.toFixed(3)} → ${nextRate.toFixed(3)}`);
+  // 需求 9 的核心：失败之后成功率**不会**变高
+  check(
+    '需求 9：失败后成功率不叠加',
+    Math.abs(engine.getSuccessRate(failed!.state) - rate) < 1e-9,
+    `${rate.toFixed(3)} → ${engine.getSuccessRate(failed!.state).toFixed(3)}`,
+  );
+  // 丹药吃完了，于是又回到"不能突破"的状态
+  check('需求 9：丹药耗尽后又突破不了', !engine.getBreakthroughStatus(failed!.state).possible);
 
-  // 强制成功
-  const ok = engine.breakthrough(failed!.state, false, fixedRandom(0));
+  // 强制成功（补一颗丹）
+  const ok = engine.breakthrough({ ...failed!.state, pills: { foundationPill: 1 } }, fixedRandom(0));
   check('成功时进入下一境界', ok !== null && ok.success && ok.state.realmIndex === 1);
   check('成功后小境界层数归零', ok?.state.layer === 0);
+  check('需求 9：成功同样消耗丹药', (ok?.state.pills.foundationPill ?? 0) === 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -824,18 +896,19 @@ section('[5b] 高境界突破失败：道伤');
 {
   // 元婴期（下标 3）是第一个会产生道伤的境界
   let state = grant(createInitialState(0), { qi: '1e12' });
-  state = { ...state, realmIndex: 3, layer: REALMS[3].layerCount };
+  state = { ...state, realmIndex: 3, layer: REALMS[3].layerCount, pills: { spiritPill: 5 } };
   const status = engine.getBreakthroughStatus(state);
   check('元婴期属于高境界（非 safe）', !status.safe);
 
   // 强制失败
-  const failed = engine.breakthrough(state, false, fixedRandom(0.999));
+  const failed = engine.breakthrough(state, fixedRandom(0.999));
   check('高境界失败仍保留当前境界', failed !== null && failed.state.realmIndex === 3);
   check(
     '高境界失败：只返还一半灵气',
     Math.abs(failed!.state.resources.qi.toNumber() - (1e12 - REALMS[3].breakthroughQi * 0.5)) < 1e6,
   );
   check('高境界失败：留下道伤', failed!.state.injurySeconds > 0, `${failed!.injurySeconds} 秒`);
+  check('高境界失败：丹药不返还', (failed!.state.pills.spiritPill ?? 0) === 4);
   check(
     '道伤时长随境界递增',
     INJURY_SECONDS[3] < INJURY_SECONDS[5] && INJURY_SECONDS[5] < INJURY_SECONDS[8],
@@ -846,7 +919,7 @@ section('[5b] 高境界突破失败：道伤');
   const injured = failed!.state;
   const blocked = engine.getBreakthroughStatus(injured);
   check('道伤期间无法突破', !blocked.possible && blocked.reason === '道伤未愈');
-  check('道伤期间突破调用无效果', engine.breakthrough(injured, false, fixedRandom(0)) === null);
+  check('道伤期间突破调用无效果', engine.breakthrough(injured, fixedRandom(0)) === null);
 
   // 道伤期间产量下降
   const producing = forceBuild(injured, 'spiritArray', 100);
@@ -865,7 +938,7 @@ section('[5b] 高境界突破失败：道伤');
   check('道伤消退后可以突破', engine.getBreakthroughStatus(ticked).possible || engine.getBreakthroughStatus(ticked).reason !== '道伤未愈');
 
   // 「萎靡」不会因为再次失败而叠加变长
-  const twice = engine.breakthrough(injured, false, fixedRandom(0.999));
+  const twice = engine.breakthrough(injured, fixedRandom(0.999));
   check('道伤不会因连败而无限叠加', twice === null, '（道伤期间本就无法突破）');
 }
 
@@ -900,7 +973,7 @@ section('[7] 存档往返与旧版迁移');
   original = { ...original, pills: { nineTurnPill: 3, foundationPill: 7 } };
   original = { ...original, artifacts: { ironSword: 5 } };
   original = { ...original, sect: { ...original.sect, founded: true, level: 5, lifespanBonus: 0.2 } };
-  original = disciples.recruitDisciple(original, makeRandom(7)).state;
+  original = recruitHoused(original, makeRandom(7)).state;
   check('测试场景成功招到弟子', original.sect.disciples.length === 1);
 
   const restored = deserialize(JSON.parse(JSON.stringify(serialize(original))));
@@ -1019,7 +1092,7 @@ section('[8] 离线收益');
   let sect = grant(createInitialState(0), { stone: '1e6' });
   sect = forceBuild(sect, 'thatchHut', 2);
   sect = { ...sect, realmIndex: 6, sect: { ...sect.sect, founded: true } };
-  const recruited = disciples.recruitDisciple(sect, makeRandom(3)).state;
+  const recruited = recruitHoused(sect, makeRandom(3)).state;
   check('离线测试场景招到弟子', recruited.sect.disciples.length === 1);
   const beforeProgress = recruited.sect.disciples[0].progress;
   const offline = applyOffline(recruited, 6 * 3600 * 1000, makeRandom(1)).state;
@@ -1073,18 +1146,27 @@ section('[9] 弟子系统（需求 4 / 7）');
   check('灵石不足时无法招收', disciples.canRecruit(founded).ok === false);
   check('没有居所时无法招收', disciples.canRecruit(rich).ok === false, disciples.canRecruit(rich).reason ?? '');
 
-  const housed = forceBuild(rich, 'thatchHut', 1);
-  check('有灵石且有居所时可以招收', disciples.canRecruit(housed).ok);
+  /*
+   * 需求 1 / 2：弟子上限现在有两条线，而**仆役居所不再提供弟子床位**。
+   * 所以"盖一座茅屋就能收弟子"这件事本身已经不成立了 ——
+   * 得盖「弟子舍」（并要求已开宗）。
+   */
+  const withHut = forceBuild(rich, 'thatchHut', 1);
+  check('需求 2：只有茅屋时仍然收不了弟子', disciples.canRecruit(withHut).ok === false, disciples.canRecruit(withHut).reason ?? '');
+
+  const dormed = forceBuild(rich, 'discipleDorm', 1);
+  check('有灵石且有弟子居所时可以招收', disciples.canRecruit(dormed).ok);
 
   // 容量决定上限
-  check('居所容量等于每座容量之和', engine.getHousingCapacity(housed) === 3);
+  check('弟子居所容量等于每座容量之和', engine.getDiscipleHousing(dormed) === 12);
+  check('仆役居所容量单独统计', engine.getServantHousing(forceBuild(rich, 'thatchHut', 2)) === 6);
 
   // 修炼推进 + 寿元死亡
   let test: GameState = grant(createInitialState(0), { stone: '1e9' });
   test = forceBuild(test, 'thatchHut', 5);
   test = { ...test, sect: { ...test.sect, founded: true } };
   // 随机数取极小值 → 抽到资质最低的凡品灵根
-  test = disciples.recruitDisciple(test, fixedRandom(0.01)).state;
+  test = recruitHoused(test, fixedRandom(0.01)).state;
   const d0 = test.sect.disciples[0];
   check('招到的弟子有名字和资质', d0.name.length > 0 && d0.aptitude === 'mortal', `${d0.name} / ${d0.aptitude}`);
 
@@ -1102,7 +1184,7 @@ section('[9] 弟子系统（需求 4 / 7）');
   check('弟子死亡写入了记事', aged.journal.some((entry) => entry.text.includes('寿元耗尽')));
 
   // 逐出
-  const two = disciples.recruitDisciple(test, makeRandom(5)).state;
+  const two = recruitHoused(test, makeRandom(5)).state;
   const dismissed = disciples.dismissDisciple(two, two.sect.disciples[0].id);
   check('可以逐出弟子', dismissed.sect.disciples.length === two.sect.disciples.length - 1);
 
@@ -1132,7 +1214,7 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
   let strong: GameState = grant(createInitialState(0), { stone: '1e9' });
   strong = forceBuild(strong, 'thatchHut', 5);
   strong = { ...strong, sect: { ...strong.sect, founded: true } };
-  for (let i = 0; i < 6; i += 1) strong = disciples.recruitDisciple(strong, makeRandom(100 + i)).state;
+  for (let i = 0; i < 6; i += 1) strong = recruitHoused(strong, makeRandom(100 + i)).state;
   strong = {
     ...strong,
     sect: {
@@ -1208,7 +1290,7 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
   let weak: GameState = grant(createInitialState(0), { stone: '1e9' });
   weak = forceBuild(weak, 'thatchHut', 3);
   weak = { ...weak, sect: { ...weak.sect, founded: true } };
-  for (let i = 0; i < 3; i += 1) weak = disciples.recruitDisciple(weak, makeRandom(200 + i)).state;
+  for (let i = 0; i < 3; i += 1) weak = recruitHoused(weak, makeRandom(200 + i)).state;
   const weakIds = weak.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
   const weakStarted = expeditions.startExpedition(weak, realm.id, weakIds);
   const weakResolved = expeditions.resolveExpedition(
@@ -1396,7 +1478,17 @@ section('[12] 炼丹 / 炼器品阶晋升');
   const needTwo = crafting.getAlchemyUpgradeStatus(upgraded);
   // 需求 2：升品不再要求丹房数量，只看资源
   check('升品不再需要多座丹房', needTwo.slotsNeeded === 0, `需 ${needTwo.slotsNeeded} 座`);
-  check('资源不够时照样升不了', needTwo.possible === false, needTwo.reason ?? '');
+  /*
+   * ⚠️ 这条原来靠"三品要吃灵液、而手里没有灵液"来成立 —— 本轮需求 9 把三品的
+   * 灵液要求移到了四品（否则筑基期会出现"想升三品先要灵液、想有灵液先升三品"），
+   * 于是那个状态下三品真的**可以**升了。
+   * 现在直接把灵气清零来验证"资源不够就升不了"—— 测的是同一件事，而且更直接。
+   */
+  const broke: GameState = {
+    ...upgraded,
+    resources: { ...upgraded.resources, qi: D(0) },
+  };
+  check('资源不够时照样升不了', crafting.getAlchemyUpgradeStatus(broke).possible === false, crafting.getAlchemyUpgradeStatus(broke).reason ?? '');
 }
 
 /* ------------------------------------------------------------------ */
@@ -1421,7 +1513,22 @@ section('[14] 内容完整性');
 {
   check('所有建筑都定义了造价', Object.values(BUILDABLE_MAP).every((b) => Object.keys(b.baseCost).length > 0));
   check('所有建筑都有解锁条件字段', Object.values(BUILDABLE_MAP).every((b) => b.unlock !== undefined));
-  check('居所建筑至少有一种', STRUCTURES.some((s) => (s.capacity ?? 0) > 0));
+  check('仆役居所建筑至少有一种', STRUCTURES.some((s) => (s.servantCapacity ?? 0) > 0));
+  check('弟子居所建筑至少有一种', STRUCTURES.some((s) => (s.discipleCapacity ?? 0) > 0));
+  check(
+    '需求 2：弟子居所一律要求已开宗',
+    STRUCTURES.filter((s) => s.group === 'discipleHousing').every((s) => s.requiresSect === true),
+  );
+  check(
+    '需求 2：没有任何建筑同时提供仆役与弟子床位（两套不能混）',
+    STRUCTURES.every((s) => !(s.servantCapacity && s.discipleCapacity)),
+  );
+  check(
+    '需求 1：弟子上限曲线单调递增且首尾为 100 / 2048',
+    DISCIPLE_CAP_BY_SECT_LEVEL[0] === 100 &&
+      DISCIPLE_CAP_BY_SECT_LEVEL[DISCIPLE_CAP_BY_SECT_LEVEL.length - 1] === 2048 &&
+      DISCIPLE_CAP_BY_SECT_LEVEL.every((v, i, arr) => i === 0 || v > arr[i - 1]),
+  );
   check('丹房与炼器房都已定义', STRUCTURES.some((s) => s.alchemySlots) && STRUCTURES.some((s) => s.refiningSlots));
   check('秘境都定义了掉落表', Object.values(SECRET_REALM_MAP).every((r) => r.loot.length > 0));
   check('境界表的寿元递增', REALMS.slice(0, -1).every((r, i) => r.lifespan < REALMS[i + 1].lifespan));
@@ -2053,8 +2160,8 @@ section('[20] 钻研与图纸（需求 6）');
   const pool = forceBuild(realmOk, 'thunderPool', 1);
   check(
     '雷池提高突破成功率',
-    engine.getSuccessRate(pool, false) > engine.getSuccessRate(realmOk, false),
-    `${engine.getSuccessRate(realmOk, false).toFixed(3)} → ${engine.getSuccessRate(pool, false).toFixed(3)}`,
+    engine.getSuccessRate(pool) > engine.getSuccessRate(realmOk),
+    `${engine.getSuccessRate(realmOk).toFixed(3)} → ${engine.getSuccessRate(pool).toFixed(3)}`,
   );
   const altar = forceBuild({ ...base, realmIndex: 6 }, 'starAltar', 1);
   check('星坛提高全局产量', engine.getGlobalMultiplier(altar).gt(engine.getGlobalMultiplier({ ...base, realmIndex: 6 })));
@@ -2422,7 +2529,7 @@ section('[23] store 动作闭环');
     // 大比要有弟子才有意义（没弟子时不会给加速）
     arena = forceBuild(store.getState().game, 'arena', 1);
     arena = forceBuild(arena, 'thatchHut', 2);
-    arena = disciples.recruitDisciple(arena, makeRandom(5)).state;
+    arena = recruitHoused(arena, makeRandom(5)).state;
     check('大比测试场景里招到了弟子', arena.sect.disciples.length === 1);
     store.setState({ game: arena });
     store.getState().toggleArena();
@@ -2857,7 +2964,7 @@ section('[26] 宗门建筑与大比（需求 4）');
 
   /* ---- 大比到点自动举办，全宗修行加速 ---- */
   let sect: GameState = { ...running, sect: { ...running.sect, disciples: [] } };
-  for (let i = 0; i < 4; i += 1) sect = disciples.recruitDisciple(sect, makeRandom(i + 1)).state;
+  for (let i = 0; i < 4; i += 1) sect = recruitHoused(sect, makeRandom(i + 1)).state;
   const speedBefore = disciples.getDiscipleSpeed(sect, sect.sect.disciples[0]);
 
   const multBefore = engine.getCultivationSpeedMultiplier(sect);
@@ -3034,7 +3141,7 @@ section('[26] 宗门建筑与大比（需求 4）');
   hall = forceBuild(hall, 'martialPavilion', 1);
   hall = forceBuild(hall, 'heavenTower', 1);
   hall = { ...hall, sect: { ...hall.sect, disciples: [] } };
-  for (let i = 0; i < 3; i += 1) hall = disciples.recruitDisciple(hall, makeRandom(i + 1)).state;
+  for (let i = 0; i < 3; i += 1) hall = recruitHoused(hall, makeRandom(i + 1)).state;
 
   check('已建成的弟子用建筑会被列出', sectActivity.getEventBuildings(hall).length === 3, `${sectActivity.getEventBuildings(hall).length} 处`);
   check(
@@ -3164,8 +3271,8 @@ section('[27] 季节与天象（需求 1）');
     );
     check(
       '天雷劫云提高突破成功率',
-      engine.getSuccessRate({ ...base, weatherId: 'thunderCloud' }, false) >
-        engine.getSuccessRate(base, false),
+      engine.getSuccessRate({ ...base, weatherId: 'thunderCloud' }) >
+        engine.getSuccessRate(base),
     );
     check(
       '天象不影响发现秘境的概率',
@@ -3277,7 +3384,7 @@ section('[29] 普通探索：未发现秘境时唯一能做的事（需求 1）'
   let s: GameState = grant(createInitialState(0), { stone: '1e9', qi: '1e9', wood: '1e9' });
   s = forceBuild(s, 'thatchHut', 5);
   s = { ...s, sect: { ...s.sect, founded: true } };
-  for (let i = 0; i < 6; i += 1) s = disciples.recruitDisciple(s, makeRandom(400 + i)).state;
+  for (let i = 0; i < 6; i += 1) s = recruitHoused(s, makeRandom(400 + i)).state;
 
   // 东部群山第 2 个小区域：门槛 0，开局够得着，且它的秘境还没被发现
   const fresh = 'eastMountains_1';
@@ -3517,7 +3624,7 @@ section('[31] 纪年：一年 = 现实 8 分钟，一季 = 2 分钟（需求 1�
     let s: GameState = grant(createInitialState(0), { qi: '1e9', stone: '1e6' });
     s = forceBuild(s, 'thatchHut', 5);
     s = { ...s, sect: { ...s.sect, founded: true } };
-    s = disciples.recruitDisciple(s, fixedRandom(0.01)).state;
+    s = recruitHoused(s, fixedRandom(0.01)).state;
     check('测试用弟子招到了', s.sect.disciples.length === 1);
     const before = s.sect.disciples[0]?.age ?? 0;
     const oneYear = disciples.tickDisciples(s, SECONDS_PER_GAME_YEAR);
@@ -3555,13 +3662,13 @@ section('[32] 善恶值 + 开宗前的随机遭遇（需求 2）');
   );
   check(
     '大恶之人的突破成功率被拉低',
-    engine.getSuccessRate({ ...base, karma: -100 }, true) < engine.getSuccessRate(base, true),
-    `${engine.getSuccessRate(base, true).toFixed(3)} → ${engine.getSuccessRate({ ...base, karma: -100 }, true).toFixed(3)}`,
+    engine.getSuccessRate({ ...base, karma: -100 }) < engine.getSuccessRate(base),
+    `${engine.getSuccessRate(base).toFixed(3)} → ${engine.getSuccessRate({ ...base, karma: -100 }).toFixed(3)}`,
   );
   check(
     '但不会压到 0（恶行线仍然走得通）',
-    engine.getSuccessRate({ ...base, karma: -100 }, false) >= KARMA_SUCCESS_FLOOR - 1e-9,
-    `${engine.getSuccessRate({ ...base, karma: -100 }, false).toFixed(3)}`,
+    engine.getSuccessRate({ ...base, karma: -100 }) >= KARMA_SUCCESS_FLOOR - 1e-9,
+    `${engine.getSuccessRate({ ...base, karma: -100 }).toFixed(3)}`,
   );
 
   /* ---- 小境界参悟也会挨天雷（需求明文点了这一条）---- */
@@ -3832,7 +3939,7 @@ section('[34] 宗门事件 + 宗门大阵（需求 1）');
     const s = founded();
     // 先塞几个弟子，好看到伤亡
     let withDisciples = s;
-    for (let i = 0; i < 8; i += 1) withDisciples = disciples.recruitDisciple(withDisciples, makeRandom(300 + i)).state;
+    for (let i = 0; i < 8; i += 1) withDisciples = recruitHoused(withDisciples, makeRandom(300 + i)).state;
     const before = withDisciples.sect.disciples.length;
     check('测试用宗门有弟子', before >= 6, `${before} 人`);
 
@@ -3918,7 +4025,7 @@ section('[35] 弟子寿元限制（需求 2）');
     let s: GameState = grant(createInitialState(0), { qi: '1e9', stone: '1e9' });
     s = forceBuild(s, 'thatchHut', 5);
     s = { ...s, sect: { ...s.sect, founded: true } };
-    s = disciples.recruitDisciple(s, fixedRandom(0.01)).state;
+    s = recruitHoused(s, fixedRandom(0.01)).state;
     const d = s.sect.disciples[0];
     check('测试弟子招到了', !!d);
 
@@ -3940,7 +4047,7 @@ section('[35] 弟子寿元限制（需求 2）');
     let s: GameState = grant(createInitialState(0), { qi: '1e9', stone: '1e9' });
     s = forceBuild(s, 'thatchHut', 5);
     s = { ...s, sect: { ...s.sect, founded: true } };
-    s = disciples.recruitDisciple(s, fixedRandom(0.01)).state;
+    s = recruitHoused(s, fixedRandom(0.01)).state;
     const d = s.sect.disciples[0];
     const years = REALMS[0].lifespan - d.age + 1;
     const seconds = (years * 365) / GAME_DAYS_PER_SECOND;
@@ -4483,8 +4590,8 @@ section('[40] 弟子招收固定消耗（需求 3）');
     let s: GameState = grant(createInitialState(0), { qi: '1e9', stone: '1e7' });
     s = forceBuild(s, 'thatchHut', 8);
     s = { ...s, sect: { ...s.sect, founded: true, level: 3 } };
-    const first = disciples.recruitDisciple(s, makeRandom(11));
-    const second = disciples.recruitDisciple(first.state, makeRandom(12));
+    const first = recruitHoused(s, makeRandom(11));
+    const second = recruitHoused(first.state, makeRandom(12));
     check('招到了弟子', !!first.disciple && !!second.disciple);
     // 三次品阶：60 × 3² = 540 灵石，且第二个还是 540（不随人数涨）
     const cost1 = s.resources.stone.sub(first.state.resources.stone);
@@ -4535,8 +4642,20 @@ section('[41] 界面布局 / 普通探索 / 唯一建筑 / 满仓倒计时');
      * 这一条是补的：组件写好了 `collapsible` 参数，`App.tsx` 里却忘了传 ——
      * 于是"可折叠"在界面上完全看不出来（不报错、不崩、类型也过，
      * 因为 prop 是可选的）。所以直接断言渲染结果里真有折叠标题栏。
+     *
+     * ⚠️ 本轮需求 6 / 7 起，默认的「修行」页里已经没有可折叠面板了
+     * （合成与钻研搬去了工坊、建造搬去了建筑），所以这里改成渲染
+     * **带折叠的那个模块**，而不是渲染整个 App —— 否则这条会因为
+     * "首屏没有折叠面板"而假红。
      */
-    const out = renderToString(<App />);
+    const out = renderToString(
+      <div>
+        <BuildingsPanel collapsible />
+        <BuildQueuePanel collapsible />
+        <RefinePanel collapsible />
+        <ResearchPanel collapsible />
+      </div>,
+    );
     check('渲染结果里有可折叠的标题栏', out.includes('panel__head--toggle'));
     check('折叠按钮带 aria-expanded', out.includes('aria-expanded'));
   }
@@ -4549,12 +4668,27 @@ section('[41] 界面布局 / 普通探索 / 唯一建筑 / 满仓倒计时');
     check('页签里有「洞府」（同级对照）', nav.includes('洞府'));
 
     /*
-     * 钻研要排在仆役**下面**。SSR 输出的顺序就是渲染顺序，
-     * 所以直接比较两者在 HTML 里的位置即可 —— 这比断言 CSS 的 grid 顺序可靠。
+     * ⚠️ 上一轮这条断言的是「钻研排在仆役之后」（都在修行页里）。
+     * 本轮需求 6 把钻研搬去了「工坊」，所以那条位置关系已经不存在了；
+     * 现在要断言的是**新的归属**：钻研只在工坊模块里，
+     * 而且它仍然是随手可得的（不是被藏进某个折叠区里）。
      */
-    const servantIdx = out.indexOf('仆役');
-    const researchIdx = out.indexOf('钻研');
-    check('钻研排在仆役之后', servantIdx >= 0 && researchIdx > servantIdx, `仆役@${servantIdx} 钻研@${researchIdx}`);
+    const cultivation = renderToString(
+      <div>
+        <ActionPanel />
+        <ServantPanel />
+      </div>,
+    );
+    check('修行页里还留着仆役', cultivation.includes('仆役'));
+    check('钻研已经不在修行页了', !cultivation.includes('钻研'));
+
+    const workshop = renderToString(
+      <div>
+        <RefinePanel />
+        <ResearchPanel />
+      </div>,
+    );
+    check('钻研现在在工坊页', workshop.includes('钻研'));
   }
 
   /* ---- 需求 2（本轮）：分类建筑与丹器品阶都能折叠 ---- */
@@ -4899,7 +5033,7 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
       const discovered: GameState = { ...s, discoveredRealms: { ...s.discoveredRealms, [realm.id]: true } };
       let withParty = discovered;
       for (let i = 0; i < realm.minParty + 1; i += 1) {
-        withParty = disciples.recruitDisciple(withParty, makeRandom(500 + i)).state;
+        withParty = recruitHoused(withParty, makeRandom(500 + i)).state;
       }
       const ids = withParty.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
       const startCheck = canStartExpedition(withParty, realm.id, ids);
@@ -4982,27 +5116,544 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
     check('底部不再有「进度保存在你自己的浏览器里」', !out.includes('进度保存在你自己的浏览器里'));
     check('也不再提「数值设定见仓库中的 BALANCE.md」', !out.includes('数值设定见仓库中的 BALANCE'));
   }
+}
 
-  /* ---- 需求 1：洞府页里不该再有灵石合成栏 ---- */
+/* ------------------------------------------------------------------ */
+/* 44. 本轮需求：人数 / 居所 / 模块 / 丹药 / 派遣 / 进度条                */
+/* ------------------------------------------------------------------ */
+section('[44] 弟子人数 · 居所拆分 · 新模块 · 突破丹药 · 派遣历练');
+{
+  /* ---- 需求 1：一品约 100 人、九品 2048 ---- */
+  {
+    check(
+      '一品宗门约 100 人',
+      discipleCapBySect(1) === 100,
+      String(discipleCapBySect(1)),
+    );
+    check('九品宗门 2048 人', discipleCapBySect(9) === 2048, String(discipleCapBySect(9)));
+    check(
+      '曲线严格递增（九档各不相同）',
+      DISCIPLE_CAP_BY_SECT_LEVEL.every((v, i, arr) => i === 0 || v > arr[i - 1]),
+      DISCIPLE_CAP_BY_SECT_LEVEL.join(' / '),
+    );
+    check(
+      '越界品阶被夹到两端（不会返回 undefined）',
+      discipleCapBySect(0) === 100 && discipleCapBySect(99) === 2048,
+    );
+    check(
+      '旧规则 level × 6 已被取代（九品不再只有 54 人）',
+      discipleCapBySect(9) > 9 * 6,
+    );
+  }
+
+  /* ---- 需求 2：弟子居所开宗后可建，且与仆役居所完全分开 ---- */
+  {
+    const bare = createInitialState(0);
+    const dorms = STRUCTURES.filter((s) => s.group === 'discipleHousing');
+    check('存在「弟子居所」建筑组', dorms.length >= 1, `${dorms.length} 种`);
+    check('弟子居所一律要求已开宗', dorms.every((d) => d.requiresSect === true));
+    check(
+      '弟子居所全部给出弟子床位',
+      dorms.every((d) => (d.discipleCapacity ?? 0) > 0),
+    );
+    check(
+      '仆役居所全部给出仆役床位',
+      STRUCTURES.filter((s) => s.group === 'housing').every((s) => (s.servantCapacity ?? 0) > 0),
+    );
+    check(
+      '没有任何建筑同时给两种床位',
+      STRUCTURES.every((s) => !(s.servantCapacity && s.discipleCapacity)),
+    );
+
+    // 开宗前：弟子居所一律建不了（getBuildGate 会挡）
+    const lockedGate = engine.getBuildGate(dorms[0], bare);
+    check('未开宗时建不了弟子舍', lockedGate !== null, lockedGate ?? '');
+
+    const founded: GameState = { ...bare, sect: { ...bare.sect, founded: true, level: 1 } };
+    check('开宗后就能建弟子舍', engine.getBuildGate(dorms[0], founded) === null);
+
+    // 人数上限真的按「居所 / 品阶」较小值走
+    const many = forceBuild(grant(founded, { qi: '1e12', wood: '1e9', stone: '1e9' }), 'discipleDorm', 2);
+    check('两座弟子舍 = 24 个床位', engine.getDiscipleHousing(many) === 24);
+    check('一品宗门下上限就是 24（居所更小）', engine.getDiscipleCapacity(many) === 24);
+
+    const huge = forceBuild(many, 'discipleDorm', 30);
+    check(
+      '居所足够时上限由品阶决定',
+      engine.getDiscipleCapacity(huge) === Math.min(30 * 12, discipleCapBySect(1)),
+      `${engine.getDiscipleCapacity(huge)}`,
+    );
+  }
+
+  /* ---- 需求 1 的存档 bug：上限抬到 2048 后，读档不能再丢人 ---- */
+  {
+    const base = { ...createInitialState(0), sect: { ...createInitialState(0).sect, founded: true, level: 9 } };
+    const many = Array.from({ length: 600 }, (_, i) => ({
+      id: `d${i}`,
+      name: `弟子${i}`,
+      aptitude: 'mortal' as const,
+      realmIndex: 0,
+      progress: 0,
+      age: 20,
+      status: 'idle' as const,
+      insight: 0,
+    }));
+    const big: GameState = { ...base, sect: { ...base.sect, disciples: many } };
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(big))));
+    check(
+      '600 名弟子读档后一个不少（旧版会在第 500 人处截断）',
+      round !== null && round.sect.disciples.length === 600,
+      `${round?.sect.disciples.length ?? 0} 人`,
+    );
+
+    /*
+     * 旧存档读进来之后的样子：人是留住了，但一座弟子居所都没有
+     * （老版本的房子现在全算"仆役居所"）。这时**不删人**，
+     * 只是不能再招 —— 提示要说成"还没有弟子居所"，而不是"已满"。
+     */
+    if (round) {
+      check('旧存档读进来后不会丢弟子（不按容量强删）', round.sect.disciples.length === 600);
+      check('旧存档没有弟子居所时不能再招人', !disciples.canRecruit(round).ok);
+      check(
+        '旧存档的提示是「尚无弟子居所」而不是「已满」',
+        (disciples.canRecruit(round).reason ?? '').includes('尚无弟子居所'),
+        disciples.canRecruit(round).reason ?? '',
+      );
+    }
+  }
+
+  /* ---- 需求 2 配套：遣散/招收不再互相卡 ---- */
+  {
+    const base = createInitialState(0);
+    const stocked = grant(base, { qi: '1e9', wood: '1e9' });
+    const hut = forceBuild(stocked, 'thatchHut', 5);
+    check('仆役居所 5 座 = 15 个床位', engine.getServantHousing(hut) === 15);
+    check('仆人可以收到床位满为止', engine.getServantCapacity(hut) === 15);
+    const servantFull: GameState = { ...hut, servants: { chores: 15 } };
+    check('仆役满员后无法再招', !engine.canRecruitServant(servantFull).ok);
+    // 弟子上限要求「已开宗」——没开宗的话上限是 0（不是"床位不够"）
+    const founded: GameState = {
+      ...servantFull,
+      sect: { ...servantFull.sect, founded: true, level: 1 },
+      buildings: { ...servantFull.buildings, discipleDorm: 3 },
+    };
+    check(
+      '仆役满员不影响弟子（需求 2：两套独立）',
+      engine.getDiscipleCapacity(founded) === Math.min(36, discipleCapBySect(1)),
+      `${engine.getDiscipleCapacity(founded)}`,
+    );
+  }
+
+  /* ---- 需求 4：批量转移仆从 ---- */
+  {
+    const base = grant(createInitialState(0), { qi: '1e9' });
+    const stocked: GameState = { ...base, servants: { chores: 10, wood: 0, ore: 0, herb: 0, stone: 0 } };
+    const moved = engine.assignServants(stocked, 'chores', 'wood', 4);
+    check('批量调动把 4 人搬过去', (moved.servants.wood ?? 0) === 4, String(moved.servants.wood));
+    check('源岗位相应减少', (moved.servants.chores ?? 0) === 6, String(moved.servants.chores));
+    check(
+      '批量调动不改变总人数',
+      engine.getServantCount(moved) === engine.getServantCount(stocked),
+      `${engine.getServantCount(stocked)} → ${engine.getServantCount(moved)}`,
+    );
+
+    const all = engine.assignServants(stocked, 'chores', 'ore', 999);
+    check('数量超过人数时夹到全部', (all.servants.ore ?? 0) === 10 && !all.servants.chores);
+
+    const zero = engine.assignServants(stocked, 'chores', 'herb', 0);
+    check('0 人不产生变化', zero === stocked);
+    const same = engine.assignServants(stocked, 'chores', 'chores', 3);
+    check('源与目标相同时不动作', same === stocked);
+    const empty = engine.assignServants(stocked, 'wood', 'herb', 1);
+    check('空岗位调不出人', empty === stocked);
+
+    /*
+     * 界面上真的出现了「批量调动」这一行。
+     * zustand 在 SSR 下用 getInitialState() 作 server snapshot，
+     * 所以要**原地改写初始状态对象**（渲染完再改回来），setState 是没用的。
+     */
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    Object.assign(initial, {
+      game: {
+        ...forceBuild(stocked, 'thatchHut', 6),
+        servants: { chores: 7, wood: 3 },
+      },
+    });
+    const html = renderToString(<ServantPanel />);
+    check('需求 4：仆役面板里有「批量调动」', html.includes('批量调动'));
+    check('需求 4：有「全部调走」的快捷按钮', html.includes('全部调走'));
+    check('需求 4：两个下拉框分别列出源岗位与目标岗位', html.includes('洒扫庭院') && html.includes('入山伐木'));
+    Object.assign(initial, { game: backup.game });
+  }
+
+  /* ---- 需求 3：黑白风 —— JS 里写死的颜色也必须去饱和 ---- */
   {
     /*
-     * ⚠️ 这条是补的：只 grep 整个界面有没有「灵石合成」是不够的 ——
-     * 修行页的「合成 · 精炼」里就有这四个字，洞府页哪天再长出一块也照样绿。
-     * 所以按**页面结构**断言：洞府那几块里不能出现"灵石合成"。
+     * 这一条把"黑白风"变成可验证的事：CSS 里的配色是令牌化的（人工看过），
+     * 但**资质**与**稀有度**的颜色是写在 TS 里的 hex，很容易漏掉。
+     * 判据是"R = G = B"（纯灰阶）。
      */
-    const cave = renderToString(
+    const isGray = (hex: string) => {
+      const m = /^#([0-9a-f]{6})$/i.exec(hex);
+      if (!m) return false;
+      const value = parseInt(m[1], 16);
+      const r = (value >> 16) & 0xff;
+      const g = (value >> 8) & 0xff;
+      const b = value & 0xff;
+      return r === g && g === b;
+    };
+    check(
+      '资质配色全部是灰阶',
+      APTITUDES.every((a) => isGray(a.color)),
+      APTITUDES.map((a) => a.color).join(' '),
+    );
+    check(
+      '稀有度配色全部是灰阶',
+      Object.values(RARITY_COLORS).every(isGray),
+      Object.values(RARITY_COLORS).join(' '),
+    );
+    check('最高档资质比最低档更黑（明度承担了区分职责）', (() => {
+      const lum = (hex: string) => parseInt(hex.slice(1), 16) & 0xff;
+      return lum(APTITUDE_MAP.heaven.color) < lum(APTITUDE_MAP.mortal.color);
+    })());
+  }
+
+  /* ---- 需求 5 / 6 / 7 / 8：模块拆分与页签顺序 ---- */
+  {
+    // 页签本身与状态无关，直接渲染默认存档即可
+    const out = renderToString(<App />);
+
+    const order = ['修行', '探索', '宗门', '建筑', '工坊', '丹器', '商行', '灵植', '感悟', '洞府'];
+    const positions = order.map((label) => out.indexOf(`>${label}<`));
+    check('十个页签都在界面上', positions.every((p) => p >= 0), order.join(' · '));
+    check(
+      '页签顺序符合本轮需求 8',
+      positions.every((p, i) => i === 0 || p > positions[i - 1]),
+      order.join(' → '),
+    );
+
+    // 每个模块里确实装着该装的东西
+    const build = renderToString(
       <div>
         <BuildingsPanel />
         <BuildQueuePanel />
-        <SavePanel />
       </div>,
     );
-    check('洞府页里没有灵石合成面板', !cave.includes('灵石合成'));
+    // 聚灵阵没有解锁门槛、开局就可见；灵木林要"曾经有过 60 灵气"才出现
+    check('「建筑」模块里有建造（可建造物清单）', build.includes('聚灵阵') && build.includes('资源设施'));
+    check('「建筑」模块里有建造队列', build.includes('建造队列') || build.includes('队列'));
+    /*
+     * 需求 2 的入门可见性：新存档里**弟子舍**必须已经看得见（哪怕是灰的）。
+     * 解锁门槛是空的、门槛是"已开宗立派"，所以玩家一开局就能看到
+     * "原来弟子要住这里" —— 而不是开宗之后才发现还有个东西要先盖。
+     */
+    check('新存档里就能看见「弟子舍」（灰着并标出开宗门槛）', build.includes('弟子舍'));
+    check('弟子舍的门槛标签写着「已开宗立派」', build.includes('已开宗立派'));
+    check('新存档里也能看见「仆役居所」一组', build.includes('仆役居所'));
 
-    // 反向守卫：修行页的合成栏**必须**还在（否则上面那条会因为"整块被删"而假绿）
-    const refine = renderToString(<RefinePanel />);
-    check('修行页的合成栏仍在（反向守卫）', refine.includes('合成 · 精炼') && refine.includes('灵石合成'));
-    check('修行页的合成栏有自动合成（本轮需求 2）', refine.includes('自动合成'));
+    const workshop = renderToString(
+      <div>
+        <RefinePanel />
+        <ResearchPanel />
+      </div>,
+    );
+    check('「工坊」模块里有合成', workshop.includes('合成'));
+    check('「工坊」模块里有钻研', workshop.includes('钻研'));
+
+    const shop = renderToString(<ShopPanel />);
+    check('「商行」模块渲染出商行面板', shop.includes('商行'));
+
+    // 洞府页现在只剩存档：这是"建造搬去建筑、感悟早已独立"的必然结果
+    const cave = renderToString(<SavePanel />);
+    check('「洞府」模块里是存档', cave.includes('存档'));
+    check('「洞府」模块里不再有建造清单', !cave.includes('灵木林'));
+
+    // 反向守卫：合成与钻研**必须**从修行页搬走（否则"新增工坊"只做了一半）
+    const cultivation = renderToString(
+      <div>
+        <ActionPanel />
+        <ServantPanel />
+        <EncounterPanel />
+        <RealmPanel />
+        <SeasonPanel />
+        <AscendPanel />
+      </div>,
+    );
+    check('修行页不再有合成栏（反向守卫）', !cultivation.includes('合成 · 精炼'));
+    check('修行页不再有钻研清单（反向守卫）', !cultivation.includes('钻研'));
+  }
+
+  /* ---- 需求 9 配套：突破丹的品阶阶梯必须"够得着" ---- */
+  {
+    /*
+     * 这是本轮最值钱的一条断言。
+     *
+     * 需求 9 让丹药变成硬门槛之后，**炼丹术品阶上了主线**：
+     * 要从第 N 境突破，就得先有第 N+1 品的炼丹术。而升品是要花钱的 ——
+     * 如果那一笔钱超过了当前境界能攒到的储存上限，游戏就**死锁**在那里：
+     * 攒不满 → 升不了品 → 炼不出丹 → 突破不了。
+     *
+     * 本轮就真的踩了两次：
+     *   1. 筑基期升三品要 3e5 灵气，而筑基期上限只有 3.2e5（还要 2 份当时
+     *      根本合不出的灵液）—— 差一点就够不着；
+     *   2. 化神期升六品要 120 份北境特产月华晶，而一趟采办只带回 1 份。
+     * 这两条都是"按现在的数字能算出来"的，所以写成断言：
+     * 品阶阶梯必须与境界的储存上限匹配。
+     */
+    const capAtRealm = (realm: number): number => {
+      let s: GameState = { ...createInitialState(0), realmIndex: realm };
+      for (const def of STRUCTURES) {
+        if (def.storage && (def.requiresRealm ?? 0) <= realm) s = forceBuild(s, def.id, 10);
+      }
+      return engine.getStorageCap(s, 'qi').toNumber();
+    };
+
+    const ladderProblems: string[] = [];
+    for (let realm = 0; realm < REALMS.length - 2; realm += 1) {
+      const pill = PILL_MAP[REALMS[realm].breakthroughPill];
+      if (!pill) continue;
+      // ① 品阶阶梯：突破用丹的品阶应当正好是「境界下标 + 1」
+      if (pill.tier !== realm + 1) {
+        ladderProblems.push(`${pill.name} 是 ${pill.tier} 品（应为 ${realm + 1} 品）`);
+      }
+      // ② 为了炼它，得先把炼丹术升到同一品；那笔花费不能顶到该境界的上限
+      const cost = ALCHEMY_TIER_COST[pill.tier];
+      const cap = capAtRealm(realm);
+      const qi = cost?.qi ?? 0;
+      if (qi > cap * 0.5) {
+        ladderProblems.push(
+          `${REALMS[realm].name}要升 ${pill.tier} 品，需 ${qi} 灵气（该境界上限仅 ${Math.round(cap)}）`,
+        );
+      }
+    }
+    check(
+      '需求 9：每个境界的突破丹品阶 = 境界 + 1，且升品花费不超过该境界储存上限的一半',
+      ladderProblems.length === 0,
+      ladderProblems.join(' / '),
+    );
+
+    /*
+     * 反向守卫：capAtRealm 必须真的在"按境界叠加储物建筑"。
+     * 否则上面那条会因为上限恒为同一个数而变得毫无意义 ——
+     * 一起通过、一起失败都不说明问题。
+     */
+    check(
+      '反向守卫：储存上限随境界显著增长（说明 capAtRealm 真的在算）',
+      capAtRealm(4) > capAtRealm(2) * 10 && capAtRealm(2) > capAtRealm(0) * 10,
+      `炼气 ${Math.round(capAtRealm(0))} → 金丹 ${Math.round(capAtRealm(2))} → 化神 ${Math.round(capAtRealm(4))}`,
+    );
+
+    /*
+     * 另一条同源的守卫：**丹药是按次消耗品**。
+     *
+     * 需求 9 之前，一颗突破丹一辈子只炼一颗（还是可选的），所以造价可以定成"大件"；
+     * 现在每次大境界突破都要一颗，弟子也人人要一颗 —— 一个千人宗门光破境就要几千颗。
+     * 于是灵气造价必须只是"该境界的一个零头"（这里按 10% 卡），
+     * 否则玩家会永远在给丹药打工。
+     */
+    const expensivePills: string[] = [];
+    for (let realm = 0; realm < REALMS.length - 2; realm += 1) {
+      const pill = PILL_MAP[REALMS[realm].breakthroughPill];
+      if (!pill) continue;
+      const cap = capAtRealm(realm);
+      if ((pill.cost.qi ?? 0) > cap * 0.1) {
+        expensivePills.push(`${pill.name} 要 ${pill.cost.qi} 灵气（该境界上限 ${Math.round(cap)} 的 1/10 = ${Math.round(cap * 0.1)}）`);
+      }
+    }
+    check(
+      '需求 9：突破丹的灵气造价不超过该境界储存上限的 1/10（按次消耗品的量级）',
+      expensivePills.length === 0,
+      expensivePills.join(' / '),
+    );
+  }
+
+  /* ---- 需求 9：弟子突破也要丹药 ---- */
+  {
+    /*
+     * ⚠️ 掌门境界要 ≥ 1：弟子的境界上限是 `min(资质上限, 掌门境界)`，
+     * 掌门还在炼气期的话弟子连一层都上不去，那样测的就不是丹药门槛了。
+     */
+    const base = grant({ ...createInitialState(0), realmIndex: 3 }, { qi: '1e12' });
+    const stalled: GameState = {
+      ...base,
+      sect: {
+        ...base.sect,
+        founded: true,
+        level: 3,
+        disciples: [
+          {
+            id: 'd0',
+            name: '缺丹弟子',
+            aptitude: 'heaven',
+            realmIndex: 0,
+            // 差一点点就满：这一 tick 正好会顶到临界点（也就是"刚卡住"的那一帧）
+            progress: REALMS[0].cultivationYears - 0.001,
+            age: 20,
+            status: 'idle',
+            insight: 0,
+          },
+        ],
+      },
+    };
+
+    // 没有丹药：修为不再前进（卡在瓶颈），也没有突破记录
+    const before = stalled.sect.disciples[0].realmIndex;
+    const noPill = disciples.tickDisciples(stalled, 60 * 60);
+    check('需求 9：没有丹药时弟子卡在瓶颈', noPill.sect.disciples[0].realmIndex === before);
+    check(
+      '需求 9：修为停在临界点，不会被清掉',
+      Math.abs(noPill.sect.disciples[0].progress - REALMS[0].cultivationYears) < 1e-6,
+      String(noPill.sect.disciples[0].progress),
+    );
+    check(
+      '需求 9：宗门记事里说明了缺哪一味丹',
+      noPill.journal.some((j) => j.text.includes('筑基丹')),
+      noPill.journal[0]?.text ?? '（无记事）',
+    );
+
+    // 给一颗丹：立刻破境，并且丹药被扣掉
+    const withPill: GameState = { ...stalled, pills: { foundationPill: 1 } };
+    const broke = disciples.tickDisciples(withPill, 60 * 60);
+    check('需求 9：有丹药就能破境', broke.sect.disciples[0].realmIndex === 1);
+    check('需求 9：破境消耗一颗丹药', (broke.pills.foundationPill ?? 0) === 0);
+  }
+
+  /* ---- 需求 10：派遣期间额外累积修为 ---- */
+  {
+    // 同上：掌门境界要够高，弟子才有得修
+    const base: GameState = {
+      ...grant({ ...createInitialState(0), realmIndex: 3 }, { qi: '1e12' }),
+      sect: {
+        ...createInitialState(0).sect,
+        founded: true,
+        level: 3,
+        disciples: [
+          { id: 'a', name: '在家', aptitude: 'heaven', realmIndex: 0, progress: 0, age: 20, status: 'idle', insight: 0 },
+          { id: 'b', name: '在外', aptitude: 'heaven', realmIndex: 0, progress: 0, age: 20, status: 'exploring', insight: 0 },
+        ],
+      },
+    };
+
+    const home = base.sect.disciples[0];
+    const away = base.sect.disciples[1];
+    check(
+      '需求 10：在外的弟子修行速度更快',
+      disciples.getDiscipleEffectiveSpeed(base, away) > disciples.getDiscipleEffectiveSpeed(base, home),
+      `${disciples.getDiscipleSpeed(base, home).toFixed(3)} → ${disciples.getDiscipleEffectiveSpeed(base, away).toFixed(3)}`,
+    );
+    check(
+      '需求 10：多出来的正是那 50%',
+      Math.abs(
+        disciples.getDiscipleEffectiveSpeed(base, away) -
+          disciples.getDiscipleSpeed(base, away) * (1 + EXPEDITION_CULTIVATION_BONUS),
+      ) < 1e-9,
+    );
+    check(
+      '需求 10：在家的弟子速度不受影响',
+      disciples.getDiscipleEffectiveSpeed(base, home) === disciples.getDiscipleSpeed(base, home),
+    );
+
+    // 行为验证：同一段时间之后，在外的那个修为更高
+    const ticked = disciples.tickDisciples(base, 600);
+    const [atHome, outside] = ticked.sect.disciples;
+    check(
+      '需求 10：同样时间之后，在外的弟子修为更多',
+      outside.progress > atHome.progress,
+      `${atHome.progress.toFixed(2)} vs ${outside.progress.toFixed(2)}`,
+    );
+  }
+
+  /* ---- 需求 11：掌门亲自普通探索必须有进度条 ---- */
+  {
+    /*
+     * ⚠️ 这是一条**回归断言**：掌门出行有三种 kind，
+     * 而进度条原来只覆盖 travel / realm 两种 ——
+     * `survey` 那一种整块被跳过，界面上看不到任何进度。
+     *
+     * 还有一件必须记住的事：zustand v5 在 SSR 下用的是 getInitialState()
+     * 作 server snapshot，`setState` 对 renderToString **没有影响** ——
+     * 必须原地改写初始状态对象（渲染完再改回来）。
+     * 早先在这里用 setState 写过一版，结果三次断言全绿不了，
+     * 原因就是渲染的根本不是我注入的那份状态。
+     */
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+
+    const base = createInitialState(0);
+    const region = MAP_REGIONS.find((r) => engine.canReachRegion(base, r)) ?? MAP_REGIONS[0];
+
+    Object.assign(initial, {
+      game: { ...base, personalTravel: { kind: 'survey', regionId: region.id, progress: 30, duration: 120 } },
+    });
+    const html = renderToString(<MapPanel />);
+    check('需求 11：掌门亲自查探时渲染出「进行中」', html.includes('进行中'));
+    check('需求 11：掌门亲自查探时有进度条', html.includes('bar__fill'), '（bar__fill 就是那根条）');
+    check('需求 11：文案点明了是「亲自查探」', html.includes('亲自查探'), region.name);
+
+    // 另外两种出行同样要有进度条（别修好一种又弄坏另一种）
+    Object.assign(initial, {
+      game: {
+        ...base,
+        personalTravel: { kind: 'travel', regionId: TRAVEL_REGIONS[0].id, progress: 10, duration: 100 },
+      },
+    });
+    const travelHtml = renderToString(<MapPanel />);
+    check('游历同样有进度条', travelHtml.includes('bar__fill'));
+
+    /*
+     * ⚠️ 兜底：regionId 查不到对应定义时（旧存档里改名/删掉的区域），
+     * 「进行中」这一块**不能消失** —— 否则玩家看不到进度、也没有「中止」按钮，
+     * 掌门会永远"在外"。这与需求 11 是同一类问题，只是触发条件不同。
+     */
+    Object.assign(initial, {
+      game: {
+        ...base,
+        personalTravel: { kind: 'travel', regionId: '已删除的目的地', progress: 10, duration: 100 },
+      },
+    });
+    const orphan = renderToString(<MapPanel />);
+    check('目的地查不到时仍然显示「进行中」（不会静默消失）', orphan.includes('进行中'));
+    check('目的地查不到时仍然有进度条', orphan.includes('bar__fill'));
+    check('目的地查不到时仍然能中止', orphan.includes('中止'));
+
+    // 三种出行的名字都要说得出来（记事与顶栏都靠它）
+    check(
+      '三种出行都能说出目的地',
+      travel.describeTravelDestination({
+        kind: 'travel',
+        regionId: TRAVEL_REGIONS[0].id,
+        progress: 0,
+        duration: 1,
+      }) === TRAVEL_REGIONS[0].name &&
+        travel.describeTravelDestination({
+          kind: 'realm',
+          regionId: STARTER_REALM_ID,
+          progress: 0,
+          duration: 1,
+        }) === SECRET_REALM_MAP[STARTER_REALM_ID].name &&
+        travel.describeTravelDestination({
+          kind: 'survey',
+          regionId: region.id,
+          progress: 0,
+          duration: 1,
+        }) === region.name,
+      `游历/秘境/查探三选一`,
+    );
+
+    // 中止的记事要写清"从哪儿折返"（原来三种都写「自外折返」）
+    const canceled = travel.cancelTravel({
+      ...base,
+      personalTravel: { kind: 'realm', regionId: STARTER_REALM_ID, progress: 0, duration: 1 },
+    });
+    check(
+      '中止独自探秘境时记事里写的是秘境名',
+      canceled.journal.some((j) => j.text.includes(SECRET_REALM_MAP[STARTER_REALM_ID].name)),
+      canceled.journal[0]?.text ?? '（无记事）',
+    );
+
+    Object.assign(initial, { game: base });
+    void backup;
   }
 }
 
