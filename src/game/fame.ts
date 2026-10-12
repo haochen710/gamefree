@@ -25,6 +25,7 @@ import {
   FAME_PER_KARMA_POINT,
   FAME_PER_REALM_TIER,
   FAME_PER_SURVEY,
+  FAME_SHOP_REFRESH_SECONDS,
   FAME_SHOP_SLOTS,
   FAME_TIERS,
   TRAITS,
@@ -170,17 +171,27 @@ export function buildFameOffers(state: GameState, random: RandomSource = gameRan
 export function refreshFameShop(state: GameState, random: RandomSource = gameRandom): GameState {
   return {
     ...state,
-    fameShop: { offers: buildFameOffers(state, random), secondsLeft: state.fameShop.secondsLeft },
+    fameShop: { offers: buildFameOffers(state, random), secondsLeft: FAME_SHOP_REFRESH_SECONDS },
   };
 }
 
-/** 货架倒计时 */
+/**
+ * 货架倒计时。
+ *
+ * 与灵石商行（`shop.tickShop`）保持**同一个形状**：没开宗就没有货；
+ * 货架空着就立刻补一次；否则减计时、到点重摇。
+ * 两处形状必须一致 —— 否则玩家会发现"两个商店的刷新手感不一样"。
+ */
 export function tickFameShop(state: GameState, dt: number, random: RandomSource = gameRandom): GameState {
+  if (!state.sect.founded) {
+    return state.fameShop.offers.length === 0 ? state : { ...state, fameShop: { offers: [], secondsLeft: 0 } };
+  }
+  if (state.fameShop.offers.length === 0) return refreshFameShop(state, random);
   if (dt <= 0) return state;
-  const left = state.fameShop.secondsLeft - dt;
-  if (left > 0) return { ...state, fameShop: { ...state.fameShop, secondsLeft: left } };
-  const offers = buildFameOffers(state, random);
-  return { ...state, fameShop: { offers, secondsLeft: state.fameShop.secondsLeft + 600 } };
+
+  const secondsLeft = state.fameShop.secondsLeft - dt;
+  if (secondsLeft > 0) return { ...state, fameShop: { ...state.fameShop, secondsLeft } };
+  return refreshFameShop(state, random);
 }
 
 export interface FameBuyResult {
