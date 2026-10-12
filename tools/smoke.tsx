@@ -95,6 +95,7 @@ import {
   GEAR_MAP,
   GEARS,
   FURNACE_MAP,
+  INJURY_FROM_REALM,
   FURNACES,
   LOYALTY_IDLE_DECAY_SECONDS,
   LOYALTY_INITIAL,
@@ -208,6 +209,7 @@ import * as engine from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
 import * as expeditions from '../src/game/expeditions';
 import * as encounter from '../src/game/encounter';
+import { ENCOUNTER_CHANCE } from '../src/game/encounter';
 import {
   canStartExpedition,
   canStartSurvey,
@@ -4032,7 +4034,13 @@ section('[34] 宗门事件 + 宗门大阵（需求 1）');
     const half = tickEncounters(pending, 10, fixedRandom(0.99));
     check('不到 30 秒还在', half.pendingEncounter === 'caravan' && half.encounterDeadline < ENCOUNTER_SECONDS);
 
-    const gone = tickEncounters(pending, ENCOUNTER_SECONDS + 1, fixedRandom(0.99));
+    /*
+     * ⚠️ 倒计时要用**两次小步**走完，不能一次喂 ENCOUNTER_SECONDS + 1。
+     * 本轮修的那个 bug 之后，"一次 dt 超过倒计时本身"被解释成
+     * "这个遭遇刚刚出现"（离线回来时不该把遭遇冲掉），所以大步反而不会让它过期。
+     */
+    const nearly = tickEncounters(pending, ENCOUNTER_SECONDS - 5, fixedRandom(0.99));
+    const gone = tickEncounters(nearly, 10, fixedRandom(0.99));
     check('玩家事件到点自动消失', gone.pendingEncounter === null);
     check('消失时没有影响（善恶值不变）', gone.karma === pending.karma);
     check('消失也记了一笔', gone.journal.length > pending.journal.length);
@@ -4055,7 +4063,20 @@ section('[34] 宗门事件 + 宗门大阵（需求 1）');
     const pending: GameState = { ...withDisciples, pendingEncounter: 'banditSiege', encounterDeadline: 1 };
     const resolved = tickEncounters(pending, 2, fixedRandom(0.99));
     check('进攻类到点会自动结算', resolved.pendingEncounter === null);
-    check('结算会打伤弟子（无防御时）', resolved.injurySeconds > 0, `${resolved.injurySeconds} 秒`);
+    /*
+     * ⚠️ 这条断言原来写的是 `resolved.injurySeconds > 0` ——
+     * 它**把这个 bug 固化成了规格**：宗门被袭、掌门没出手，掌门却道伤缠身，
+     * 而界面还说"突破失败将道伤缠身"。玩家就是这样看到"没突破却道伤"的。
+     * 现在反过来断言：袭击不再给掌门道伤（代价落在资源与弟子身上）。
+     */
+    check('结算**不会**给掌门留下道伤', resolved.injurySeconds === 0, `${resolved.injurySeconds} 秒`);
+    check(
+      '结算的代价落在资源或弟子身上',
+      resolved.journal.some((e) => e.kind === 'bad') &&
+        (resolved.resources.qi.lt(withDisciples.resources.qi) ||
+          resolved.materials.blackIron.lt(withDisciples.materials.blackIron)),
+      resolved.journal[0]?.text ?? '',
+    );
     check('结算写进了记事', resolved.journal.some((e) => e.kind === 'bad'));
   }
 
@@ -7046,6 +7067,156 @@ section('[48] 丹炉九件 · 弟子五装备栏 · 炼器');
     check('渲染出装备分组', html.includes('凡品 / 良品装备'));
     check('渲染出炼制按钮', html.includes('炼制（'));
     Object.assign(initial, { game: backup.game });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 49. 两个线上 bug 的回归（随机事件刷屏 / 凭空出现的道伤）                */
+/* ------------------------------------------------------------------ */
+section('[49] 回归：随机事件的节奏 · 道伤只来自玩家自己的动作');
+{
+  const base = (): GameState => ({
+    ...createInitialState(0),
+    sect: { ...createInitialState(0).sect, founded: true, level: 3 },
+  });
+
+  /* ---- bug 1：离线/后台之后，随机事件不能"补发"一堆 ---- */
+  {
+    /*
+     * ⚠️ 根因：`encounterTimer` 会**累积**。
+     * 离线一小时 → dt = 3600 → timer = 3600，掷一次、把剩下的 3499 秒留着当计时器，
+     * 于是玩家点掉一个遭遇，下一帧立刻又弹一个，连着弹十几次。
+     */
+    const offline: GameState = { ...base(), encounterTimer: 0 };
+    const afterOffline = encounter.tickEncounters(offline, 60 * 60, makeRandom(3));
+    check(
+      '离线一小时最多弹一个遭遇（不是排一队）',
+      afterOffline.pendingEncounter !== null || afterOffline.encounterTimer <= ENCOUNTER_INTERVAL,
+      `pending=${afterOffline.pendingEncounter ?? '无'} timer=${Math.round(afterOffline.encounterTimer)}`,
+    );
+    check(
+      '离线之后计时器不会攒下"欠着的判定"',
+      afterOffline.encounterTimer <= ENCOUNTER_INTERVAL,
+      `${Math.round(afterOffline.encounterTimer)} <= ${ENCOUNTER_INTERVAL}`,
+    );
+
+    // 把遭遇点掉之后，必须重新等满一个间隔，而不是立刻再弹
+    const cleared: GameState = { ...afterOffline, pendingEncounter: null, encounterDeadline: 0, encounterTimer: 0 };
+    const nextTick = encounter.tickEncounters(cleared, 1, makeRandom(1));
+    check('点掉之后不会立刻再弹一个', nextTick.pendingEncounter === null, nextTick.pendingEncounter ?? '（无）');
+
+    // 连续多次大 dt：每次都只应最多产生一个遭遇
+    let state: GameState = base();
+    for (let i = 0; i < 20; i += 1) {
+      state = encounter.tickEncounters({ ...state, pendingEncounter: null }, 3600, makeRandom(i + 5));
+    }
+    check('二十次"离线一小时"之后计时器仍然是封顶值', state.encounterTimer <= ENCOUNTER_INTERVAL);
+
+    // 计时器封顶
+    const capped = encounter.tickEncounters(
+      { ...base(), encounterTimer: 0, pendingEncounter: null },
+      99999,
+      () => 0.99,
+    );
+    check(
+      '计时器封顶在判定间隔（不会涨到几万秒）',
+      capped.encounterTimer <= ENCOUNTER_INTERVAL,
+      `${Math.round(capped.encounterTimer)}`,
+    );
+  }
+
+  /* ---- bug 1b：屏幕上的遭遇不能被离线 dt 冲掉 ---- */
+  {
+    const pending: GameState = {
+      ...base(),
+      pendingEncounter: 'banditSiege',
+      encounterDeadline: ENCOUNTER_SECONDS,
+    };
+    const afterOffline = encounter.tickEncounters(pending, 60 * 60, makeRandom(2));
+    check(
+      '离线回来时，屏幕上的遭遇还在（没有被"照常结算"）',
+      afterOffline.pendingEncounter === 'banditSiege',
+      afterOffline.pendingEncounter ?? '（已被结算）',
+    );
+    check(
+      '倒计时被重置回满（玩家仍然有 30 秒）',
+      afterOffline.encounterDeadline === ENCOUNTER_SECONDS,
+      `${afterOffline.encounterDeadline}`,
+    );
+    // 但"人一直在屏幕前、就是不理它"仍然会照常结算 —— 这是需求 1 的行为
+    const nearly = encounter.tickEncounters(pending, ENCOUNTER_SECONDS - 5, makeRandom(2));
+    const ignored = encounter.tickEncounters(nearly, 10, makeRandom(2));
+    check('一直不理它仍会照常结算（需求 1 的行为没变）', ignored.pendingEncounter === null);
+  }
+
+  /* ---- bug 2：宗门被袭不再给掌门道伤 ---- */
+  {
+    const def = ENCOUNTER_MAP.banditSiege;
+    check('匪徒围攻确实是进攻类事件', encounter.isAttackEncounter(def));
+
+    const attacked = encounter.resolveAttack(base(), def);
+    check('宗门被袭：掌门**不**留下道伤', attacked.injurySeconds === 0, `${attacked.injurySeconds} 秒`);
+    check(
+      '宗门被袭仍然有代价（记事里有弟子受伤或资源损失）',
+      (attacked.journal[0]?.text ?? '').includes('匪徒'),
+      attacked.journal[0]?.text ?? '',
+    );
+    check(
+      '道伤不会因为"袭击反复发生"而堆起来',
+      (() => {
+        let s2 = base();
+        for (let i = 0; i < 5; i += 1) s2 = encounter.resolveAttack(s2, def);
+        return s2.injurySeconds === 0;
+      })(),
+    );
+
+    // 道伤只应来自玩家自己的动作：突破失败
+    /*
+     * ⚠️ 突破要"能突破"才会返回结果。`getBreakthroughStatus` 一路会挡：
+     *   已至尽头 / 道伤未愈 / **小境界没参悟满** / 灵气不足 / 没有对应境界丹。
+     * 少给任何一样，`breakthrough()` 就返回 null —— 而断言会以
+     * "这一步不可突破，没测到"的形式假红（本轮写这条时漏了 layer 那一项）。
+     */
+    const injurable: GameState = {
+      ...grant({ ...createInitialState(0), realmIndex: INJURY_FROM_REALM }, { qi: '1e12' }),
+      layer: REALMS[INJURY_FROM_REALM].layerCount,
+      pills: { [REALMS[INJURY_FROM_REALM].breakthroughPill]: 3 },
+    };
+    const attempt = engine.breakthrough(injurable, () => 1);
+    check(
+      '突破失败仍然会给道伤（这是它该有的来源）',
+      (attempt?.injurySeconds ?? 0) > 0,
+      attempt ? `${attempt.injurySeconds} 秒` : '（这一步不可突破，没测到）',
+    );
+  }
+
+  /* ---- bug 2b：会附带道伤的选项必须在界面上写出来 ---- */
+  {
+    const option = ENCOUNTER_MAP.banditSiege.options.find((o) => (o.effect.injury ?? 0) > 0);
+    check(
+      '匪徒围攻里确实有一个"亲自迎敌"的选项要付道伤',
+      Boolean(option),
+      ENCOUNTER_MAP.banditSiege.options.map((o) => o.label).join('/'),
+    );
+    const text = encounter.describeOption(option!);
+    check('选项的代价里写明了道伤（不能点下去才知道）', text.includes('道伤'), text);
+    check(
+      '没写"失败"字样时它就是成功也要付的代价',
+      text.includes(`道伤 ${option!.effect.injury} 秒`) && !text.includes('失败道伤'),
+      text,
+    );
+  }
+
+  /* ---- 节奏：平均间隔落在"几分钟一次"这个量级 ---- */
+  {
+    check(
+      '判定间隔与命中率算出来的平均间隔在 5~10 分钟之间',
+      (() => {
+        const avg = ENCOUNTER_INTERVAL / ENCOUNTER_CHANCE;
+        return avg >= 300 && avg <= 600;
+      })(),
+      `平均 ${Math.round(ENCOUNTER_INTERVAL / ENCOUNTER_CHANCE)} 秒一次`,
+    );
   }
 }
 

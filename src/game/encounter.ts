@@ -66,10 +66,17 @@ export const KARMA_SUCCESS_FLOOR = 0.15;
 /** 小境界参悟被天雷打断时的道伤秒数（比大境界失败轻得多） */
 export const KARMA_LAYER_FAIL_INJURY = 120;
 
-/** 每隔多少真实秒判定一次遭遇 */
-export const ENCOUNTER_INTERVAL = 100;
+/**
+ * 每隔多少真实秒判定一次遭遇。
+ *
+ * ⚠️ 这两个数（间隔 150 秒 / 命中 35%）是**调低过一轮**的：
+ * 原来 100 秒 × 45%，平均 3.7 分钟就弹一个。加上"计时器会累积"那个 bug，
+ * 玩家点掉一个立刻又弹一个。现在平均约 7 分钟一次 ——
+ * 随机事件该是"路上遇到的事"，不是"每隔几分钟必须处理的一条通知"。
+ */
+export const ENCOUNTER_INTERVAL = 150;
 /** 判定时的命中概率 */
-export const ENCOUNTER_CHANCE = 0.45;
+export const ENCOUNTER_CHANCE = 0.35;
 
 /**
  * 遭遇在屏幕上停留多久（需求 1：「针对玩家的随机事件持续30秒」）。
@@ -170,8 +177,16 @@ export function tickEncounters(state: GameState, dt: number, random: RandomSourc
    *   - 进攻类：**照常结算**（不选就是最坏结果）；
    *   - 其余：消失，什么都不发生。
    * 注意倒计时用的是**真实秒**，与日历无关 —— 30 秒是给坐在屏幕前的人看的。
+   *
+   * ⚠️ 这里有一个"离线把遭遇冲掉"的坑（本轮修的）：
+   * 离线结算（`applyOffline`）会把几小时的 dt 一次喂进来，于是
+   * `deadline = 30 - 10800 < 0` —— 玩家一打开游戏，屏幕上那个遭遇
+   * **还没来得及看就已经"照常结算"了**（进攻类还会顺手扣资源、给道伤）。
+   * 现在：dt 一旦超过倒计时本身，就当作"这个遭遇刚刚出现"，
+   * 把倒计时重置回满，让玩家自己决定。倒计时只属于"人在屏幕前"的时间。
    */
   if (state.pendingEncounter) {
+    if (dt >= ENCOUNTER_SECONDS) return { ...state, encounterDeadline: ENCOUNTER_SECONDS };
     const deadline = state.encounterDeadline - dt;
     if (deadline > 0) return { ...state, encounterDeadline: deadline };
 
@@ -189,24 +204,34 @@ export function tickEncounters(state: GameState, dt: number, random: RandomSourc
     };
   }
 
-  const timer = state.encounterTimer + dt;
+  /*
+   * ⚠️ 计时器**不能累积**（本轮修的第二个坑）。
+   *
+   * 原来写的是 `timer = state.encounterTimer + dt`，而离线一小时之后
+   * dt = 3600 → timer = 3600，掷一次、把剩下的 3499 秒留着当计时器；
+   * 玩家点掉这个遭遇，下一帧 timer 又 ≥ 间隔，立刻再弹一个 ——
+   * 于是"点了一个马上又来下一个"，连着弹十几次才把攒下的时间用完。
+   *
+   * 现在封顶在 ENCOUNTER_INTERVAL，而且每次掷完都归零：
+   * **一次离线最多补一次判定**，随机事件的时间线不会被压缩。
+   */
+  const timer = Math.min(state.encounterTimer + dt, ENCOUNTER_INTERVAL);
   if (timer < ENCOUNTER_INTERVAL) return { ...state, encounterTimer: timer };
 
   // 到点了：掷一次，不管中不中，计时都归零
-  const rest = timer - ENCOUNTER_INTERVAL;
-  if (random() >= ENCOUNTER_CHANCE) return { ...state, encounterTimer: rest };
+  if (random() >= ENCOUNTER_CHANCE) return { ...state, encounterTimer: 0 };
 
   const pool = encounterPool(state);
-  if (pool.length === 0) return { ...state, encounterTimer: rest };
+  if (pool.length === 0) return { ...state, encounterTimer: 0 };
 
   const [picked] = weightedDraw(
     pool.map((e) => ({ id: e.id, weight: e.weight })),
     1,
     random,
   );
-  if (!picked) return { ...state, encounterTimer: rest };
+  if (!picked) return { ...state, encounterTimer: 0 };
 
-  return openEncounter({ ...state, encounterTimer: rest }, picked.id);
+  return openEncounter({ ...state, encounterTimer: 0 }, picked.id);
 }
 
 /** 把一条遭遇挂到屏幕上，并开始 30 秒倒计时 */
@@ -341,8 +366,25 @@ export function resolveAttack(
   }
   working = { ...working, resources: resources as typeof state.resources };
 
-  /* ---- 3. 受伤弟子进道伤 ---- */
-  const injurySeconds = Math.round(60 + severity * 600);
+  /*
+   * ---- 3. 受伤的弟子 ----
+   *
+   * ⚠️ 这里**不再给掌门道伤**（本轮修的第三个坑，也是玩家报的那个 bug）。
+   *
+   * 原来的实现是 `injurySeconds: max(..., 60 + severity*600)` ——
+   * 宗门被袭、掌门没出手，掌门却照样"道伤缠身"。而界面上「道伤」这块
+   * 写的是"**突破失败**将道伤缠身 / 还需 X 才能再次突破"，
+   * 于是玩家看到的是"我什么都没点，怎么就不能突破了"。
+   *
+   * 道伤现在的来源收紧成**只有玩家自己的修行动作**：
+   *   1. 大境界突破失败（engine.breakthrough）；
+   *   2. 恶行值下参悟小境界被天雷打断（engine.advanceLayer）。
+   * 至于"掌门亲自迎敌"那种**玩家主动选的**选项，它自己的 `effect.injury`
+   * 仍然照旧生效 —— 那是玩家自己选的伤，与这条无关。
+   *
+   * 被袭击的代价落在**资源**上（上面那一段），这与"不处理就是最坏结果"
+   * 的设计一致：不理会进攻 = 库房被搬走一批，而不是掌门莫名其妙受内伤。
+   */
   const hurtSet = new Set(casualties.map((n) => n));
   const updated = working.sect.disciples.map((d) =>
     hurtSet.has(d.name) ? { ...d, status: 'idle' as const, expeditionId: undefined } : d,
@@ -357,13 +399,12 @@ export function resolveAttack(
   return {
     ...working,
     sect: { ...working.sect, disciples: updated },
-    injurySeconds: Math.max(working.injurySeconds, injurySeconds),
     journal: pushJournal(working.journal, {
       time: working.playTime,
       kind: 'bad',
       text:
         `${def.name}：${text}` +
-        `${casualties.length > 0 ? ` 受伤弟子 ${casualties.length} 人（${casualties.slice(0, 3).join('、')}${casualties.length > 3 ? '…' : ''}）` : ' 弟子无恙'}` +
+        `${casualties.length > 0 ? ` 弟子受伤 ${casualties.length} 人（${casualties.slice(0, 3).join('、')}${casualties.length > 3 ? '…' : ''}）` : ' 弟子无恙'}` +
         `${blocked > 0 ? `，大阵挡下 ${Math.round(blocked * 100)}%` : ''}` +
         `${summary ? `，损失 ${summary}` : ''}`,
     }),
@@ -530,10 +571,18 @@ export function describeOption(option: EncounterOption): string {
   if (option.effect.successChance !== undefined) {
     parts.push(`成功率 ${Math.round(option.effect.successChance * 100)}%`);
   }
+  /*
+   * ⚠️ 两条道伤提示缺一不可。
+   *
+   * `failInjury`（赌输了的代价）原本就有，而 `injury`（**成功也要付的代价**）
+   * 一直没显示 —— 于是"掌门亲自迎敌"这种选项在界面上看着只是"善恶 +4"，
+   * 点下去却平白多了 90 秒道伤。玩家会以为道伤是凭空冒出来的
+   * （这正是本轮玩家报的第二个 bug 的一半来源）。
+   */
+  if (option.effect.injury) parts.push(`道伤 ${option.effect.injury} 秒`);
   if (option.effect.failInjury) parts.push(`失败道伤 ${option.effect.failInjury} 秒`);
   return parts.join(' · ');
 }
-
 /** 善行值与基础材料的加成不叠加（季节管那件事），这里只用于文案提醒 */
 export function isKarmaRelevantItem(item: ItemId): boolean {
   return isBasicMaterial(item);
