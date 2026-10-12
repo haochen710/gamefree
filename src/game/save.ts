@@ -31,8 +31,13 @@ import {
   INSIGHT_MAX_ABSOLUTE,
   ITEM_MAP,
   MATERIAL_IDS,
+  DEFAULT_FURNACE_ID,
+  FURNACE_MAP,
+  GEAR_MAP,
+  GEAR_SLOTS,
   MANUAL_MAP,
   manualIdOfFragment,
+  slotAccepts,
   MATERIAL_MAP,
   FAME_MAX,
   FAME_GOOD_MAP,
@@ -188,6 +193,12 @@ export interface SerializedGame {
   /** 功法：完整功法 `mn`、碎片 `mf`（设定集第 7 章） */
   mn?: Record<string, number>;
   mf?: Record<string, number>;
+  /** 装备库存（设定集第 8.7 章） */
+  gr?: Record<string, number>;
+  /** 已铸成的丹炉（设定集第 11 章） */
+  fn?: unknown;
+  /** 当前在用的炉鼎 */
+  fd?: unknown;
   /* ---- 声望 / 特质 / 外交 / 结局（设定集第 1 / 9 / 10 章） ---- */
   /** 声望 */
   fm?: unknown;
@@ -196,6 +207,9 @@ export interface SerializedGame {
   /** 声望商店倒计时 */
   fst?: unknown;
   /** 已选特质 */
+  /** 已选特质（键名取 tf：避免与 sec.tr 混淆） */
+  tf?: unknown;
+  /** @deprecated 旧键名，读档时兼容 */
   tr?: unknown;
   /** 候选特质 */
   to?: unknown;
@@ -280,11 +294,16 @@ export function serialize(state: GameState): SerializedGame {
     /** 功法（设定集第 7 章）：完整功法 `mn`、碎片 `mf` */
     mn: { ...state.manuals },
     mf: { ...state.manualFragments },
+    /* 装备库存 gr / 丹炉 fn + fd（设定集第 8.7 / 11 章） */
+    gr: { ...state.gears },
+    fn: [...state.furnaces],
+    fd: state.furnaceId,
     /* ---- 声望 / 特质 / 外交 / 结局（设定集第 1 / 9 / 10 章） ---- */
     fm: state.fame,
     fs: state.fameShop.offers.map((o) => ({ g: o.goodId, p: o.price })),
     fst: state.fameShop.secondsLeft,
-    tr: [...state.traits],
+    /* 特质 tf（不是 tr —— tr 已经被 sec.totalRecruited 用了，同名极易看错） */
+    tf: [...state.traits],
     to: [...state.traitOffer],
     le: [...state.legacyEndings],
     ns: state.npcSects.map((s) => ({
@@ -399,6 +418,27 @@ function toFloat(value: unknown, fallback: number, min: number, max: number): nu
  * 声望 / 特质 / 结局 / 交战对象四处都是这个形状 —— 它们都必须"只认还在定义里的 id"，
  * 否则一个被删掉的功法或宗门会永远留在存档里（既读不出名字，又占着位置）。
  */
+/**
+ * 读取弟子的五个装备栏。
+ *
+ * 校验两件事：id 还在定义里、且**大类与栏位匹配**（剑不能放进丹药栏）。
+ * 旧存档没有这个字段时返回五个空栏 —— 与"新弟子一律空手"口径一致。
+ */
+function sanitizeGearSlots(raw: unknown): { gain: string; attack: string; defense: string; pill1: string; pill2: string } {
+  const out = { gain: '', attack: '', defense: '', pill1: '', pill2: '' };
+  if (raw === null || typeof raw !== 'object') return out;
+  const source = raw as Record<string, unknown>;
+  for (const slot of GEAR_SLOTS) {
+    const id = source[slot];
+    if (typeof id !== 'string') continue;
+    const def = GEAR_MAP[id];
+    if (!def) continue;
+    if (!slotAccepts(slot, def.kind)) continue;
+    out[slot] = id;
+  }
+  return out;
+}
+
 function sanitizeIds(raw: unknown, accept?: (id: string) => boolean): string[] {
   if (!Array.isArray(raw)) return [];
   const out: string[] = [];
@@ -517,6 +557,8 @@ function sanitizeDisciple(raw: unknown, index: number): Disciple | null {
     // 功法：只认还存在的 id（一本被删掉的功法不该让读档报错）
     cultivationManual: MANUAL_MAP[String(d.cultivationManual)] ? String(d.cultivationManual) : '',
     combatManual: MANUAL_MAP[String(d.combatManual)] ? String(d.combatManual) : '',
+    // 弟子五装备栏（设定集第 8.7 章）：只认还在定义里、且大类与栏位匹配的 id
+    gear: sanitizeGearSlots(d.gear),
     // status 交给 repairState 依据探索列表重新推导，这里先一律置空闲
     status: 'idle',
   };
@@ -988,6 +1030,10 @@ export function deserialize(raw: unknown): GameState | null {
     // 功法只保留认得出 id 的那些（删过的功法不该把存档带崩）
     manuals: toCountMap(data.mn, 0, 1e12, (id) => MANUAL_MAP[id] !== undefined),
     manualFragments: toCountMap(data.mf, 0, 1e12, (key) => manualIdOfFragment(key) !== null),
+    // 装备库存与丹炉（设定集第 8.7 / 11 章）：同样只认还存在的 id
+    gears: toCountMap(data.gr, 0, 1e12, (id) => GEAR_MAP[id] !== undefined),
+    furnaces: sanitizeIds(data.fn, (id) => FURNACE_MAP[id] !== undefined),
+    furnaceId: FURNACE_MAP[String(data.fd)] ? String(data.fd) : DEFAULT_FURNACE_ID,
     /*
      * 声望 / 特质 / 外交 / 结局（设定集第 1 / 9 / 10 章）。
      *
@@ -1001,7 +1047,7 @@ export function deserialize(raw: unknown): GameState | null {
       offers: sanitizeFameOffers(data.fs),
       secondsLeft: toFloat(data.fst, FAME_SHOP_REFRESH_SECONDS, 0, 1e9),
     },
-    traits: sanitizeIds(data.tr, (id) => TRAIT_MAP[id] !== undefined),
+    traits: sanitizeIds(data.tf ?? data.tr, (id) => TRAIT_MAP[id] !== undefined),
     traitOffer: sanitizeIds(data.to, (id) => TRAIT_MAP[id] !== undefined),
     legacyEndings: sanitizeIds(data.le, (id) => ENDING_MAP[id as EndingId] !== undefined),
     npcSects: NPC_SECTS.map((def) => {

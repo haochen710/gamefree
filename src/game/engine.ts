@@ -1857,6 +1857,13 @@ export function refineStone(state: GameState, times: number): GameState {
  */
 
 /** 当前自动合成的**全局**速率（批/秒），0 表示关闭 */
+/**
+ * 自动合成的速度（批/秒）。
+ *
+ * ⚠️ 丹炉的"省时间"这条设定就落在这里（见 content/furnace.ts 的取舍说明）：
+ * 本作的炼丹炼器是瞬时的，唯一带"速度"的炼制环节是自动合成，
+ * 所以炉鼎的 refineSpeedBonus 作用在它上面。
+ */
 export function getAutoRefineRate(state: GameState): number {
   const level = Math.min(Math.max(Math.floor(state.autoRefineLevel), 0), AUTO_REFINE_LEVEL_MAX);
   return AUTO_REFINE_RATES[level];

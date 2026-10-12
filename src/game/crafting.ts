@@ -46,6 +46,7 @@ import {
   type CostMap,
 } from './engine';
 import { aptitudeRank, pushJournal, relieveDemonAll } from './disciples';
+import { furnaceAlchemyBonus, furnaceBatchBonus, furnaceRefiningBonus } from './gear';
 import { completeAllExpeditions } from './expeditions';
 import type { GameState } from './state';
 
@@ -237,12 +238,14 @@ export function getCraftSuccessRate(state: GameState, kind: 'alchemy' | 'refinin
       ? getStructureBonus(state, 'alchemySuccessBonus')
       : getStructureBonus(state, 'refiningSuccessBonus');
   const talent = getFarmTalentBonus(state, kind === 'alchemy' ? 'alchemyRate' : 'refiningRate');
+  // 丹炉九件（设定集第 11 章）：当前那口炉子的成功率加成
+  const furnace = kind === 'alchemy' ? furnaceAlchemyBonus(state) : furnaceRefiningBonus(state);
   // 丹鼎天成（先天特质）：炼丹成功率 +12%
   const trait = kind === 'alchemy' ? getTraitEffect(state, 'alchemyBonus', 0) : 0;
   const bonus = gap > 0 ? gap * CRAFT_MASTER_GAP_BONUS : 0;
 
   // 上限仍是 1（差两品也可能因为炉子好、弟子手巧而摸到满）
-  return Math.max(0.05, Math.min(1, base + bonus + building + talent + trait));
+  return Math.max(0.05, Math.min(1, base + bonus + building + talent + trait + furnace));
 }
 
 /** 界面用：说清楚"为什么会失败/为什么会必成" */
@@ -296,9 +299,23 @@ export function craftPill(
   for (let i = 0; i < attempts; i += 1) if (random() < rate) made += 1;
   const failed = attempts - made;
 
+  /*
+   * 丹炉的批量加成（设定集第 11 章）：成功的每一炉都有机会**多出一件**。
+   * 这与"成功率"是两个不同的方向 —— 成功率决定成不成，批量决定成了之后多不多，
+   * 所以九件炉鼎同时在两边给一点，才像"炉子好坏"而不只是"改了条概率"。
+   */
+  const batch = furnaceBatchBonus(state);
+  // 丹鼎天成（先天特质）：丹药产出翻倍的概率 +10% —— 与丹炉的批量加成同一条线
+  const doubleChance = batch + getTraitEffect(state, 'alchemyDoubleChance', 0);
+  let bonus = 0;
+  if (doubleChance > 0 && made > 0) {
+    for (let i = 0; i < made; i += 1) if (random() < doubleChance) bonus += 1;
+  }
+  const produced = made + bonus;
+
   let next: GameState = paid;
-  if (made > 0) {
-    next = { ...next, pills: { ...next.pills, [pillId]: (next.pills[pillId] ?? 0) + made } };
+  if (produced > 0) {
+    next = { ...next, pills: { ...next.pills, [pillId]: (next.pills[pillId] ?? 0) + produced } };
   }
   if (failed > 0) {
     next = {

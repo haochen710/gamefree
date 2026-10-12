@@ -49,6 +49,7 @@ import {
   recruitCost,
   rollAptitude,
 } from './content';
+import { getGearCasualtyReduction, getGearCultivationBonus, getGearPower } from './gear';
 import {
   fameRecruitDiscount,
   getArtifactBonuses,
@@ -135,6 +136,8 @@ export function rollDisciple(
     // 功法要靠玩家去挣（碎片合成 / 秘境掉落），新弟子一律空手
     cultivationManual: '',
     combatManual: '',
+    // 装备要靠玩家炼（设定集第 8.7 章），新弟子一律空手
+    gear: { gain: '', attack: '', defense: '', pill1: '', pill2: '' },
     idleSeconds: 0,
     realmIndex: 0,
     // 给一点随机初始进度，免得同一批弟子永远整齐划一地一起突破
@@ -198,9 +201,11 @@ export function getDiscipleSpeed(state: GameState, disciple: Disciple): number {
    * 与建筑/大比/心得同一性质），与性格一起进那个池子。
    */
   const manual = MANUAL_MAP[disciple.cultivationManual]?.cultivationBonus ?? 0;
+  // 装备的增益栏（设定集第 8.7 章）：修行加成，与功法同一性质，进同一个加算池
+  const gearBonus = getGearCultivationBonus(disciple);
   return (
     aptitude *
-    (additive + personality.cultivationBonus + loyaltyTier.cultivationBonus + manual) *
+    (additive + personality.cultivationBonus + loyaltyTier.cultivationBonus + manual + gearBonus) *
     demonTier.cultivationMult
   );
 }
@@ -245,7 +250,9 @@ export function getDiscipleCasualtyReduction(disciple: Disciple): number {
   for (const id of [disciple.cultivationManual, disciple.combatManual]) {
     manuals += MANUAL_MAP[id]?.casualtyReduction ?? 0;
   }
-  return Math.min(MAX_PERSONAL_CASUALTY_REDUCTION, talent + personality + loyalty + manuals);
+  // 装备的防御栏也在这里（设定集第 8.7 章：防御栏降低伤亡）
+  const gear = getGearCasualtyReduction(disciple);
+  return Math.min(MAX_PERSONAL_CASUALTY_REDUCTION, talent + personality + loyalty + manuals + gear);
 }
 
 /**
@@ -592,11 +599,19 @@ export function getDisciplePower(state: GameState, disciple: Disciple): number {
 }
 
 /** 探索队伍的总战力 */
+/**
+ * 队伍战力。
+ *
+ * ⚠️ 这里必须把**装备的进攻栏**算进去 —— 否则"进攻栏"就只是一个好看的空位。
+ * 装备的战力按"每人自己的"相加（与秘境伤亡不同：伤亡是逐人掷骰，
+ * 而战力本来就是队伍级的汇总）。
+ */
 export function getPartyPower(state: GameState, ids: string[]): number {
   const byId = new Map(state.sect.disciples.map((d) => [d.id, d]));
   return ids.reduce((sum, id) => {
     const d = byId.get(id);
-    return d ? sum + getDisciplePower(state, d) : sum;
+    // 装备的进攻栏战力算在本人身上（读取点：这里）
+    return d ? sum + getDisciplePower(state, d) + getGearPower(d) : sum;
   }, 0);
 }
 

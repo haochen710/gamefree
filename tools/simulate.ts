@@ -29,8 +29,11 @@ import {
   ARTIFACTS,
   SECRET_REALMS,
   ENDING_MAP,
+  FURNACES,
+  GEARS,
   MANUALS,
   NPC_SECT_MAP,
+  TRAIT_MAP,
   MANUAL_GRADE_MIN_REALM,
   MANUAL_GRADE_NAMES,
   MANUAL_MAP,
@@ -68,6 +71,7 @@ import * as sectActivity from '../src/game/sectActivity';
 import * as manuals from '../src/game/manuals';
 import * as fame from '../src/game/fame';
 import * as diplomacy from '../src/game/diplomacy';
+import * as gear from '../src/game/gear';
 import { applyTick } from '../src/game/tick';
 
 /* ------------------------------------------------------------------ */
@@ -162,6 +166,8 @@ interface SimResult {
   farmTrips: [string, number][];
   /** 发书的结果计数（诊断库存发不出去） */
   equipOk: number;
+  /** 发出去的装备件数（设定集第 8.7 章） */
+  gearsHanded: number;
   equipNoTarget: number;
   equipRejected: number;
   /** 是不是撞上了迭代上限（撞上时"30 天"其实没跑满） */
@@ -386,12 +392,16 @@ function runSimulation(seed: number): SimResult {
     firstExpedition: false,
     firstPill: false,
     firstManual: false,
+    firstFurnace: false,
+    firstGear: false,
   };
   /** 合成好、等着发给弟子的功法（事件驱动的"发书"队列） */
   const pendingEquip: string[] = [];
   /** 参悟次数上限（防止"灵气一超阈值就参悟"把主循环刷爆） */
   const MAX_CONTEMPLATIONS = 400;
   let contemplations = 0;
+  /** 发出去的装备件数（诊断：装备那条线有没有跑起来） */
+  let gearsHanded = 0;
   /** 发书的三种结果（诊断"为什么库存发不出去"） */
   let equipOk = 0;
   let equipNoTarget = 0;
@@ -727,6 +737,103 @@ function runSimulation(seed: number): SimResult {
               }
               break;
             }
+          }
+        }
+      }
+
+      /*
+       * 山门特质（设定集第 1 章）：开局三选一。AI 优先挑"灵气/产出"类的 ——
+       * 不选的话，九个特质在实测里完全不可见（文档代理核出来的缺口）。
+       */
+      if (state.traits.length === 0) {
+        /*
+         * 候选特质是 **store 在开局时抽的**（`ensureTraitOffer`），而模拟器不走 store ——
+         * 所以这里要自己抽一次，否则九个特质在实测里永远是"（未选）"。
+         * 这正是文档代理核出来的那个缺口。
+         */
+        const offer = state.traitOffer.length > 0 ? state.traitOffer : fame.rollTraitOffer(state, random);
+        if (offer.length > 0) {
+          const preferred = ['spiritVein', 'eternalSpring', 'herbGarden', 'ironArmy', 'scriptureVault', 'starGazing'];
+          const pick = preferred.find((id) => offer.includes(id)) ?? offer[0];
+          const next = fame.chooseTrait({ ...state, traitOffer: offer }, pick);
+          if (next !== state) {
+            state = next;
+            record('山门气运已定：' + (TRAIT_MAP[pick]?.name ?? pick));
+            continue;
+          }
+        }
+      }
+
+      /*
+       * 声望商店（设定集第 9 章）：声望攒着不用等于没有这个系统。
+       * 策略很省事：买得起就买货架上第一件 —— 目的只是让这条线跑起来。
+       */
+      /*
+       * 声望商店：**必须给结盟留出储备**。
+       *
+       * 上一版 AI 一有声望就买，结果声望长期趴在几十点 ——
+       * 论道要 500、结盟要 3000，外交那条线整条死掉（本轮实测抓出来的）。
+       * 这条其实是个真实的取舍：声望同时是"商店货币"和"外交门槛"。
+       */
+      const fameReserve = 3000;
+      if (fame.getFame(state) > fameReserve && state.fameShop.offers.length > 0) {
+        const affordable = state.fameShop.offers.find((o) => fame.canBuyFameOffer(state, o.goodId).ok);
+        if (affordable) {
+          const result = fame.buyFameOffer(state, affordable.goodId, random);
+          if (result.state !== state) {
+            state = result.state;
+            continue;
+          }
+        }
+      }
+
+      /*
+       * 炼器与发装备（设定集第 8.7 / 11 章）：
+       *   1. 有更好的炉鼎且铸得起，就铸；
+       *   2. 仓库里有装备就一键申领。
+       * 与功法那一段同样是**事件驱动**的写法（每轮最多做一件），
+       * 不然"扫全宗找空位"会把主循环拖垮（上一轮踩过这个坑）。
+       */
+      {
+        /*
+         * 炼装备：挑炼得起、品阶最高的那一件（每 300 轮试一次，别把主循环拖垮）。
+         * 上一版只炼炉鼎、不炼装备，于是"弟子五装备栏"在实测里是空的。
+         */
+        if (iterations % 300 === 0) {
+          const forgeable = [...GEARS]
+            .sort((a, b) => b.grade - a.grade)
+            .find((g) => gear.canForgeGear(state, g.id).ok);
+          if (forgeable) {
+            const rate = crafting.getCraftSuccessRate(state, 'refining', forgeable.grade);
+            const result = gear.forgeGear(state, forgeable.id, rate, random);
+            if (result.state !== state) {
+              state = result.state;
+              if (!sectFlags.firstGear && result.ok) {
+                sectFlags.firstGear = true;
+                record('炼成第一件弟子装备（' + forgeable.name + '）');
+              }
+              continue;
+            }
+          }
+        }
+        const furnaceTarget = FURNACES.find((f) => gear.canForgeFurnace(state, f.id).ok);
+        if (furnaceTarget) {
+          const next = gear.forgeFurnace(state, furnaceTarget.id);
+          if (next !== state) {
+            state = next;
+            if (!sectFlags.firstFurnace) {
+              sectFlags.firstFurnace = true;
+              record('铸成 ' + furnaceTarget.name);
+            }
+            continue;
+          }
+        }
+        if (Object.keys(state.gears).length > 0 && iterations % 200 === 0) {
+          const result = gear.autoEquipGears(state);
+          if (result.state !== state) {
+            state = result.state;
+            gearsHanded += result.handed;
+            continue;
           }
         }
       }
@@ -1420,6 +1527,7 @@ function runSimulation(seed: number): SimResult {
     tripsStarted,
     farmTrips: [...farmTrips.entries()].sort((a, b) => b[1] - a[1]),
     equipOk,
+    gearsHanded,
     equipNoTarget,
     equipRejected,
     hitIterationCap: iterations >= CONFIG.maxIterations,
@@ -1649,8 +1757,38 @@ function printDetail(result: SimResult): void {
     );
   }
 
+  /* ---- 丹炉与装备（设定集第 8.7 / 11 章） ---- */
+  {
+    const furnace = gear.getFurnace(state);
+    const ownedGears = gear.getOwnedGears(state);
+    const stock = ownedGears.reduce((sum, entry) => sum + entry.count, 0);
+    let worn = 0;
+    for (const d of state.sect.disciples) worn += gear.countDiscipleGear(d);
+    console.log(
+      '  炉鼎：' +
+        furnace.icon +
+        furnace.name +
+        '（' +
+        furnace.grade +
+        ' 品，炼丹 +' +
+        Math.round(furnace.alchemyBonus * 100) +
+        '% · 炼器 +' +
+        Math.round(furnace.refiningBonus * 100) +
+        '% · 出丹双份 +' +
+        Math.round(furnace.batchBonus * 100) +
+        '%）· 已铸 ' +
+        gear.getOwnedFurnaces(state).length +
+        '/9',
+    );
+    console.log('  弟子装备：本局累计发出 ' + result.gearsHanded + ' 件 · 当前在装 ' + worn + ' 件 · 库存 ' + stock + ' 件');
+  }
+
   /* ---- 声望与外交（设定集第 9 章） ---- */
   {
+    console.log(
+      '  山门特质：' +
+        (state.traits.length > 0 ? state.traits.map((id) => TRAIT_MAP[id]?.name ?? id).join('、') : '（未选）'),
+    );
     const tier = fame.getFameTier(state);
     const allied = state.npcSects.filter((s) => s.alliance).length;
     const relations = state.npcSects

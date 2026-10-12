@@ -278,10 +278,8 @@ export interface TraitEffects {
   sectDefense?: number;
   /** 弟子伤亡率乘数（expeditions.resolveExpedition） */
   casualtyMult?: number;
-  /** 商行买入乘数（shop.buyShopOffer） */
+  /** 商行买入乘数（shop.getOfferPrice） */
   shopBuyMult?: number;
-  /** 商行卖出乘数（shop.sellItem） */
-  shopSellMult?: number;
   /** 掌门突破成功率加算（engine.getSuccessRate） */
   breakthroughBonus?: number;
   /** 弟子修行速度的加算项（disciples.getDiscipleSpeed） */
@@ -350,9 +348,14 @@ export const TRAITS: TraitDef[] = [
     id: 'merchantRoad',
     name: '商道通达',
     icon: '🪙',
-    desc: '山门外就是通商要道。商行买入 −15%，卖出 +15%。',
-    detail: '商行买入 ×0.85 · 卖出 ×1.15',
-    effects: { shopBuyMult: 0.85, shopSellMult: 1.15 },
+    /*
+     * ⚠️ 这一条原本还写着「卖出 +15%」，但**本作的商行只买不卖**
+     * （shop.ts 里没有任何出售结算）—— 那个效果即使实现出来也没有读取点。
+     * 与其留一个永远不生效的数字，不如把文案改成实话。
+     */
+    desc: '山门外就是通商要道。商行买入 −15%。',
+    detail: '商行买入 ×0.85',
+    effects: { shopBuyMult: 0.85 },
   },
   {
     id: 'starGazing',

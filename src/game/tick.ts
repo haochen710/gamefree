@@ -80,7 +80,9 @@ export function applyTick(state: GameState, dt: number, random: RandomSource = g
   next = tickTravel(next, dt, random);
   next = tickExpeditions(next, dt, random);
   next = tickRealmCooldowns(next, dt);
-  next = tickArena(next, dt);
+  // 必须把 random 传进去：大比要发功法碎片，那是一次掷骰。
+  // 漏传会退回全局随机源，pnpm simulate 就不再可复现（坑 89）。
+  next = tickArena(next, dt, random);
   next = tickSectEvents(next, dt, random);
   next = { ...next, buffs: tickBuffs(next.buffs, dt) };
   next = tickShop(next, dt, random);

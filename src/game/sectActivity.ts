@@ -87,7 +87,7 @@ export interface ArenaResult {
 }
 
 /** 举办一次大比：全宗弟子得心得、心魔稍减，并获得一年的修行加速 */
-export function runArena(state: GameState): ArenaResult {
+export function runArena(state: GameState, random: RandomSource = gameRandom): ArenaResult {
   const disciples = state.sect.disciples;
   if (disciples.length === 0) {
     return { state: { ...state, arenaTimer: ARENA_INTERVAL_SECONDS }, participants: 0 };
@@ -115,7 +115,7 @@ export function runArena(state: GameState): ArenaResult {
         })),
       },
     },
-    gameRandom,
+    random,
   );
 
   return {
@@ -138,7 +138,7 @@ export function runArena(state: GameState): ArenaResult {
 }
 
 /** 大比计时（含加成倒计时） */
-export function tickArena(state: GameState, dt: number): GameState {
+export function tickArena(state: GameState, dt: number, random: RandomSource = gameRandom): GameState {
   if (dt <= 0) return state;
   let next = state;
   let changed = false;
@@ -154,7 +154,7 @@ export function tickArena(state: GameState, dt: number): GameState {
   const timer = next.arenaTimer - dt;
   if (timer > 0) return { ...next, arenaTimer: timer };
 
-  return runArena({ ...next, arenaTimer: 0 }).state;
+  return runArena({ ...next, arenaTimer: 0 }, random).state;
 }
 
 /* ------------------------------------------------------------------ */

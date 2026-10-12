@@ -26,6 +26,7 @@ import {
   WAR_DEFENSE_POWER_PER_DISCIPLE,
   WAR_LOOT,
   WAR_LOSS_RELATION,
+  WAR_LOSS_RESOURCE_RATIO,
   WAR_MAX_WIN_CHANCE,
   WAR_MIN_WIN_CHANCE,
   WAR_RESOURCE_COST,
@@ -345,6 +346,12 @@ export function resolveBattle(
     ...working,
     sect: { ...working.sect, disciples: working.sect.disciples.filter((d) => !fallen.has(d.id)) },
   };
+  // 战败被掠：资源按比例扣掉（与战胜时的"烧钱"对称，但更重）
+  const raided = { ...working.resources };
+  for (const key of Object.keys(raided) as (keyof typeof raided)[]) {
+    raided[key] = raided[key].mul(D(1 - WAR_LOSS_RESOURCE_RATIO));
+  }
+  working = { ...working, resources: raided };
   const fame = changeFame(working, -60 * def.power, `败于${def.name}`);
   working = fame.state;
   working = patchSect(working, sectId, { relation: clampRelation(entry.relation + WAR_LOSS_RELATION) });

@@ -206,6 +206,13 @@ export const WAR_MIN_WIN_CHANCE = 0.05;
 export const WAR_MAX_WIN_CHANCE = 0.92;
 /** 战败时弟子的伤亡比例 */
 export const WAR_CASUALTY_RATIO = 0.06;
+/**
+ * 战败时被掠走的资源比例（资源类：灵气/灵木/灵矿/灵石/灵草）。
+ *
+ * 之所以要有这一条：原注释写着"资源被掠"，实现里却只扣弟子 ——
+ * 战败必须真的疼，否则"宣战"就变成一件没有下行风险的事。
+ */
+export const WAR_LOSS_RESOURCE_RATIO = 0.05;
 /** 战胜时的战利品（按对方实力缩放） */
 export const WAR_LOOT: { id: ItemId; amount: number }[] = [
   { id: 'starSand', amount: 60 },

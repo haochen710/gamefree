@@ -17,6 +17,7 @@
  *   sect.ts         弟子资质、宗门品阶、招收规则、名字生成
  *   talents.ts      弟子战斗天赋 / 种田天赋 / 性格 / 忠诚度 / 心魔
  *   manuals.ts      功法（五档制、碎片合成、藏经阁）
+ *   furnace.ts      丹炉九件 + 弟子五装备栏
  *   servants.ts     仆人（杂役）工种与加成
  *
  * 外界一律 `import { ... } from './content'`，不需要关心内部怎么拆的。
@@ -40,5 +41,6 @@ export * from './talents';
 export * from './manuals';
 export * from './fame';
 export * from './diplomacy';
+export * from './furnace';
 export * from './servants';
 export * from './enlightenment';

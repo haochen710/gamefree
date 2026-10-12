@@ -21,6 +21,7 @@ import {
   type PersonalityId,
   type ResourceId,
   type ShopOffer,
+  DEFAULT_FURNACE_ID,
   initialNpcSects,
 } from './content';
 
@@ -53,6 +54,13 @@ export interface Disciple {
   loyalty: number;
   /** 心魔 0~100（设定集第 14.3 章） */
   demon: number;
+  /**
+   * 弟子五装备栏（设定集第 8.7 章）：增益 / 进攻 / 防御 / 丹药 ×2。
+   *
+   * 存装备 id（空串 = 空栏），与功法同一套口径：装上去从仓库减 1、
+   * 卸下来加回去，于是"同一件装备挂在两个人身上"在数据上就不可能出现。
+   */
+  gear: { gain: string; attack: string; defense: string; pill1: string; pill2: string };
   /**
    * 已装备的修炼功法 / 战斗功法（设定集第 7 章：每名弟子各 1 本）。
    *
@@ -288,6 +296,12 @@ export interface GameState {
   manuals: ItemCountMap;
   /** 功法碎片：`frag:<功法id>` → 份数（5 份合一本） */
   manualFragments: ItemCountMap;
+  /** 弟子装备库存（设定集第 8.7 章）：装备 id → 件数 */
+  gears: ItemCountMap;
+  /** 已铸成的丹炉（设定集第 11 章）：炉鼎 id 列表；开局那口默认炉不在这里 */
+  furnaces: string[];
+  /** 当前在用的炉鼎 */
+  furnaceId: string;
 
   /* ---- 声望 / 先天特质 / 外交 / 结局（设定集第 1 / 9 / 10 章） ---- */
 
@@ -519,6 +533,9 @@ export function createInitialState(now = Date.now()): GameState {
     gearCharges: {},
     manuals: {},
     manualFragments: {},
+    gears: {},
+    furnaces: [],
+    furnaceId: DEFAULT_FURNACE_ID,
     fame: 0,
     fameShop: { offers: [], secondsLeft: 0 },
     traits: [],

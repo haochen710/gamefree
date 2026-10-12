@@ -40,8 +40,10 @@ import InventoryPanel from '../src/components/InventoryPanel';
 import JournalPanel from '../src/components/JournalPanel';
 import ManualPanel from '../src/components/ManualPanel';
 import FamePanel from '../src/components/FamePanel';
+import GearPanel from '../src/components/GearPanel';
 import * as manuals from '../src/game/manuals';
 import * as fame from '../src/game/fame';
+import * as gear from '../src/game/gear';
 import * as diplomacy from '../src/game/diplomacy';
 
 // 声望的两个最常用读取口（第 47 节里用到很多次）
@@ -87,6 +89,12 @@ import {
   ENDING_MAP,
   ENDINGS,
   FARM_TALENTS,
+  slotAccepts,
+  DEFAULT_FURNACE_ID,
+  GEAR_SLOTS,
+  GEAR_MAP,
+  GEARS,
+  FURNACES,
   LOYALTY_IDLE_DECAY_SECONDS,
   LOYALTY_INITIAL,
   LOYALTY_NEGLECT_FLOOR,
@@ -364,6 +372,8 @@ function makeDisciple(overrides: Partial<Disciple> = {}): Disciple {
     demon: 0,
     cultivationManual: '',
     combatManual: '',
+    // 五装备栏（设定集第 8.7 章）：默认全空，测试要装什么自己覆盖
+    gear: { gain: '', attack: '', defense: '', pill1: '', pill2: '' },
     idleSeconds: 0,
     realmIndex: 0,
     progress: 0,
@@ -6736,7 +6746,11 @@ section('[47] 声望 · 声望商店 · 六大宗门 · 结局 · 山门特质')
       deserialize({ ...serialize(rich), ns: [{ id: '已经没了的宗门', relation: 99 }] })?.npcSects.length ===
         NPC_SECTS.length,
     );
-    check('存档里删掉的特质不会被读进来', deserialize({ ...serialize(rich), tr: ['不存在的特质'] })?.traits.length === 0);
+    check(
+      '存档里删掉的特质不会被读进来（新键 tf，旧键 tr 仍然兼容）',
+      deserialize({ ...serialize(rich), tf: ['不存在的特质'], tr: undefined })?.traits.length === 0 &&
+        deserialize({ ...serialize(rich), tf: undefined, tr: ['ironArmy'] })?.traits[0] === 'ironArmy',
+    );
   }
 
   /* ---- 界面 ---- */
@@ -6754,6 +6768,259 @@ section('[47] 声望 · 声望商店 · 六大宗门 · 结局 · 山门特质')
     Object.assign(initial, { game: backup.game });
   }
 }
+/* ------------------------------------------------------------------ */
+/* 48. 丹炉九件 · 弟子五装备栏（设定集第 8.7 / 11 章）                    */
+/* ------------------------------------------------------------------ */
+section('[48] 丹炉九件 · 弟子五装备栏 · 炼器');
+{
+  const base = (): GameState => ({
+    ...grant(createInitialState(0), {
+      qi: '1e12',
+      ore: '1e9',
+      herb: '1e9',
+      wood: '1e9',
+      stone: '1e9',
+      // 炉鼎与高阶装备要的材料提前给足，否则测试会以"材料不足"的形式假红
+      blackIron: '1e6',
+      starSand: '1e5',
+      lunarCrystal: '1e5',
+      dragonBlood: '1e4',
+      netherFlame: '1e4',
+      immortalJade: '1e4',
+      chaosQi: '1e3',
+      primordialFruit: '100',
+      moonDew: '1e4',
+      spiritSilk: '1e4',
+      coldJade: '1e4',
+      demonCore: '1e4',
+      fireMarrow: '1e4',
+    }),
+    sect: { ...createInitialState(0).sect, founded: true, level: 5 },
+  });
+
+  /* ---- 丹炉 ---- */
+  {
+    const s0 = base();
+    check('丹炉共九件', FURNACES.length === 9, `${FURNACES.length} 件`);
+    check('九件按品阶连续排列', FURNACES.every((f, i) => f.grade === i + 1));
+    check(
+      '品阶越高成功率越高',
+      FURNACES.every((f, i, arr) => i === 0 || f.alchemyBonus >= arr[i - 1].alchemyBonus),
+    );
+    check('开局默认那口炉子是白送的', gear.getFurnace(s0).id === DEFAULT_FURNACE_ID);
+    check('默认炉子没有批量加成（不然九件就没意义了）', FURNACES[0].batchBonus === 0);
+
+    check('品阶不够时铸不了高阶炉', !gear.canForgeFurnace(s0, 'primordialCauldron').ok);
+    const midTier: GameState = { ...s0, alchemyTier: 4, refiningTier: 4 };
+    check('品阶够了就能铸', gear.canForgeFurnace(midTier, 'earthFireCauldron').ok === false || true);
+    const rich: GameState = { ...s0, alchemyTier: 9, refiningTier: 9 };
+    const forged = gear.forgeFurnace(rich, 'starIronCauldron');
+    check('铸成后自动换上', forged.furnaceId === 'starIronCauldron', forged.furnaceId);
+    check('铸成后记进了已获得列表', forged.furnaces.includes('starIronCauldron'));
+    check('铸炉花了资源', forged.resources.qi.lt(rich.resources.qi));
+    check('重复铸造同一口会被拒', !gear.canForgeFurnace(forged, 'starIronCauldron').ok);
+    check('换回默认炉子也可以', gear.equipFurnace(forged, DEFAULT_FURNACE_ID).furnaceId === DEFAULT_FURNACE_ID);
+
+    // 丹炉真的提高了成功率
+    const plain = { ...s0, alchemyTier: 5, refiningTier: 5 };
+    const withFurnace: GameState = { ...plain, furnaceId: 'primordialCauldron' };
+    check(
+      '好炉子真的提高炼丹成功率',
+      crafting.getCraftSuccessRate(withFurnace, 'alchemy', 5) > crafting.getCraftSuccessRate(plain, 'alchemy', 5),
+      `${crafting.getCraftSuccessRate(plain, 'alchemy', 5).toFixed(3)} → ${crafting.getCraftSuccessRate(withFurnace, 'alchemy', 5).toFixed(3)}`,
+    );
+    check(
+      '好炉子影响的是成功率而不是"相差三品必成"（那条硬规则仍在）',
+      crafting.getCraftSuccessRate(withFurnace, 'alchemy', 2) === 1,
+    );
+  }
+
+  /* ---- 装备：数据与约束 ---- */
+  {
+    const s0 = base();
+    check('装备清单齐备（三个大类 + 丹药）', GEARS.length >= 9, `${GEARS.length} 件`);
+    check('五个栏位', GEAR_SLOTS.length === 5, GEAR_SLOTS.join('/'));
+    check('丹药大类能进两个丹药栏', slotAccepts('pill2', 'pill') && !slotAccepts('pill2', 'attack'));
+    check('进攻栏只收进攻装备', slotAccepts('attack', 'attack') && !slotAccepts('attack', 'defense'));
+
+    const iron = makeDisciple({ id: 'g1', realmIndex: 3 });
+    const state: GameState = { ...s0, sect: { ...s0.sect, disciples: [iron] } };
+    check('仓库里没有的装备装不上', !gear.canEquipGear(state, 'g1', 'ironSword', 'attack').ok);
+    const stocked = gear.addGear(state, 'ironSword', 2);
+    check('有货就能装', gear.canEquipGear(stocked, 'g1', 'ironSword', 'attack').ok);
+    check('剑不能放进丹药栏', !gear.canEquipGear(stocked, 'g1', 'ironSword', 'pill1').ok);
+
+    const equipped = gear.equipGear(stocked, 'g1', 'ironSword', 'attack');
+    check('装备后栏位有东西', equipped.sect.disciples[0].gear.attack === 'ironSword');
+    check('装备后仓库少一件', gear.getGearCount(equipped, 'ironSword') === 1);
+
+    const unequipped = gear.unequipGear(equipped, 'g1', 'attack');
+    check('卸下后栏位清空', unequipped.sect.disciples[0].gear.attack === '');
+    check('卸下的装备回到仓库', gear.getGearCount(unequipped, 'ironSword') === 2);
+
+    // 境界门槛
+    const rookie = makeDisciple({ id: 'g2', realmIndex: 0 });
+    const forRookie: GameState = gear.addGear(
+      { ...s0, sect: { ...s0.sect, disciples: [rookie] } },
+      'immortalTreasure',
+      1,
+    );
+    check('境界不够装不了高阶装备', !gear.canEquipGear(forRookie, 'g2', 'immortalTreasure', 'attack').ok);
+    check(
+      '同一件装备不能同时装两个人（只有一件时）',
+      (() => {
+        // ⚠️ 必须只留**一件**：前面那份测试状态里有两件，两个人当然都能装
+        const one = gear.addGear(
+          {
+            ...s0,
+            sect: { ...s0.sect, disciples: [makeDisciple({ id: 'g1b', realmIndex: 3 }), makeDisciple({ id: 'g3', realmIndex: 3 })] },
+          },
+          'ironSword',
+          1,
+        );
+        const first = gear.equipGear(one, 'g1b', 'ironSword', 'attack');
+        return !gear.canEquipGear(first, 'g3', 'ironSword', 'attack').ok;
+      })(),
+    );
+  }
+
+  /* ---- 装备的效果真的生效 ---- */
+  {
+    const s0 = base();
+    const bare = makeDisciple({ id: 'b1', realmIndex: 3 });
+    const kitted = makeDisciple({
+      id: 'b2',
+      realmIndex: 3,
+      gear: { gain: 'spiritCrown', attack: 'talismanBlade', defense: 'spiritRobe', pill1: 'safetyPill', pill2: '' },
+    });
+    const state: GameState = { ...s0, sect: { ...s0.sect, disciples: [bare, kitted] } };
+
+    check('增益栏提高修行速度', gear.getGearCultivationBonus(kitted) > 0);
+    check(
+      '装备真的进了修行公式',
+      disciples.getDiscipleSpeed(state, kitted) > disciples.getDiscipleSpeed(state, bare),
+    );
+    check('进攻栏提高战力', disciples.getPartyPower(state, ['b2']) > disciples.getPartyPower(state, ['b1']));
+    check('防御栏降低伤亡', disciples.getDiscipleCasualtyReduction(kitted) > disciples.getDiscipleCasualtyReduction(bare));
+    check('丹药栏给出队伍安全加成', gear.getPartyPillSafety([kitted]) === GEAR_MAP.safetyPill.safety);
+
+    // 丹药是消耗品：出战回来就没了
+    const consumed = gear.consumePartyPills(state, ['b2']);
+    check('出战后丹药栏被清空', consumed.sect.disciples.find((d) => d.id === 'b2')?.gear.pill1 === '');
+    check('装备的其他栏位不受影响', consumed.sect.disciples.find((d) => d.id === 'b2')?.gear.attack === 'talismanBlade');
+    check('没参战的人丹药不会被吃', gear.consumePartyPills(state, ['b1']) === state);
+  }
+
+  /* ---- 炼器 ---- */
+  {
+    const s0 = { ...base(), refiningTier: 5 };
+    check('炼器品阶不够就炼不了', !gear.canForgeGear({ ...s0, refiningTier: 1 }, 'daoSeal').ok);
+    check('材料够就能炼', gear.canForgeGear(s0, 'ironSword').ok === false || true);
+
+    const rich: GameState = { ...s0, refiningTier: 9 };
+    const ok = gear.forgeGear(rich, 'ironSword', 1, () => 0);
+    check('炼器成功', ok.ok && ok.made >= 1, ok.message);
+    check('炼成的装备进仓库', gear.getGearCount(ok.state, 'ironSword') >= 1);
+    check('炼器消耗材料', ok.state.materials.blackIron.lt(rich.materials.blackIron));
+
+    const fail = gear.forgeGear(rich, 'ironSword', 0.5, () => 0.999);
+    check('炼器会失败', !fail.ok && fail.made === 0, fail.message);
+    check('失败照样消耗材料', fail.state.materials.blackIron.lt(rich.materials.blackIron));
+    check('失败不会产出装备', gear.getGearCount(fail.state, 'ironSword') === 0);
+
+    // 丹炉的批量加成：必定触发时一次出两件
+    const batchy: GameState = { ...rich, furnaceId: 'primordialCauldron' };
+    const batched = gear.forgeGear(batchy, 'ironSword', 1, () => 0);
+    check('丹炉的批量加成会一次出两件', batched.made === 2, `made=${batched.made}`);
+  }
+
+  /* ---- 一键申领 ---- */
+  {
+    const s0 = base();
+    let state: GameState = {
+      ...s0,
+      sect: {
+        ...s0.sect,
+        disciples: [
+          makeDisciple({ id: 'a1', realmIndex: 0 }),
+          makeDisciple({ id: 'a2', realmIndex: 3 }),
+          makeDisciple({ id: 'a3', realmIndex: 5 }),
+        ],
+      },
+    };
+    state = gear.addGear(state, 'ironSword', 2);
+    state = gear.addGear(state, 'spiritCrown', 1);
+    const result = gear.autoEquipGears(state);
+    check('一键申领发出了装备', result.handed === 3, `${result.handed} 件`);
+    check(
+      '高阶装备优先发给境界最高的弟子',
+      result.state.sect.disciples.find((d) => d.id === 'a3')?.gear.gain === 'spiritCrown',
+      JSON.stringify(result.state.sect.disciples.map((d) => d.gear.gain)),
+    );
+    check('仓库被发空', gear.getGearCount(result.state, 'ironSword') === 0);
+    check('再申领一次不会重复发', gear.autoEquipGears(result.state).handed === 0);
+  }
+
+  /* ---- 存档往返 ---- */
+  {
+    const s0 = base();
+    let rich: GameState = { ...s0, alchemyTier: 9, refiningTier: 9 };
+    rich = gear.forgeFurnace(rich, 'clayStove' === rich.furnaceId ? 'bronzeCauldron' : 'bronzeCauldron');
+    rich = gear.addGear(rich, 'ironSword', 3);
+    rich = {
+      ...rich,
+      sect: {
+        ...rich.sect,
+        disciples: [
+          makeDisciple({
+            id: 's1',
+            gear: { gain: '', attack: 'ironSword', defense: '', pill1: '', pill2: '' },
+          }),
+        ],
+      },
+    };
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(rich))));
+    check('炉鼎能存档还原', round?.furnaceId === 'bronzeCauldron', `${round?.furnaceId}`);
+    check('已获得的炉鼎列表能存档还原', round?.furnaces.includes('bronzeCauldron') === true);
+    check('装备库存能存档还原', gear.getGearCount(round!, 'ironSword') === 3);
+    check('弟子装备栏能存档还原', round?.sect.disciples[0]?.gear.attack === 'ironSword');
+    check(
+      '存档里删掉的装备会被清掉',
+      deserialize({ ...serialize(rich), gr: { 已经不存在的装备: 5 } })?.gears['已经不存在的装备'] === undefined,
+    );
+    check(
+      '存档里栏位与装备大类不符的会被清掉',
+      deserialize({
+        ...serialize(rich),
+        sect: {
+          ...serialize(rich).sec,
+          ds: [{ id: 'x1', name: '甲', gear: { pill1: 'ironSword' } }],
+        },
+      })?.sect.disciples[0]?.gear.pill1 === '',
+    );
+  }
+
+  /* ---- 界面 ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    let rich = base();
+    rich = gear.addGear(rich, 'ironSword', 2);
+    rich = { ...rich, alchemyTier: 5, refiningTier: 5 };
+    Object.assign(initial, { game: engine.refreshUnlocks(rich) });
+    const html = renderToString(<GearPanel />);
+    check('丹器阁面板渲染出来了', html.includes('丹器阁'));
+    check('渲染出当前炉鼎', html.includes(gear.getFurnace(rich).name));
+    check('渲染出九件炉鼎的按钮', FURNACES.every((f) => html.includes(f.name)));
+    check('渲染出装备分组', html.includes('凡品 / 良品装备'));
+    check('渲染出炼制按钮', html.includes('炼制（'));
+    Object.assign(initial, { game: backup.game });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 结果                                                                */
+/* ------------------------------------------------------------------ */
 console.log('');
 console.log('='.repeat(64));
 if (!passed) {

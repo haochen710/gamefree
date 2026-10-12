@@ -40,6 +40,7 @@ export { isAttackEncounter, playerEncounters, sectEncounters };
 import { ITEM_MAP, PILL_MAP, isBasicMaterial, type ItemId } from './content';
 import { addItem, getStructureBonus, getTraitEffect } from './engine';
 import { getSectTalentDefense, pushJournal } from './disciples';
+import { changeFame, fameFromKarma } from './fame';
 import { gameRandom, weightedDraw, type RandomSource } from './random';
 import type { GameState } from './state';
 
@@ -486,8 +487,19 @@ export function chooseEncounterOption(
     text: `${def.name}：${rolls ? option.result : (option.failResult ?? option.result)}`,
   });
 
+  /*
+   * 善行 → 声望（设定集第 9 章：善行也能挣名声）。
+   *
+   * 这一条原本只有 fameFromKarma 这个函数、没有任何调用点 —— 又一个"写了没人读"。
+   * 接在这里是因为**这里是全局唯一改 karma 的地方**，接在这里就不会漏掉任何一条善行。
+   * 只加不减：作恶掉声望由战斗与事件各自扣，不在这条线上重复惩罚。
+   */
+  const karmaGain = Math.max(0, karma - working.karma);
+  const fameGain = karmaGain > 0 ? fameFromKarma(karmaGain) : 0;
+  const afterFame = fameGain > 0 ? changeFame(working, fameGain, '行善积名').state : working;
+
   const next: GameState = {
-    ...working,
+    ...afterFame,
     karma,
     injurySeconds: Math.max(working.injurySeconds, injury),
     pendingEncounter: null,

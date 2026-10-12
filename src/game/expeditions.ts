@@ -81,6 +81,7 @@ import {
   consumeGear,
 } from './engine';
 import { getPartyManualYieldBonusOf, rollFragmentDrop, salvageManualsOnDeath } from './manuals';
+import { consumePartyPills, getPartyPillSafety } from './gear';
 import { changeFame, fameFromRealm, fameFromSurvey } from './fame';
 import {
   addInsight,
@@ -498,7 +499,9 @@ export function resolveExpedition(
       0,
       state.buffs.safetyReduction +
         artifacts.expeditionSafety +
-        getStructureBonus(state, 'casualtyReduction'),
+        getStructureBonus(state, 'casualtyReduction') +
+        // 丹药栏（设定集第 8.7 章）：出战时自动服下，全队伤亡减免，一趟用掉
+        getPartyPillSafety(party),
     ),
   );
   const baseRate = powerRatio > 0 ? def.baseCasualty / powerRatio : MAX_CASUALTY_RATE;  /*
@@ -647,6 +650,13 @@ export function resolveExpedition(
    * 所以"同门陨落导致忠诚跌破阈值"有可能当场就变成下一趟的叛逃，
    * 这条因果链是刻意留着的。
    */
+  /*
+   * 出战归来：丹药栏里的东西**用掉了**（设定集第 8.7 章：丹药栏是一次性护命）。
+   * 放在"写回状态"之后、叛逃判定之前：它只动参战者的丹药栏，
+   * 与弟子去留无关。
+   */
+  gearState = consumePartyPills(gearState, survivors);
+
   const desertion = rollDesertion(gearState, survivors, random);
   if (desertion.deserters.length > 0) {
     gearState = desertion.state;

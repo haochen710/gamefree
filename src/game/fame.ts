@@ -134,7 +134,13 @@ export function fameFromSurvey(): number {
 
 export interface FameOffer {
   goodId: string;
-  /** 已按段位折扣算好的实价 */
+  /*
+   * 兑换价（声望点数）。
+   *
+   * 这里**没有**段位折扣：段位在这条线上只做两件事 —— 决定能看到哪些货
+   * （minTier），以及给招收/商行折扣。注释原写成"已按段位折扣算好的实价"，
+   * 与实现不符（文档代理核出来的），现在改成实话。
+   */
   price: number;
 }
 
@@ -351,10 +357,32 @@ export function traitShopBuyMultiplier(state: GameState): number {
   return hasTrait(state, 'merchantRoad') ? 0.85 : 1;
 }
 
-/** 商行卖出加成 —— 读取点：`shop` 的出售结算 */
-export function traitShopSellMultiplier(state: GameState): number {
-  return hasTrait(state, 'merchantRoad') ? 1.15 : 1;
-}
+/*
+ * ⚠️ 这里删掉了三个函数（`traitShopSellMultiplier` / `traitAptitudeBonus` /
+ * `traitAlchemyDoubleChance`）：它们写在 fame.ts 里，却被别处用
+ * `engine.getTraitEffect(state, 'xxx')` 直接读表实现 —— 于是它们
+ * **永远不会被调用**（文档代理核出来的第 93 条坑那一族）。
+ *
+ * 教训值得写在这儿：**把数值收进一张表、只留一个聚合函数，能防住
+ * "文案与代码不一致"，但防不住"另写一个函数、然后没人调用它"。**
+ * 所以规则补一条：**一个效果只能有一个实现**。读表就是读表，
+ * 不要再在别处包一层同名语义的函数。
+ */
+
+/*
+ * ⚠️ 这里删掉了三个函数（`traitShopSellMultiplier` / `traitAptitudeBonus` /
+ * `traitAlchemyDoubleChance`）：它们写在 fame.ts 里，却被别处用
+ * `engine.getTraitEffect(state, 'xxx')` 直接读表实现 —— 于是它们
+ * **永远不会被调用**（文档代理核出来的第 93 条坑那一族）。
+ *
+ * 教训值得写在这儿：**把数值收进一张表、只留一个聚合函数，能防住
+ * "文案与代码不一致"，但防不住"另写一个函数、然后没人调用它"。**
+ * 所以规则补一条：**一个效果只能有一个实现**。读表就是读表，
+ * 不要再在别处包一层同语义的函数。
+ *
+ * 另外「商道通达」的"卖出 +15%"也被一并删掉了 —— 本作的商行只买不卖，
+ * 那个效果没有读取点。
+ */
 
 /** 掌门突破成功率加成 —— 读取点：`engine.getSuccessRate` */
 export function traitBreakthroughBonus(state: GameState): number {
@@ -369,19 +397,9 @@ export function traitCultivationBonus(state: GameState): number {
   return bonus;
 }
 
-/** 新弟子资质上偏一档 —— 读取点：`disciples.rollDisciple` */
-export function traitAptitudeBonus(state: GameState): boolean {
-  return hasTrait(state, 'ancientBlood');
-}
-
 /** 炼丹成功率加成 —— 读取点：`crafting.getCraftSuccessRate` */
 export function traitAlchemyBonus(state: GameState): number {
   return hasTrait(state, 'pillFurnace') ? 0.12 : 0;
-}
-
-/** 炼丹双倍产出的概率 —— 读取点：`crafting.craftPill` */
-export function traitAlchemyDoubleChance(state: GameState): number {
-  return hasTrait(state, 'pillFurnace') ? 0.1 : 0;
 }
 
 /*
@@ -451,6 +469,22 @@ export function getReachedEnding(state: GameState): EndingId | null {
 }
 
 /** 完成一个结局：记进跨周目的 `legacyEndings` 并给周目奖励 */
+/**
+ * 把**所有当前已达成**的结局一起记进周目。
+ *
+ * 原来的实现只记玩家点的那一个，而"称霸仙域"与"隐世传承"完全可以同时成立
+ * （外交路线就是这样：六宗全盟 + 从未宣战）。让玩家在两个都做到的情况下面临
+ * "只能选一个记"是一种没有意义的惩罚 —— 文档代理把这条列为设计缺口，采纳。
+ */
+export function completeReachedEndings(state: GameState): { state: GameState; recorded: EndingId[] } {
+  const reached = checkEndings(state)
+    .filter((e) => e.reached && !state.legacyEndings.includes(e.id))
+    .map((e) => e.id);
+  let working = state;
+  for (const id of reached) working = completeEnding(working, id);
+  return { state: working, recorded: reached };
+}
+
 export function completeEnding(state: GameState, id: EndingId): GameState {
   const def = ENDING_MAP[id];
   if (!def) return state;

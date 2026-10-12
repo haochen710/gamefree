@@ -15,12 +15,15 @@ import {
   BUILDABLE_MAP,
   ITEM_MAP,
   ENDING_MAP,
+  FURNACE_MAP,
+  GEAR_MAP,
   MANUAL_GRADE_MIN_REALM,
   REFINE_RECIPE_MAP,
   SERVANT_JOB_MAP,
   SECRET_REALM_MAP,
   type ItemId,
   type EndingId,
+  type GearSlot,
   type ManualGrade,
   type MaterialId,
   type ServantJobId,
@@ -35,6 +38,7 @@ import * as shop from './shop';
 import * as manuals from './manuals';
 import * as fame from './fame';
 import * as diplomacy from './diplomacy';
+import * as gear from './gear';
 import * as travel from './travel';
 import * as encounter from './encounter';
 import * as enlightenment from './enlightenment';
@@ -133,6 +137,20 @@ export interface GameStore {
   fightBattle(sectId: string): void;
   /** 结算一个已达成的结局（记进跨周目记录） */
   settleEnding(endingId: string): void;
+
+  /* 丹炉与弟子装备（设定集第 8.7 / 11 章） */
+  /** 铸造一口新炉鼎（铸成即换上） */
+  forgeFurnace(furnaceId: string): void;
+  /** 换用一口已获得的炉鼎 */
+  equipFurnace(furnaceId: string): void;
+  /** 炼制一件弟子装备 */
+  forgeGear(gearId: string): void;
+  /** 把一件装备装到某名弟子的某个栏位 */
+  equipGear(discipleId: string, gearId: string, slot: string): void;
+  /** 卸下某名弟子某个栏位 */
+  unequipGear(discipleId: string, slot: string): void;
+  /** 一键申领：把仓库里的装备按境界发给合适的弟子 */
+  autoEquipGears(): void;
 
   /* 仆人 */
   recruitServant(job: string): void;
@@ -617,10 +635,71 @@ export const useGame = create<GameStore>()((set, get) => ({
       const check = fame.checkEndings(s.game).find((e) => e.id === ended);
       if (!check) return { notice: '没有这个结局' };
       if (!check.reached) return { notice: `尚未达成：${check.progress}` };
-      if (s.game.legacyEndings.includes(ended)) return { notice: '这个结局已经记过了' };
-      const next = fame.completeEnding(s.game, ended);
+      /*
+       * 一起记下**所有**已达成的结局（见 fame.completeReachedEndings 的注释）：
+       * 「称霸仙域」与「隐世传承」可以同时成立，没有理由让玩家二选一。
+       */
+      const result = fame.completeReachedEndings(s.game);
+      if (result.state === s.game) return { notice: '这个结局已经记过了' };
+      const names = result.recorded.map((id) => ENDING_MAP[id].name).join('、');
+      return { ...nextGame(s.game, result.state), notice: `记入周目：${names}` };
+    });
+  },
+
+  /* ------------------------------------------------- 丹炉与弟子装备（设定集第 8.7 / 11 章） */
+
+  forgeFurnace: (furnaceId) => {
+    set((s) => {
+      const check = gear.canForgeFurnace(s.game, furnaceId);
+      if (!check.ok) return { notice: check.reason ?? '无法铸造' };
+      const next = gear.forgeFurnace(s.game, furnaceId);
       if (next === s.game) return {};
-      return { ...nextGame(s.game, next), notice: ENDING_MAP[ended].text };
+      return { ...nextGame(s.game, next), notice: `铸成 ${FURNACE_MAP[furnaceId]?.name ?? furnaceId}，已换上新炉` };
+    });
+  },
+
+  equipFurnace: (furnaceId) => {
+    set((s) => {
+      const next = gear.equipFurnace(s.game, furnaceId);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: `改用 ${FURNACE_MAP[furnaceId]?.name ?? furnaceId}` };
+    });
+  },
+
+  forgeGear: (gearId) => {
+    set((s) => {
+      const rate = crafting.getCraftSuccessRate(s.game, 'refining', GEAR_MAP[gearId]?.grade ?? 1);
+      const result = gear.forgeGear(s.game, gearId, rate);
+      if (result.state === s.game) return { notice: result.message };
+      return { ...nextGame(s.game, result.state), notice: result.message };
+    });
+  },
+
+  equipGear: (discipleId, gearId, slot) => {
+    set((s) => {
+      const gearSlot = slot as GearSlot;
+      const check = gear.canEquipGear(s.game, discipleId, gearId, gearSlot);
+      if (!check.ok) return { notice: check.reason ?? '无法装备' };
+      const next = gear.equipGear(s.game, discipleId, gearId, gearSlot);
+      if (next === s.game) return {};
+      const disciple = s.game.sect.disciples.find((d) => d.id === discipleId);
+      return { ...nextGame(s.game, next), notice: `${disciple?.name ?? '弟子'} 装备 ${GEAR_MAP[gearId]?.name ?? gearId}` };
+    });
+  },
+
+  unequipGear: (discipleId, slot) => {
+    set((s) => {
+      const next = gear.unequipGear(s.game, discipleId, slot as GearSlot);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '已卸下装备，装备回到仓库' };
+    });
+  },
+
+  autoEquipGears: () => {
+    set((s) => {
+      const result = gear.autoEquipGears(s.game);
+      if (result.state === s.game) return { notice: '没有可发出去的装备（弟子境界不够或栏位已满）' };
+      return { ...nextGame(s.game, result.state), notice: `已发出 ${result.handed} 件装备` };
     });
   },
 
