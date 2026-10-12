@@ -39,7 +39,13 @@ import RefiningPanel from '../src/components/RefiningPanel';
 import InventoryPanel from '../src/components/InventoryPanel';
 import JournalPanel from '../src/components/JournalPanel';
 import ManualPanel from '../src/components/ManualPanel';
+import FamePanel from '../src/components/FamePanel';
 import * as manuals from '../src/game/manuals';
+import * as fame from '../src/game/fame';
+import * as diplomacy from '../src/game/diplomacy';
+
+// 声望的两个最常用读取口（第 47 节里用到很多次）
+const { getFame, getFameTier } = fame;
 import { useGame } from '../src/game/store';
 import { D, fmt } from '../src/game/decimal';
 import {
@@ -71,6 +77,15 @@ import {
   COMBAT_TALENTS,
   DEMON_TIERS,
   FARM_TALENT_IDS,
+  WAR_MAX_WIN_CHANCE,
+  RELATION_MIN,
+  TRAIT_MAP,
+  NPC_SECTS,
+  GIFT_OPTIONS,
+  FAME_TIERS,
+  FAME_GAIN_CAP,
+  ENDING_MAP,
+  ENDINGS,
   FARM_TALENTS,
   LOYALTY_IDLE_DECAY_SECONDS,
   LOYALTY_INITIAL,
@@ -6441,6 +6456,301 @@ section('[46] 功法：五档制 · 碎片合成 · 藏经阁 · 装备与回收
     check('有参悟按钮', text.includes('参悟凡品'));
     check('有一键发书入口', text.includes('一键发书'));
     check('列出了已装配的弟子', text.includes('甲'));
+    Object.assign(initial, { game: backup.game });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 47. 声望 · 外交 · 结局 · 山门特质（设定集第 1 / 9 / 10 章）             */
+/* ------------------------------------------------------------------ */
+section('[47] 声望 · 声望商店 · 六大宗门 · 结局 · 山门特质');
+{
+  const base = (): GameState => ({
+    ...createInitialState(0),
+    sect: { ...createInitialState(0).sect, founded: true, level: 3 },
+  });
+
+  /* ---- 声望与段位 ---- */
+  {
+    const s0 = base();
+    check('新局声望为 0', getFame(s0) === 0);
+    check('0 声望是「无名小卒」', getFameTier(s0).name === '无名小卒');
+    check('段位表是从低到高排列的', FAME_TIERS.every((t, i) => i === 0 || t.min > FAME_TIERS[i - 1].min));
+
+    /*
+     * ⚠️ 声望单次变动有 400 的上限，所以"一次给 1000"是升不了段的（写这条测试时
+     * 就想当然了一次）。要跨过 1000 这道门槛，得走三步。
+     */
+    const step1 = fame.changeFame(s0, 400);
+    const step2 = fame.changeFame(step1.state, 400);
+    const step3 = fame.changeFame(step2.state, 400);
+    check('400 声望还到不了「小有名气」', step1.tierUp === null);
+    check('攒到 1200 声望升为「小有名气」', step3.tierUp?.name === '小有名气', step3.tierUp?.name ?? '（没升）');
+    check('升段位会写一条记事', step3.state.journal.some((j) => j.text.includes('小有名气')));
+    check(
+      '单次声望变动有上限（400）',
+      fame.changeFame(s0, 99999).state.fame === FAME_GAIN_CAP,
+      `${fame.changeFame(s0, 99999).state.fame}`,
+    );
+    check('声望不会超过 10000', fame.changeFame({ ...s0, fame: 9990 }, 400).state.fame === 10000);
+    check('声望不会掉到负数', fame.changeFame({ ...s0, fame: 10 }, -400).state.fame === 0);
+    check('段位越高招收越便宜', FAME_TIERS[4].recruitDiscount > FAME_TIERS[1].recruitDiscount);
+    check(
+      '招收弟子的花费真的因段位而降低',
+      disciples.getRecruitCost({ ...s0, fame: 9000 }).lt(disciples.getRecruitCost(s0)),
+      `${fmt(disciples.getRecruitCost(s0))} → ${fmt(disciples.getRecruitCost({ ...s0, fame: 9000 }))}`,
+    );
+    check('探索给声望（档次越高越多）', fame.fameFromRealm(9) > fame.fameFromRealm(1));
+  }
+
+  /* ---- 声望商店 ---- */
+  {
+    const rich = { ...base(), fame: 5000 };
+    const offers = fame.buildFameOffers(rich, makeRandom(3));
+    check('声望商店会摆出货来', offers.length > 0, `${offers.length} 件`);
+    check('低段位看不到极品碎片', fame.availableFameGoods(base()).every((g) => g.id !== 'fameFragmentEpic'));
+    check(
+      '高段位才看得到鸿蒙道果',
+      fame.availableFameGoods({ ...base(), fame: 7000 }).some((g) => g.id === 'fameMaterialPrimordial'),
+    );
+
+    const goodId = offers[0].goodId;
+    const good = fame.famGoodView(goodId)!;
+    const stocked: GameState = { ...rich, fameShop: { offers, secondsLeft: 100 } };
+    const bought = fame.buyFameOffer(stocked, goodId);
+    check('兑换成功', bought.ok, bought.message);
+    check('兑换扣了声望', bought.state.fame === 5000 - good.price, `${bought.state.fame}`);
+    check('兑换后这一格从货架上撤掉', !bought.state.fameShop.offers.some((o) => o.goodId === goodId));
+    check('声望不足时兑换被拒', !fame.buyFameOffer({ ...stocked, fame: 0 }, goodId).ok);
+    check('不在货架上的东西换不了', !fame.buyFameOffer(stocked, 'fameMaterialPrimordial').ok);
+  }
+
+  /* ---- 山门特质 ---- */
+  {
+    const s0 = base();
+    const offer = fame.rollTraitOffer(s0, makeRandom(5));
+    check('开局给出三个候选特质', offer.length === 3, offer.join('、'));
+    check(
+      '没有通关记录时不会抽到传承特质',
+      offer.every((id) => !TRAIT_MAP[id]?.legacy),
+      offer.map((id) => TRAIT_MAP[id]?.name).join('、'),
+    );
+    check(
+      '通关一次之后传承特质会进入候选池',
+      Array.from({ length: 40 }, (_, i) =>
+        fame.rollTraitOffer({ ...s0, legacyEndings: ['ascend'] }, makeRandom(i + 1)),
+      )
+        .flat()
+        .some((id) => Boolean(TRAIT_MAP[id]?.legacy)),
+    );
+
+    const withOffer: GameState = { ...s0, traitOffer: offer };
+    check('候选之内的可以选', fame.canChooseTrait(withOffer, offer[0]).ok);
+    check('候选之外的不可以选', !fame.canChooseTrait(withOffer, 'ironArmy').ok);
+    const chosen = fame.chooseTrait(withOffer, offer[0]);
+    check('选完之后特质记在身上', chosen.traits[0] === offer[0]);
+    check('候选清空（不会再抽一次）', chosen.traitOffer.length === 0);
+    check('已经选过就不能再选', !fame.canChooseTrait(chosen, offer[1]).ok);
+    check(
+      '传承特质没通关时选不了',
+      !fame.canChooseTrait({ ...withOffer, traitOffer: ['ancientBlood'] }, 'ancientBlood').ok,
+    );
+  }
+
+  /* ---- 特质与盟约的加成真的接在产出 / 突破 / 防御上 ---- */
+  {
+    /*
+     * ⚠️ 必须**先建产线**：`createInitialState` 里什么建筑都没有，
+     * 灵气 / 灵草的每秒产出本来就是 0 —— 0 乘任何倍率还是 0，
+     * 断言会以"倍率没生效"的形式假红（本轮就这么红了一次）。
+     */
+    const withLines = forceBuild(grant(base(), { qi: '1e9', wood: '1e9', stone: '1e9' }), 'spiritArray', 5);
+    const plain = forceBuild(withLines, 'herbField', 5);
+    const vein: GameState = { ...plain, traits: ['spiritVein'] };
+    check(
+      '灵脉福地提高灵气产出',
+      engine.getProduction(vein).qi.gt(engine.getProduction(plain).qi),
+      `${engine.getProduction(plain).qi} → ${engine.getProduction(vein).qi}`,
+    );
+    check('灵气倍率是 1.25', Math.abs(fame.traitQiMultiplier(vein) - 1.25) < 1e-9);
+
+    const garden: GameState = { ...plain, traits: ['herbGarden'] };
+    check('药圃天成提高灵草产出', engine.getProduction(garden).herb.gt(engine.getProduction(plain).herb));
+
+    const iron: GameState = { ...plain, traits: ['ironArmy'] };
+    check('铁血军魂提高宗门防御', encounter.getSectDefense(iron) > encounter.getSectDefense(plain));
+
+    const star: GameState = { ...plain, traits: ['starGazing'] };
+    check('星象亲和提高掌门突破成功率', engine.getSuccessRate(star) > engine.getSuccessRate(plain));
+
+    const vault: GameState = { ...plain, traits: ['scriptureVault'] };
+    /*
+     * ⚠️ 每个序列只用**一个**随机源连续取值。
+     * `makeRandom(i + 1)` 这种写法在本作踩过两次：这个 LCG 的首个输出随种子
+     * 近似线性增长（每 +1 只挪 0.0004），400 个种子的首值全落在同一个小区间里 ——
+     * "45% 概率"于是变成了 100%。
+     */
+    const vaultRandom = makeRandom(11);
+    const plainRandom = makeRandom(22);
+    const vaultHits = Array.from({ length: 400 }, () =>
+      Object.keys(manuals.rollFragmentDrop(vault, 3, vaultRandom).state.manualFragments).length,
+    ).filter((n) => n > 0).length;
+    const plainHits = Array.from({ length: 400 }, () =>
+      Object.keys(manuals.rollFragmentDrop(plain, 3, plainRandom).state.manualFragments).length,
+    ).filter((n) => n > 0).length;
+    check('藏经古阁让碎片掉得更多', vaultHits > plainHits, `${plainHits} 次 → ${vaultHits} 次（/400）`);
+
+    const allied: GameState = {
+      ...plain,
+      npcSects: plain.npcSects.map((s, i) => (i < 3 ? { ...s, alliance: true } : s)),
+    };
+    check('结盟提高全产出', engine.getProduction(allied).qi.gt(engine.getProduction(plain).qi));
+    check('盟约加成 = 盟友数 × 3%', Math.abs(engine.getAllianceProductionBonus(allied) - 0.09) < 1e-9);
+  }
+
+  /* ---- 外交：赠礼 / 论道 / 结盟 / 宣战 / 大战 ---- */
+  {
+    const rich = grant(base(), { blackIron: '100000', starSand: '100000' });
+    const sectId = 'azureCloud'; // 心头好 = 玄铁
+
+    const giftCheck = diplomacy.canGift(rich, sectId, 0);
+    check('赠礼检查通过', giftCheck.ok, giftCheck.reason ?? '');
+    check('心头好让关系翻倍', giftCheck.gain === GIFT_OPTIONS[0].relation * 2, `+${giftCheck.gain}`);
+    const afterGift = diplomacy.giftSect(rich, sectId, 0);
+    check('赠礼后关系上升', afterGift.npcSects[0].relation > rich.npcSects[0].relation);
+    check('赠礼扣了心头好', afterGift.materials.blackIron.lt(rich.materials.blackIron));
+    check('赠礼次数被记下', afterGift.npcSects[0].gifts === 1);
+
+    check('声望太低时不能论道', !diplomacy.canParley(base(), sectId).ok);
+    const famous: GameState = { ...base(), fame: 3500 };
+    check('有声望就可以论道', diplomacy.canParley(famous, sectId).ok);
+    const parleyed = diplomacy.parleySect(famous, sectId);
+    check('论道涨关系', parleyed.npcSects[0].relation > famous.npcSects[0].relation);
+    check('论道进入冷却', (parleyed.parleyCooldowns[sectId] ?? 0) > 0);
+    check('冷却中不能再论道', !diplomacy.canParley(parleyed, sectId).ok);
+    check('冷却会随时间消退', (diplomacy.tickParleyCooldowns(parleyed, 99999).parleyCooldowns[sectId] ?? 0) === 0);
+
+    const friendly: GameState = {
+      ...famous,
+      npcSects: famous.npcSects.map((s) => (s.id === sectId ? { ...s, relation: 70 } : s)),
+    };
+    check('关系够且声望够就能结盟', diplomacy.canAlly(friendly, sectId).ok, diplomacy.canAlly(friendly, sectId).reason ?? '');
+    const allied = diplomacy.allySect(friendly, sectId);
+    check('结盟生效', allied.npcSects[0].alliance);
+    check('盟友不能再结盟', !diplomacy.canAlly(allied, sectId).ok);
+    check('盟友不可直接宣战', !diplomacy.canDeclareWar(allied, sectId).ok);
+    const broken = diplomacy.breakAlliance(allied, sectId);
+    check('撕毁盟约后关系大跌', broken.npcSects[0].relation < allied.npcSects[0].relation);
+    check('撕毁后可以宣战', diplomacy.canDeclareWar(broken, sectId).ok);
+    const war = diplomacy.declareWar(broken, sectId);
+    check('宣战后关系到底', war.npcSects[0].relation === RELATION_MIN);
+    check('宣战会扣声望', war.fame < broken.fame);
+    check('宣战会永久记下「曾主动宣战」', war.everDeclaredWar);
+    check('宣战后进入交战名单', war.atWarWith.includes(sectId));
+
+    const strong: GameState = {
+      ...war,
+      sect: { ...war.sect, disciples: Array.from({ length: 60 }, (_, i) => makeDisciple({ id: `w${i}`, realmIndex: 6 })) },
+    };
+    const win = diplomacy.resolveBattle(strong, sectId, () => 0);
+    check('掷到胜就赢', win?.won === true);
+    check('战胜拿到战利品', (win?.loot.length ?? 0) > 0);
+    check('战胜涨声望', (win?.state.fame ?? 0) > strong.fame);
+    const lose = diplomacy.resolveBattle(strong, sectId, () => 0.999);
+    check('掷到负就输', lose?.won === false);
+    check('战败折损弟子', (lose?.state.sect.disciples.length ?? 0) < strong.sect.disciples.length);
+    check('战败掉声望', (lose?.state.fame ?? 0) < strong.fame);
+    check('胜率被夹在合理区间', diplomacy.getWinChance(strong, 'thunderPavilion') <= WAR_MAX_WIN_CHANCE + 1e-9);
+  }
+
+  /* ---- 结局 ---- */
+  {
+    const s0 = base();
+    const checks = fame.checkEndings(s0);
+    check('四个结局都在进度表里', checks.length === 4, checks.map((c) => c.id).join('、'));
+    check('新局没有任何结局达成', checks.every((c) => !c.reached));
+
+    const dominator: GameState = {
+      ...s0,
+      fame: 9500,
+      npcSects: s0.npcSects.map((s) => ({ ...s, relation: 80 })),
+    };
+    check(
+      '声望足够且六宗尽附 → 称霸仙域达成',
+      fame.checkEndings(dominator).find((c) => c.id === 'dominate')?.reached === true,
+    );
+
+    const hermit: GameState = { ...s0, fame: 7000, sect: { ...s0.sect, level: 8 } };
+    check('八品 + 声望 + 未宣战 → 隐世传承达成', fame.checkEndings(hermit).find((c) => c.id === 'hermit')?.reached === true);
+    check(
+      '曾主动宣战则隐世传承不成立',
+      fame.checkEndings({ ...hermit, everDeclaredWar: true }).find((c) => c.id === 'hermit')?.reached === false,
+    );
+    check(
+      '弟子归零且招过人 → 宗门覆灭达成',
+      fame
+        .checkEndings({
+          ...s0,
+          sect: { ...s0.sect, disciples: [], totalRecruited: 12 },
+        })
+        .find((c) => c.id === 'ruin')?.reached === true,
+    );
+    check('刚开宗还没招人时不算覆灭', fame.checkEndings(s0).find((c) => c.id === 'ruin')?.reached === false);
+
+    const settled = fame.completeEnding(s0, 'hermit');
+    check('结算结局会记进周目', settled.legacyEndings.includes('hermit'));
+    check('重复结算不会加两次', fame.completeEnding(settled, 'hermit').legacyEndings.length === 1);
+    check(
+      '周目奖励合计正确',
+      fame.endingDaoYunBonus(settled) === ENDING_MAP.hermit.daoYunReward,
+      `${fame.endingDaoYunBonus(settled)}`,
+    );
+  }
+
+  /* ---- 存档往返 ---- */
+  {
+    const rich: GameState = {
+      ...grant(base(), { blackIron: '100000' }),
+      fame: 4210,
+      traits: ['ironArmy'],
+      traitOffer: [],
+      legacyEndings: ['ascend'],
+      everDeclaredWar: true,
+      atWarWith: ['azureCloud'],
+      warTimer: 123,
+      parleyCooldowns: { azureCloud: 456 },
+      fameShop: { offers: [{ goodId: 'fameFragmentCommon', price: 60 }], secondsLeft: 78 },
+    };
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(rich))));
+    check('声望能存档还原', round?.fame === 4210, `${round?.fame}`);
+    check('特质能存档还原', round?.traits[0] === 'ironArmy');
+    check('周目记录能存档还原', round?.legacyEndings.includes('ascend') === true);
+    check('宣战记录能存档还原', round?.everDeclaredWar === true);
+    check('交战名单能存档还原', round?.atWarWith.includes('azureCloud') === true);
+    check('大战计时能存档还原', round?.warTimer === 123, `${round?.warTimer}`);
+    check('论道冷却能存档还原', round?.parleyCooldowns.azureCloud === 456, `${round?.parleyCooldowns.azureCloud}`);
+    check('声望商店货架能存档还原', round?.fameShop.offers[0]?.goodId === 'fameFragmentCommon');
+    check('六大宗门关系按定义表重建', round?.npcSects.length === NPC_SECTS.length);
+    check(
+      '存档里删掉的宗门不会留下空位',
+      deserialize({ ...serialize(rich), ns: [{ id: '已经没了的宗门', relation: 99 }] })?.npcSects.length ===
+        NPC_SECTS.length,
+    );
+    check('存档里删掉的特质不会被读进来', deserialize({ ...serialize(rich), tr: ['不存在的特质'] })?.traits.length === 0);
+  }
+
+  /* ---- 界面 ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    Object.assign(initial, { game: engine.refreshUnlocks({ ...base(), fame: 3200 }) });
+    const html = renderToString(<FamePanel />);
+    check('名望面板渲染出来了', html.includes('仙域名望'));
+    check('渲染出段位名', html.includes(getFameTier({ ...base(), fame: 3200 }).name));
+    check('渲染出六大宗门', NPC_SECTS.every((s) => html.includes(s.name)));
+    check('渲染出结局名', ENDINGS.every((e) => html.includes(e.name)));
+    check('有外交入口', html.includes('外交'));
+    check('渲染出关系档位', html.includes('中立') || html.includes('友好'));
     Object.assign(initial, { game: backup.game });
   }
 }

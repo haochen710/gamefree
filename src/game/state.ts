@@ -21,6 +21,7 @@ import {
   type PersonalityId,
   type ResourceId,
   type ShopOffer,
+  initialNpcSects,
 } from './content';
 
 export type ResourceMap = Record<ResourceId, Decimal>;
@@ -288,6 +289,34 @@ export interface GameState {
   /** 功法碎片：`frag:<功法id>` → 份数（5 份合一本） */
   manualFragments: ItemCountMap;
 
+  /* ---- 声望 / 先天特质 / 外交 / 结局（设定集第 1 / 9 / 10 章） ---- */
+
+  /** 声望 0~10000（设定集第 9 章） */
+  fame: number;
+  /** 声望商店的货架与倒计时 */
+  fameShop: { offers: { goodId: string; price: number }[]; secondsLeft: number };
+  /**
+   * 山门先天特质（开局三选一，**一局只能选一次、不可更改**）。
+   *
+   * 这是本作唯一一处不可反悔的选择 —— 其余系统（建筑、功法、弟子）
+   * 都能重来，所以"这一把走哪条路"必须落在这里才有分量。
+   */
+  traits: string[];
+  /** 本次开局的三个候选特质（选完清空） */
+  traitOffer: string[];
+  /** 跨周目保留的"已完成结局"（用来解锁传承特质） */
+  legacyEndings: string[];
+  /** 六大 NPC 宗门的关系（设定集第 9 章「外交」） */
+  npcSects: { id: string; relation: number; gifts: number; alliance: boolean }[];
+  /** 是否**主动**宣战过（隐世传承结局要求"从未主动宣战"） */
+  everDeclaredWar: boolean;
+  /** 正在交战的宗门 id 列表（第一个是"当前主战场"） */
+  atWarWith: string[];
+  /** 距离下一场宗门大战还有多久 */
+  warTimer: number;
+  /** 各宗论道的冷却（宗门 id → 剩余秒数） */
+  parleyCooldowns: Record<string, number>;
+
   /* ---- 修行 ---- */
   realmIndex: number;
   /** 当前大境界内已完成的小境界层数 */
@@ -490,6 +519,16 @@ export function createInitialState(now = Date.now()): GameState {
     gearCharges: {},
     manuals: {},
     manualFragments: {},
+    fame: 0,
+    fameShop: { offers: [], secondsLeft: 0 },
+    traits: [],
+    traitOffer: [],
+    legacyEndings: [],
+    npcSects: initialNpcSects(),
+    everDeclaredWar: false,
+    atWarWith: [],
+    warTimer: 600,
+    parleyCooldowns: {},
     realmIndex: 0,
     layer: 0,
     globalBreakthroughBonus: 0,

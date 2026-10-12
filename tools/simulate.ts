@@ -28,7 +28,9 @@ import {
   FRAGMENTS_PER_MANUAL,
   ARTIFACTS,
   SECRET_REALMS,
+  ENDING_MAP,
   MANUALS,
+  NPC_SECT_MAP,
   MANUAL_GRADE_MIN_REALM,
   MANUAL_GRADE_NAMES,
   MANUAL_MAP,
@@ -64,6 +66,8 @@ import { applyTick as applyTickSim } from '../src/game/tick';
 import * as travel from '../src/game/travel';
 import * as sectActivity from '../src/game/sectActivity';
 import * as manuals from '../src/game/manuals';
+import * as fame from '../src/game/fame';
+import * as diplomacy from '../src/game/diplomacy';
 import { applyTick } from '../src/game/tick';
 
 /* ------------------------------------------------------------------ */
@@ -723,6 +727,32 @@ function runSimulation(seed: number): SimResult {
               }
               break;
             }
+          }
+        }
+      }
+
+      /*
+       * 外交（设定集第 9 章）：AI 顺手做两件事 ——
+       *   1. 论道冷却好了就论道（不花资源，纯涨关系）；
+       *   2. 关系够、声望够就结盟（盟友给全产出加成）。
+       * 不主动宣战：战争对 AI 的收益远不如稳扎稳打，而且会让"隐世传承"落空。
+       */
+      if (state.sect.founded) {
+        const ready = state.npcSects.find((s) => diplomacy.canParley(state, s.id).ok);
+        if (ready) {
+          const next = diplomacy.parleySect(state, ready.id);
+          if (next !== state) {
+            state = next;
+            continue;
+          }
+        }
+        const allyable = state.npcSects.find((s) => diplomacy.canAlly(state, s.id).ok);
+        if (allyable) {
+          const next = diplomacy.allySect(state, allyable.id);
+          if (next !== state) {
+            state = next;
+            record(`与${NPC_SECT_MAP[allyable.id]?.name ?? allyable.id}缔结盟约`);
+            continue;
           }
         }
       }
@@ -1616,6 +1646,23 @@ function printDetail(result: SimResult): void {
       `  弟子心魔：${[...demonTiers.entries()].map(([k, v]) => `${k} ${v}`).join(' · ') || '（无弟子）'}${
         refusing > 0 ? ` · ⚠️ 已有 ${refusing} 人拒绝出征` : ''
       }`,
+    );
+  }
+
+  /* ---- 声望与外交（设定集第 9 章） ---- */
+  {
+    const tier = fame.getFameTier(state);
+    const allied = state.npcSects.filter((s) => s.alliance).length;
+    const relations = state.npcSects
+      .map((s) => `${NPC_SECT_MAP[s.id]?.name ?? s.id} ${Math.round(s.relation)}`)
+      .join(' · ');
+    console.log(`  声望：${Math.round(fame.getFame(state))}（${tier.icon}${tier.name}）· 盟友 ${allied}/6`);
+    console.log(`  外交关系：${relations}`);
+    console.log(
+      `  结局进度：${fame
+        .checkEndings(state)
+        .map((e) => `${ENDING_MAP[e.id].name}${e.reached ? '✓' : '✗'}`)
+        .join(' · ')}`,
     );
   }
 

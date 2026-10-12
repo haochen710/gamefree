@@ -34,6 +34,19 @@ import {
   MANUAL_MAP,
   manualIdOfFragment,
   MATERIAL_MAP,
+  FAME_MAX,
+  FAME_GOOD_MAP,
+  FAME_SHOP_REFRESH_SECONDS,
+  NPC_SECTS,
+  NPC_SECT_MAP,
+  GIFT_MAX_PER_SECT,
+  RELATION_MIN,
+  RELATION_MAX,
+  TRAIT_MAP,
+  ENDING_MAP,
+  WAR_BATTLE_INTERVAL,
+  clampRelation,
+  type EndingId,
   PILL_MAP,
   REALMS,
   RESOURCE_IDS,
@@ -175,6 +188,29 @@ export interface SerializedGame {
   /** 功法：完整功法 `mn`、碎片 `mf`（设定集第 7 章） */
   mn?: Record<string, number>;
   mf?: Record<string, number>;
+  /* ---- 声望 / 特质 / 外交 / 结局（设定集第 1 / 9 / 10 章） ---- */
+  /** 声望 */
+  fm?: unknown;
+  /** 声望商店货架 */
+  fs?: unknown;
+  /** 声望商店倒计时 */
+  fst?: unknown;
+  /** 已选特质 */
+  tr?: unknown;
+  /** 候选特质 */
+  to?: unknown;
+  /** 已完成结局（跨周目） */
+  le?: unknown;
+  /** NPC 宗门关系 */
+  ns?: { id?: string; relation?: unknown; gifts?: unknown; alliance?: unknown }[];
+  /** 是否主动宣战过 */
+  ew?: unknown;
+  /** 正在交战的宗门 */
+  aw?: unknown;
+  /** 大战计时（键名取 wm：wt 已经被天象 id 占了） */
+  wm?: unknown;
+  /** 论道冷却 */
+  pc?: unknown;
   /** 各条配方的自动合成目标存量（本轮需求 2） */
   art?: Record<string, number>;
   /** 天工院特殊升级等级（需求 2） */
@@ -244,6 +280,23 @@ export function serialize(state: GameState): SerializedGame {
     /** 功法（设定集第 7 章）：完整功法 `mn`、碎片 `mf` */
     mn: { ...state.manuals },
     mf: { ...state.manualFragments },
+    /* ---- 声望 / 特质 / 外交 / 结局（设定集第 1 / 9 / 10 章） ---- */
+    fm: state.fame,
+    fs: state.fameShop.offers.map((o) => ({ g: o.goodId, p: o.price })),
+    fst: state.fameShop.secondsLeft,
+    tr: [...state.traits],
+    to: [...state.traitOffer],
+    le: [...state.legacyEndings],
+    ns: state.npcSects.map((s) => ({
+      id: s.id,
+      relation: s.relation,
+      gifts: s.gifts,
+      alliance: s.alliance,
+    })),
+    ew: state.everDeclaredWar,
+    aw: [...state.atWarWith],
+    wm: state.warTimer,
+    pc: { ...state.parleyCooldowns },
     gc: { ...state.gearCharges },
     ri: state.realmIndex,
     li: state.layer,
@@ -338,6 +391,48 @@ function toInt(value: unknown, fallback: number, min: number, max: number): numb
 function toFloat(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * 把任意输入读成"字符串 id 数组"，并用 `accept` 过滤掉已经删掉的内容。
+ *
+ * 声望 / 特质 / 结局 / 交战对象四处都是这个形状 —— 它们都必须"只认还在定义里的 id"，
+ * 否则一个被删掉的功法或宗门会永远留在存档里（既读不出名字，又占着位置）。
+ */
+function sanitizeIds(raw: unknown, accept?: (id: string) => boolean): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== 'string') continue;
+    if (accept && !accept(value)) continue;
+    if (!out.includes(value)) out.push(value);
+  }
+  return out;
+}
+
+/** 把任意输入读成"字符串 → 非负有限数"的表（冷却时间之类） */
+function sanitizeNumberMap(raw: unknown, max = 1e9): Record<string, number> {
+  if (raw === null || typeof raw !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      out[key] = Math.min(value, max);
+    }
+  }
+  return out;
+}
+
+/** 声望商店的货架：只留认得出的商品，价格按当前定义表重算（防止旧存档定死一个过期价） */
+function sanitizeFameOffers(raw: unknown): { goodId: string; price: number }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { goodId: string; price: number }[] = [];
+  for (const entry of raw) {
+    const goodId = typeof (entry as { g?: unknown })?.g === 'string' ? ((entry as { g: string }).g) : '';
+    const def = FAME_GOOD_MAP[goodId];
+    if (!def) continue;
+    if (!out.some((o) => o.goodId === goodId)) out.push({ goodId, price: def.price });
+  }
+  return out;
 }
 
 /**
@@ -893,6 +988,35 @@ export function deserialize(raw: unknown): GameState | null {
     // 功法只保留认得出 id 的那些（删过的功法不该把存档带崩）
     manuals: toCountMap(data.mn, 0, 1e12, (id) => MANUAL_MAP[id] !== undefined),
     manualFragments: toCountMap(data.mf, 0, 1e12, (key) => manualIdOfFragment(key) !== null),
+    /*
+     * 声望 / 特质 / 外交 / 结局（设定集第 1 / 9 / 10 章）。
+     *
+     * ⚠️ `npcSects` 一律**按定义表重建**，只把存档里的 relation/gifts/alliance 抄回来：
+     * 这样以后改动六大宗门的名单（加一家、改名）时，旧存档不会留下一个
+     * 已经不存在的宗门占着一格关系条。
+     * `traits` 同理：只认还在定义里的 id。
+     */
+    fame: toFloat(data.fm, 0, 0, FAME_MAX),
+    fameShop: {
+      offers: sanitizeFameOffers(data.fs),
+      secondsLeft: toFloat(data.fst, FAME_SHOP_REFRESH_SECONDS, 0, 1e9),
+    },
+    traits: sanitizeIds(data.tr, (id) => TRAIT_MAP[id] !== undefined),
+    traitOffer: sanitizeIds(data.to, (id) => TRAIT_MAP[id] !== undefined),
+    legacyEndings: sanitizeIds(data.le, (id) => ENDING_MAP[id as EndingId] !== undefined),
+    npcSects: NPC_SECTS.map((def) => {
+      const saved = (Array.isArray(data.ns) ? data.ns : []).find((entry) => entry?.id === def.id);
+      return {
+        id: def.id,
+        relation: clampRelation(toFloat(saved?.relation, def.initialRelation, RELATION_MIN, RELATION_MAX)),
+        gifts: toInt(saved?.gifts, 0, 0, GIFT_MAX_PER_SECT),
+        alliance: saved?.alliance === true,
+      };
+    }),
+    everDeclaredWar: data.ew === true,
+    atWarWith: sanitizeIds(data.aw, (id) => NPC_SECT_MAP[id] !== undefined),
+    warTimer: toFloat(data.wm, WAR_BATTLE_INTERVAL, 0, 1e9),
+    parleyCooldowns: sanitizeNumberMap(data.pc),
     realmIndex,
     layer,
     globalBreakthroughBonus: toFloat(data.gb, 0, 0, 10),

@@ -35,6 +35,8 @@ import { tickResearch } from './research';
 import { tickSeason } from './season';
 import { tickArena, tickSectEvents } from './sectActivity';
 import { tickShop } from './shop';
+import { tickFameShop } from './fame';
+import { tickParleyCooldowns, tickWar } from './diplomacy';
 import { tickTravel } from './travel';
 import { gameRandom, type RandomSource } from './random';
 import type { GameState } from './state';
@@ -82,6 +84,11 @@ export function applyTick(state: GameState, dt: number, random: RandomSource = g
   next = tickSectEvents(next, dt, random);
   next = { ...next, buffs: tickBuffs(next.buffs, dt) };
   next = tickShop(next, dt, random);
+  // 声望商店（设定集第 9 章）：与灵石商行同一套刷新节奏
+  next = tickFameShop(next, dt, random);
+  // 外交：论道冷却与宗门大战（处于战争状态时按周期开打，敌对宗门也可能主动来犯）
+  next = tickParleyCooldowns(next, dt);
+  next = tickWar(next, dt, random);
   next = refreshUnlocks(next);
   // 建造队列（需求 2）：解锁刷新之后再推进，刚解锁的建筑当帧就能排上
   next = tickBuildQueue(next);

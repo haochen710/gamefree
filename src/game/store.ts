@@ -14,11 +14,13 @@ import {
   AUTO_REFINE_LEVEL_MAX,
   BUILDABLE_MAP,
   ITEM_MAP,
+  ENDING_MAP,
   MANUAL_GRADE_MIN_REALM,
   REFINE_RECIPE_MAP,
   SERVANT_JOB_MAP,
   SECRET_REALM_MAP,
   type ItemId,
+  type EndingId,
   type ManualGrade,
   type MaterialId,
   type ServantJobId,
@@ -31,6 +33,8 @@ import * as research from './research';
 import * as planting from './planting';
 import * as shop from './shop';
 import * as manuals from './manuals';
+import * as fame from './fame';
+import * as diplomacy from './diplomacy';
 import * as travel from './travel';
 import * as encounter from './encounter';
 import * as enlightenment from './enlightenment';
@@ -110,6 +114,26 @@ export interface GameStore {
   /** 一键把仓库里的功法发给最合适的弟子（按境界降序，能装就装） */
   autoEquipManuals(): void;
 
+  /* 声望 / 特质 / 外交 / 结局（设定集第 1 / 9 / 10 章） */
+  /** 选定山门先天特质（一局只能选一次） */
+  chooseTrait(traitId: string): void;
+  /** 用声望兑换声望商店的一件货 */
+  buyFameOffer(goodId: string): void;
+  /** 向 NPC 宗门赠礼（optionIndex 对应 GIFT_OPTIONS 的三档） */
+  giftSect(sectId: string, optionIndex: number): void;
+  /** 与 NPC 宗门论道（涨一点关系） */
+  parleySect(sectId: string): void;
+  /** 结盟 */
+  allySect(sectId: string): void;
+  /** 撕毁盟约 */
+  breakAlliance(sectId: string): void;
+  /** 宣战 */
+  declareWar(sectId: string): void;
+  /** 立刻打一场宗门大战（调试/手动用；正常由 tick 按周期触发） */
+  fightBattle(sectId: string): void;
+  /** 结算一个已达成的结局（记进跨周目记录） */
+  settleEnding(endingId: string): void;
+
   /* 仆人 */
   recruitServant(job: string): void;
   assignServant(from: string, to: string): void;
@@ -168,14 +192,32 @@ export interface GameStore {
   importSave(code: string): boolean;
 }
 
+/**
+ * 补一次"开局三选一"的候选特质。
+ *
+ * 放在这里（而不是 `createInitialState`）有两个原因：
+ *   1. `createInitialState` 在 state.ts 里，而抽特质要用到 `fame.ts`
+ *      与 engine 的聚合 —— 那会绕成循环依赖；
+ *   2. 旧存档（本轮之前开的局）也没有这三个候选，需要在这里补上。
+ *
+ * 已经选过特质的存档不会被再抽一次（`traits.length > 0` 直接跳过），
+ * 所以"读档换特质"这条路是堵死的。
+ */
+function ensureTraitOffer(state: GameState): GameState {
+  if (state.traits.length > 0) return state;
+  if (state.traitOffer.length > 0) return state;
+  const offer = fame.rollTraitOffer(state, gameRandom);
+  return offer.length === 0 ? state : { ...state, traitOffer: offer };
+}
+
 /** 启动流程：读档 → 结算离线收益。只在模块加载时执行一次 */
 function boot(): { game: GameState; offline: OfflineReport | null } {
   const now = Date.now();
   const loaded = loadFromLocal();
-  if (!loaded) return { game: createInitialState(now), offline: null };
+  if (!loaded) return { game: ensureTraitOffer(createInitialState(now)), offline: null };
 
   const { state, report } = applyOffline(loaded, now);
-  return { game: state, offline: report };
+  return { game: ensureTraitOffer(state), offline: report };
 }
 
 const booted = boot();
@@ -492,22 +534,126 @@ export const useGame = create<GameStore>()((set, get) => ({
     });
   },
 
+  /* ------------------------------------------------- 声望 / 特质 / 外交 / 结局 */
+
+  chooseTrait: (traitId) => {
+    set((s) => {
+      const check = fame.canChooseTrait(s.game, traitId);
+      if (!check.ok) return { notice: check.reason ?? '无法选择' };
+      const next = fame.chooseTrait(s.game, traitId);
+      if (next === s.game) return {};
+      const def = fame.traitView(traitId);
+      return { ...nextGame(s.game, next), notice: `山门气运已定：${def?.name ?? traitId}` };
+    });
+  },
+
+  buyFameOffer: (goodId) => {
+    set((s) => {
+      const result = fame.buyFameOffer(s.game, goodId);
+      if (result.state === s.game) return { notice: result.message };
+      return { ...nextGame(s.game, result.state), notice: result.message };
+    });
+  },
+
+  giftSect: (sectId, optionIndex) => {
+    set((s) => {
+      const check = diplomacy.canGift(s.game, sectId, optionIndex);
+      if (!check.ok) return { notice: check.reason ?? '无法赠礼' };
+      const next = diplomacy.giftSect(s.game, sectId, optionIndex);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: `赠礼已成（关系 +${check.gain}）` };
+    });
+  },
+
+  parleySect: (sectId) => {
+    set((s) => {
+      const check = diplomacy.canParley(s.game, sectId);
+      if (!check.ok) return { notice: check.reason ?? '无法论道' };
+      const next = diplomacy.parleySect(s.game, sectId);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '论道一场，关系略有增进' };
+    });
+  },
+
+  allySect: (sectId) => {
+    set((s) => {
+      const check = diplomacy.canAlly(s.game, sectId);
+      if (!check.ok) return { notice: check.reason ?? '无法结盟' };
+      const next = diplomacy.allySect(s.game, sectId);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '盟约已成' };
+    });
+  },
+
+  breakAlliance: (sectId) => {
+    set((s) => {
+      const next = diplomacy.breakAlliance(s.game, sectId);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '盟约已撕毁' };
+    });
+  },
+
+  declareWar: (sectId) => {
+    set((s) => {
+      const check = diplomacy.canDeclareWar(s.game, sectId);
+      if (!check.ok) return { notice: check.reason ?? '无法宣战' };
+      const next = diplomacy.declareWar(s.game, sectId);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: '已宣战（此局不再满足隐世传承的条件）' };
+    });
+  },
+
+  fightBattle: (sectId) => {
+    set((s) => {
+      const outcome = diplomacy.resolveBattle(s.game, sectId);
+      if (!outcome || outcome.state === s.game) return { notice: '无法开战' };
+      return { ...nextGame(s.game, outcome.state), notice: outcome.won ? `${outcome.text}！` : outcome.text };
+    });
+  },
+
+  settleEnding: (endingId) => {
+    set((s) => {
+      const ended = endingId as EndingId;
+      const check = fame.checkEndings(s.game).find((e) => e.id === ended);
+      if (!check) return { notice: '没有这个结局' };
+      if (!check.reached) return { notice: `尚未达成：${check.progress}` };
+      if (s.game.legacyEndings.includes(ended)) return { notice: '这个结局已经记过了' };
+      const next = fame.completeEnding(s.game, ended);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: ENDING_MAP[ended].text };
+    });
+  },
+
   ascend: () => {
     set((s) => {
       if (!engine.canAscend(s.game)) return {};
       const gain = engine.getDaoYunGain(s.game);
-      const next = createAscendedState(s.game, gain, Date.now());
+      /*
+       * 飞升 = 「飞升成仙」结局（设定集第 10 章）。于是这里做两件事：
+       *   1. 把这个结局记进周目（解锁传承特质、并算进周目奖励）；
+       *   2. 把**所有**已记结局的周目奖励一并加进这一局的道韵结算 ——
+       *      "上一周目的成就，这一周目是有回报的"，多周目才有意义。
+       */
+      const withEnding = fame.completeEnding(s.game, 'ascend');
+      const bonus = fame.endingDaoYunBonus(withEnding);
+      const total = gain.add(bonus);
+      const next = createAscendedState(withEnding, total, Date.now());
+      // 周目记录跨局保留（它是解锁传承特质的凭据）
+      next.legacyEndings = [...withEnding.legacyEndings];
       saveToLocal(next);
       return {
         ...nextGame(s.game, next),
-        notice: `飞升成功！获得 ${fmt(gain)} 点道韵`,
+        notice: `飞升成功！获得 ${fmt(total)} 点道韵${bonus > 0 ? `（含周目奖励 ${bonus}）` : ''}`,
         lastSavedAt: Date.now(),
       };
     });
   },
 
   hardReset: () => {
-    const fresh = createInitialState(Date.now());
+    const fresh = ensureTraitOffer(createInitialState(Date.now()));
+    // 「已完成结局」跨周目保留（它是解锁传承特质的凭据），其余一切重来
+    fresh.legacyEndings = [...useGame.getState().game.legacyEndings];
+    fresh.traitOffer = fame.rollTraitOffer(fresh, gameRandom);
     clearLocal();
     saveToLocal(fresh);
     set({ game: fresh, offline: null, notice: '已重开修行', lastSavedAt: Date.now() });

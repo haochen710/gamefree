@@ -16,6 +16,7 @@ import {
   ARENA_INTERVAL_GAME_YEARS,
   ARENA_REQUIRED_BUILDING,
   DEMON_RELIEF_ARENA,
+  FAME_PER_ARENA,
   EVENT_CULTIVATE_RATIO,
   EVENT_MARTIAL_INSIGHT,
   EVENT_TOWER_DISCOVERY_PITY,
@@ -31,6 +32,7 @@ import {
 import { getBuildingCount, getInsightMax, getStructureBonus } from './engine';
 import { clampDemon, pushJournal } from './disciples';
 import { grantArenaManuals } from './manuals';
+import { changeFame } from './fame';
 import { gameRandom, type RandomSource } from './random';
 import type { Disciple, GameState } from './state';
 
@@ -99,6 +101,8 @@ export function runArena(state: GameState): ArenaResult {
    * 二三名良品碎片×2、参与奖凡品碎片×1）。这里按名额各抽一本功法发碎片 ——
    * 具体发给谁不影响结果（碎片进的是宗门仓库），所以不必真的排名。
    */
+  // 论道大比也是扬名的场合（设定集第 9 章）
+  const fameReward = changeFame(state, FAME_PER_ARENA, '宗门大比');
   const manualReward = grantArenaManuals(
     {
       ...state,
@@ -117,6 +121,7 @@ export function runArena(state: GameState): ArenaResult {
   return {
     state: {
       ...manualReward.state,
+      fame: fameReward.state.fame,
       arenaTimer: ARENA_INTERVAL_SECONDS,
       arenaBuffSeconds: ARENA_BUFF_SECONDS,
       journal: pushJournal(state.journal, {

@@ -39,6 +39,7 @@ import {
   getFarmTalentBonus,
   getRefiningSlots,
   getStructureBonus,
+  getTraitEffect,
   grantQiSeconds,
   payCost,
   toCostMap,
@@ -236,10 +237,12 @@ export function getCraftSuccessRate(state: GameState, kind: 'alchemy' | 'refinin
       ? getStructureBonus(state, 'alchemySuccessBonus')
       : getStructureBonus(state, 'refiningSuccessBonus');
   const talent = getFarmTalentBonus(state, kind === 'alchemy' ? 'alchemyRate' : 'refiningRate');
+  // 丹鼎天成（先天特质）：炼丹成功率 +12%
+  const trait = kind === 'alchemy' ? getTraitEffect(state, 'alchemyBonus', 0) : 0;
   const bonus = gap > 0 ? gap * CRAFT_MASTER_GAP_BONUS : 0;
 
   // 上限仍是 1（差两品也可能因为炉子好、弟子手巧而摸到满）
-  return Math.max(0.05, Math.min(1, base + bonus + building + talent));
+  return Math.max(0.05, Math.min(1, base + bonus + building + talent + trait));
 }
 
 /** 界面用：说清楚"为什么会失败/为什么会必成" */

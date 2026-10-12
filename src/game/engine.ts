@@ -10,6 +10,7 @@
 import Decimal, { D } from './decimal';
 import {
   ALCHEMY_SLOT_REQUIREMENT,
+  ALLIANCE_PRODUCTION_BONUS,
   ASCENSION_MIN_REALM,
   ARENA_BUFF_BONUS,
   ARTIFACTS,
@@ -18,6 +19,8 @@ import {
   type ArtifactDef,
   BASE_STORAGE,
   BLUEPRINT_MAP,
+  FAME_MAX,
+  FAME_TIERS,
   BREAKTHROUGH_MAX_SUCCESS,
   BREAKTHROUGH_PILL_GAP_RECOVERY,
   BUILDABLES,
@@ -70,6 +73,7 @@ import {
   spiritArrayCultivationBonus,
   STRUCTURES,
   TECH_MAP,
+  TRAIT_MAP,
   discipleCapBySect,
   isResourceId,
   servantCost,
@@ -77,6 +81,8 @@ import {
   type GeneratorDef,
   type ItemId,
   type MapRegionDef,
+  type FameTierDef,
+  type TraitEffects,
   type QueueUpgradeDef,
   type RefineRecipe,
   type RealmDef,
@@ -356,6 +362,71 @@ export function getStructureBonus(state: GameState, key: StructureBonusKey): num
     if (count > 0) total += per * count;
   }
   return total;
+}
+
+/* ------------------------------------------------------------------ */
+/* 先天特质与盟约的聚合（设定集第 1 / 9 章）                              */
+/* ------------------------------------------------------------------ */
+/*
+ * ⚠️ 为什么这些聚合放在 engine 而不是 fame.ts / diplomacy.ts：
+ * `fame.ts` 与 `diplomacy.ts` 都要 import engine（拿 addItem / payCost），
+ * 反过来 import 就成环了。而"按 state 算出一个倍率"本来就是 engine 的活。
+ * 数值只有一份来源 —— `content/fame.ts` 的 `TRAITS[].effects`。
+ */
+
+/** 某个先天特质效果的合计值（没有该特质时为 0；倍率类会返回 1） */
+export function getTraitEffect<K extends keyof TraitEffects>(
+  state: GameState,
+  key: K,
+  fallback: number,
+): number {
+  if (state.traits.length === 0) return fallback;
+  let total = fallback;
+  for (const id of state.traits) {
+    const value = TRAIT_MAP[id]?.effects?.[key];
+    if (typeof value !== 'number') continue;
+    // 倍率类（以 Mult 结尾）相乘，加法类相加
+    if (String(key).endsWith('Mult')) total *= value;
+    else total += value;
+  }
+  return total;
+}
+
+/** 是否拥有某个"开关型"特质效果（如上古血脉的资质上偏） */
+export function hasTraitEffect(state: GameState, key: keyof TraitEffects): boolean {
+  return state.traits.some((id) => TRAIT_MAP[id]?.effects?.[key] === true);
+}
+
+/** 已结盟的宗门数带来的产出加成 —— 读取点：getProduction */
+export function getAllianceProductionBonus(state: GameState): number {
+  const allied = state.npcSects.filter((s) => s.alliance).length;
+  return allied * ALLIANCE_PRODUCTION_BONUS;
+}
+
+/**
+ * 当前声望段位（从高往低找第一个够门槛的）。
+ *
+ * ⚠️ 与 `fame.getFameTier` 是同一个判断，但是放在 engine：
+ * `disciples.ts` 要按段位算招收折扣，而 `fame.ts` 反过来 import 了 disciples
+ * （pushJournal）—— 那条路成环。所以"按 state 算出来的东西"一律归 engine，
+ * `fame.ts` 只保留纯函数与界面辅助。
+ */
+export function getFameTierOf(state: GameState): FameTierDef {
+  const fame = Math.max(0, Math.min(FAME_MAX, state.fame));
+  for (let i = FAME_TIERS.length - 1; i >= 0; i -= 1) {
+    if (fame >= FAME_TIERS[i].min) return FAME_TIERS[i];
+  }
+  return FAME_TIERS[0];
+}
+
+/** 段位带来的招收折扣 —— 读取点：disciples.getRecruitCost */
+export function fameRecruitDiscount(state: GameState): number {
+  return getFameTierOf(state).recruitDiscount;
+}
+
+/** 段位带来的商行折扣 —— 读取点：shop.getOfferPrice */
+export function fameShopDiscount(state: GameState): number {
+  return getFameTierOf(state).shopDiscount;
 }
 
 /* ------------------------------------------------------------------ */
@@ -776,6 +847,18 @@ export function getProduction(state: GameState): ResourceMap {
    */
   out.qi = out.qi.mul(1 + getFarmTalentBonus(state, 'qi'));
   out.herb = out.herb.mul(1 + getFarmTalentBonus(state, 'herb'));
+
+  /*
+   * 先天特质与盟约（设定集第 1 / 9 章）：
+   *   灵脉福地 ×1.25 灵气 · 万载灵泉 ×1.15 灵气 · 药圃天成 ×1.25 灵草
+   *   每个盟友宗门 +3% 全产出
+   * 盟约那一条作用于**所有**资源（它是"整个山门的景气"，不是某一条产线），
+   * 特质那两条则各管自己那一味。
+   */
+  const alliance = 1 + getAllianceProductionBonus(state);
+  for (const id of RESOURCE_IDS) out[id] = out[id].mul(alliance);
+  out.qi = out.qi.mul(getTraitEffect(state, 'qiMult', 1));
+  out.herb = out.herb.mul(getTraitEffect(state, 'herbMult', 1));
 
   return out;
 }
@@ -1449,6 +1532,8 @@ export function getBreakthroughStatus(state: GameState): BreakthroughStatus {
  *   - 「固本丹」之类的永久加成：`state.globalBreakthroughBonus`。
  */
 export function getSuccessRate(state: GameState): number {
+  // 星象亲和（先天特质）：掌门突破成功率 +6% —— 读取点就在这里
+  const traitBonus = getTraitEffect(state, 'breakthroughBonus', 0);
   const realm = getRealm(state);
   if (isFinalRealm(state)) return 1;
 
@@ -1464,7 +1549,7 @@ export function getSuccessRate(state: GameState): number {
    */
   const thunder = getKarmaThunderPenalty(state);
 
-  const raw = base + pill + state.globalBreakthroughBonus + building + weather - thunder;
+  const raw = base + pill + state.globalBreakthroughBonus + building + weather - thunder + traitBonus;
   return Math.max(KARMA_SUCCESS_FLOOR, Math.min(raw, BREAKTHROUGH_MAX_SUCCESS));
 }
 

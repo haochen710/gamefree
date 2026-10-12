@@ -38,5 +38,7 @@ export * from './recipes';
 export * from './sect';
 export * from './talents';
 export * from './manuals';
+export * from './fame';
+export * from './diplomacy';
 export * from './servants';
 export * from './enlightenment';

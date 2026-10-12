@@ -50,12 +50,15 @@ import {
   rollAptitude,
 } from './content';
 import {
+  fameRecruitDiscount,
   getArtifactBonuses,
   getCultivationSpeedMultiplier,
   getInsightMax,
   getDiscipleCapacity,
   getDiscipleHousing,
   getStructureBonus,
+  getTraitEffect,
+hasTraitEffect,
 } from './engine';
 import {
   JOURNAL_LIMIT,
@@ -92,8 +95,26 @@ export function getDiscipleCapReason(
 /* 生成与招收                                                          */
 /* ------------------------------------------------------------------ */
 
-export function rollDisciple(sectLevel: number, id: number, random: RandomSource = gameRandom): Disciple {
-  const aptitude = rollAptitude(sectLevel, random);
+export function rollDisciple(
+  sectLevel: number,
+  id: number,
+  random: RandomSource = gameRandom,
+  /**
+   * 「上古血脉」先天特质：新弟子资质上偏一档。
+   *
+   * ⚠️ 做成参数而不是在这里读 `state`：`rollDisciple` 的签名是
+   * (宗门品阶, 编号, 随机源)，它**故意不持有 state** —— 模拟器与冒烟测试
+   * 都直接调它来造弟子。为了一个特质就把它改成收 state，会让所有调用点
+   * 都要先造一个假 state。所以由调用方（`recruitDisciple`）把结果传进来。
+   */
+  aptitudeUp = false,
+): Disciple {
+  let aptitude = rollAptitude(sectLevel, random);
+  if (aptitudeUp) {
+    // 抽两次取更好的那一次：相当于一次免费重抽，效果可解释
+    const reroll = rollAptitude(sectLevel, random);
+    if (APTITUDE_ORDER.indexOf(reroll) > APTITUDE_ORDER.indexOf(aptitude)) aptitude = reroll;
+  }
   const [loyaltyMin, loyaltyMax] = LOYALTY_INITIAL[aptitude];
   return {
     id: `d${id}`,
@@ -167,7 +188,11 @@ export function getDiscipleSpeed(state: GameState, disciple: Disciple): number {
   const personality = PERSONALITY_MAP[disciple.personality];
   const loyaltyTier = loyaltyTierOf(disciple.loyalty);
   const demonTier = demonTierOf(disciple.demon);
-  const additive = getCultivationSpeedMultiplier(state) + getInsightSpeedBonus(state, disciple);
+  // 先天特质（星象亲和 +5% / 万载灵泉 +8%）也进这个加算池
+  const additive =
+    getCultivationSpeedMultiplier(state) +
+    getInsightSpeedBonus(state, disciple) +
+    getTraitEffect(state, 'cultivationBonus', 0);
   /*
    * 功法（设定集第 7 章）：修炼功法走**加算**（它本来就是"功法"这一类，
    * 与建筑/大比/心得同一性质），与性格一起进那个池子。
@@ -453,8 +478,15 @@ export interface RecruitResult {
   reason: string | null;
 }
 
+/**
+ * 招收一名弟子的花费（灵石）。
+ *
+ * 声望段位越高越便宜（设定集第 9 章）：名气就是"别人愿意来"，
+ * 愿意来的人多，价码自然下去 —— 折扣上限 20%，由 `FAME_TIERS` 表兜住。
+ */
 export function getRecruitCost(state: GameState): Decimal {
-  return D(recruitCost(state.sect.level, state.sect.disciples.length));
+  const base = recruitCost(state.sect.level, state.sect.disciples.length);
+  return D(base).mul(D(1 - fameRecruitDiscount(state)));
 }
 
 export function canRecruit(state: GameState): { ok: boolean; reason: string | null } {
@@ -486,7 +518,13 @@ export function recruitDisciple(state: GameState, random: RandomSource = gameRan
   if (!check.ok) return { state, disciple: null, reason: check.reason };
 
   const cost = getRecruitCost(state);
-  const disciple = rollDisciple(state.sect.level, state.nextDiscipleId, random);
+  const disciple = rollDisciple(
+    state.sect.level,
+    state.nextDiscipleId,
+    random,
+    // 上古血脉（先天特质）：资质抽取上偏一档
+    hasTraitEffect(state, 'aptitudeUp'),
+  );
 
   const next: GameState = {
     ...state,

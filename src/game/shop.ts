@@ -22,7 +22,7 @@ import {
   type ShopGoodKind,
   type ShopOffer,
 } from './content';
-import { addItem, getRealm, getShopOfferCapacity, hasShop } from './engine';
+import { addItem, fameShopDiscount, getRealm, getShopOfferCapacity, getTraitEffect, hasShop } from './engine';
 import { pushJournal } from './disciples';
 import { addSeeds } from './planting';
 import { gameRandom, randomId, weightedDraw, type RandomSource } from './random';
@@ -148,6 +148,19 @@ export function describeOffer(offer: ShopOffer): { name: string; icon: string; n
   }
 }
 
+/**
+ * 商行的实际买入价 = 标价 × 段位折扣 × 「商道通达」特质。
+ *
+ * ⚠️ 折扣必须在**同一处**算，而且买卖两边都用它 ——
+ * 本作踩过"界面显示 100、实际扣 85"的坑（同一个数在两处各算一次）。
+ */
+export function getOfferPrice(state: GameState, offerId: string): number {
+  const offer = state.shop.offers.find((o) => o.id === offerId);
+  if (!offer) return 0;
+  const discount = (1 - fameShopDiscount(state)) * getTraitEffect(state, 'shopBuyMult', 1);
+  return Math.max(1, Math.round(offer.price * discount));
+}
+
 export function canBuyOffer(state: GameState, offerId: string): { ok: boolean; reason: string | null } {
   const offer = state.shop.offers.find((o) => o.id === offerId);
   if (!offer) return { ok: false, reason: '货品不存在' };
@@ -156,8 +169,14 @@ export function canBuyOffer(state: GameState, offerId: string): { ok: boolean; r
   if (offer.kind === 'blueprint' && state.blueprints[offer.item] === true) {
     return { ok: false, reason: '已经持有此图纸' };
   }
-  if (state.resources.stone.lt(offer.price)) {
-    return { ok: false, reason: `灵石不足（需 ${offer.price}）` };
+  /*
+   * ⚠️ 买入**必须**走 getOfferPrice 算出来的实价，而不是 offer.price 标价：
+   * 标价只在货架生成时用一次，段位与「商道通达」的折扣是在结算这一刻算的。
+   * 三处（判断、扣款、记事）都用同一个数，界面才不会"显示 100、扣 85"。
+   */
+  const price = getOfferPrice(state, offerId);
+  if (state.resources.stone.lt(price)) {
+    return { ok: false, reason: `灵石不足（需 ${price}）` };
   }
   return { ok: true, reason: null };
 }
@@ -175,9 +194,10 @@ export function buyShopOffer(state: GameState, offerId: string): ShopBuyResult {
   const offer = state.shop.offers.find((o) => o.id === offerId);
   if (!offer) return { state, message: '货品不存在' };
 
+  const price = getOfferPrice(state, offerId);
   let next: GameState = {
     ...state,
-    resources: { ...state.resources, stone: state.resources.stone.sub(offer.price) },
+    resources: { ...state.resources, stone: state.resources.stone.sub(price) },
   };
 
   switch (offer.kind) {
@@ -204,7 +224,7 @@ export function buyShopOffer(state: GameState, offerId: string): ShopBuyResult {
     journal: pushJournal(next.journal, {
       time: next.playTime,
       kind: offer.kind === 'blueprint' ? 'good' : 'info',
-      text: `商行购入 ${described.icon}${described.name}×${offer.amount}（${offer.price} 灵石）`,
+      text: `商行购入 ${described.icon}${described.name}×${offer.amount}（${price} 灵石）`,
     }),
   };
 

@@ -38,7 +38,7 @@ import {
 // 再导出一次：调用方（界面 / 测试）只 import 这一处就够了
 export { isAttackEncounter, playerEncounters, sectEncounters };
 import { ITEM_MAP, PILL_MAP, isBasicMaterial, type ItemId } from './content';
-import { addItem, getStructureBonus } from './engine';
+import { addItem, getStructureBonus, getTraitEffect } from './engine';
 import { getSectTalentDefense, pushJournal } from './disciples';
 import { gameRandom, weightedDraw, type RandomSource } from './random';
 import type { GameState } from './state';
@@ -254,7 +254,12 @@ export function rollEncounterNow(state: GameState, random: RandomSource = gameRa
  * 口径是"取全宗最高一项"，不是按人头叠加（否则一千个铁甲体魄就是无敌）。
  */
 export function getSectDefense(state: GameState): number {
-  return getStructureBonus(state, 'sectDefense') + getSectTalentDefense(state);
+  // 三条来源：建筑 + 弟子的战斗天赋/性格 + 先天特质「铁血军魂」
+  return (
+    getStructureBonus(state, 'sectDefense') +
+    getSectTalentDefense(state) +
+    getTraitEffect(state, 'sectDefense', 0)
+  );
 }
 
 export interface AttackOutcome {

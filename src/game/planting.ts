@@ -23,7 +23,7 @@ import {
   type MaterialId,
   type SeedDef,
 } from './content';
-import { addItem, getFarmTalentBonus, getPlotCapacity } from './engine';
+import { addItem, getFarmTalentBonus, getPlotCapacity, getTraitEffect } from './engine';
 import { getEnvironmentMaterialBonus } from './season';
 import { getElementMaterialBonus } from './enlightenment';
 import { pushJournal } from './disciples';
@@ -118,7 +118,15 @@ export function plantSeed(
      * 这样"种下去之后又招了几个沃土专精弟子"不会让已经在地里的作物
      * 突然变快 —— 那会让玩家觉得进度条在抽风。
      */
-    duration: Math.max(1, Math.round(seed.growSeconds / (1 + getFarmTalentBonus(state, 'plantingSpeed')))),
+    duration: Math.max(
+      1,
+      Math.round(
+        seed.growSeconds /
+          (1 + getFarmTalentBonus(state, 'plantingSpeed')) /
+          // 药圃天成：灵植成熟快 10%
+          getTraitEffect(state, 'plantingSpeedMult', 1),
+      ),
+    ),
   };
 
   return {

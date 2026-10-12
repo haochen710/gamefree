@@ -71,6 +71,7 @@ import {
   getFarmTalentBonus,
   getRealmCooldown,
   getStructureBonus,
+  getTraitEffect,
   getUndiscoveredCandidates,
   isDiscoveryGuaranteed,
   isRealmAvailable,
@@ -80,6 +81,7 @@ import {
   consumeGear,
 } from './engine';
 import { getPartyManualYieldBonusOf, rollFragmentDrop, salvageManualsOnDeath } from './manuals';
+import { changeFame, fameFromRealm, fameFromSurvey } from './fame';
 import {
   addInsight,
   adjustLoyalty,
@@ -505,7 +507,11 @@ export function resolveExpedition(
    * 多死几个 → 队伍凑不满 → 战力比下降 → 伤亡更高 → 弟子全灭。
    * 随机天象不该有能力掀翻宗门，所以那两条天象改用别的方式做代价。
    */
-  const casualtyRate = Math.min(Math.max(baseRate, 0), MAX_CASUALTY_RATE) * (1 - safety);
+  // 铁血军魂（先天特质）：弟子伤亡率 ×0.98
+  const casualtyRate =
+    Math.min(Math.max(baseRate, 0), MAX_CASUALTY_RATE) *
+    (1 - safety) *
+    getTraitEffect(state, 'casualtyMult', 1);
 
   /*
    * 逐人掷骰（设定集第 8.3 / 8.5 / 8.6 章）。
@@ -599,6 +605,13 @@ export function resolveExpedition(
    * 与后面的保命丹 / 器物损耗互不影响。
    */
   gearState = settlePartyAfterExpedition(gearState, survivors, casualties.length, casualties.length > 0);
+
+  /*
+   * 声望（设定集第 9 章）：探得越深，名声越大。
+   * 放在"探索归来"之后：弟子用命换来的名声该记在账上，
+   * 哪怕这一趟折了人（折人本身不扣声望 —— 声望是对外的评价，不是内部的士气）。
+   */
+  gearState = changeFame(gearState, fameFromRealm(def.tier), `探索${def.name}`).state;
 
   /*
    * ---- 3b2. 陨落弟子的功法回收（设定集第 7 章：60% 回收、40% 损毁）----
@@ -972,6 +985,8 @@ export function resolveSurvey(
     alive.includes(d.id) ? { ...d, status: 'idle' as const, expeditionId: undefined, insight: addInsight(working, d, insightGain).insight } : d,
   );
   working = { ...working, sect: { ...working.sect, disciples } };
+  // 普通探索同样长名声，只是少得多（设定集第 9 章）
+  working = changeFame(working, fameFromSurvey()).state;
 
   let journal = working.journal;
   const summary = gains.map((g) => `${g.icon}${g.name}×${g.amount}`).join(' ');

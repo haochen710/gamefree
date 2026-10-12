@@ -37,7 +37,7 @@ import {
   type ManualGrade,
   type ManualKind,
 } from './content';
-import { getBuildingCount } from './engine';
+import { getBuildingCount, getTraitEffect } from './engine';
 import { pushJournal } from './disciples';
 import type { Disciple, GameState } from './state';
 
@@ -123,7 +123,9 @@ export function rollFragmentDrop(
   tier: number,
   random: RandomSource,
 ): { state: GameState; drop: FragmentDrop | null } {
-  if (random() >= FRAGMENT_DROP_CHANCE) return { state, drop: null };
+  // 藏经古阁（先天特质）：碎片掉落概率 ×1.5
+  const chance = Math.min(1, FRAGMENT_DROP_CHANCE * getTraitEffect(state, 'fragmentMult', 1));
+  if (random() >= chance) return { state, drop: null };
 
   let working = state;
   const got = new Map<string, number>();
