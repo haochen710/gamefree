@@ -21,6 +21,7 @@ import {
   BLUEPRINT_MAP,
   FAME_MAX,
   FAME_TIERS,
+  FURNACE_MAP,
   BREAKTHROUGH_MAX_SUCCESS,
   BREAKTHROUGH_PILL_GAP_RECOVERY,
   BUILDABLES,
@@ -1863,10 +1864,30 @@ export function refineStone(state: GameState, times: number): GameState {
  * ⚠️ 丹炉的"省时间"这条设定就落在这里（见 content/furnace.ts 的取舍说明）：
  * 本作的炼丹炼器是瞬时的，唯一带"速度"的炼制环节是自动合成，
  * 所以炉鼎的 refineSpeedBonus 作用在它上面。
+ *
+ * ⚠️⚠️ 这段注释曾经是**一句谎**：函数体里只有 `AUTO_REFINE_RATES[level]`，
+ * 压根没读炉鼎 —— 于是"自动合成 +40%"这类数字永远不生效，
+ * 而注释还替它担保说"作用在它上面"（文档代理第五次核出这一类问题）。
+ * 现在真的接上了，并且冒烟里有断言守着。
  */
 export function getAutoRefineRate(state: GameState): number {
   const level = Math.min(Math.max(Math.floor(state.autoRefineLevel), 0), AUTO_REFINE_LEVEL_MAX);
-  return AUTO_REFINE_RATES[level];
+  const base = AUTO_REFINE_RATES[level];
+  if (base <= 0) return 0;
+  // 丹炉九件（设定集第 11 章）：当前那口炉子的自动合成加速
+  return base * (1 + getFurnaceRefineSpeedBonus(state));
+}
+
+/**
+ * 丹炉的自动合成加速。
+ *
+ * 这里**内联读 state.furnaces 那张表**而不是 import `gear.ts`：
+ * `gear.ts` 依赖 engine（payCost / getAmount），engine 反过来 import 它就是成环。
+ * 数值仍然只有一个来源（`content/furnace.ts` 的 FURNACES）。
+ */
+export function getFurnaceRefineSpeedBonus(state: GameState): number {
+  const def = FURNACE_MAP[state.furnaceId];
+  return def ? def.refineSpeedBonus : 0;
 }
 
 /** 某条配方现在最多还能合成几批（受它的原料存量与产出的储存上限限制） */

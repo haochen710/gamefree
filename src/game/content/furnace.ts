@@ -265,7 +265,9 @@ export const GEARS: GearDef[] = [
     kind: 'gain',
     grade: 3,
     minRealm: 2,
-    desc: '聚拢灵气的头冠。修行速度 +9%，心得获取 +10%。',
+    /* 文案原本还写着「心得获取 +10%」—— GearDef 里没有这个字段，
+       装备也不参与心得结算（心得加成全在建筑那一侧）。如实删掉。 */
+    desc: '聚拢灵气的头冠。修行速度 +9%。',
     power: 0,
     casualtyReduction: 0,
     cultivationBonus: 0.09,
@@ -425,6 +427,16 @@ export function slotAccepts(slot: GearSlot, kind: GearKind): boolean {
   if (slot === 'pill1' || slot === 'pill2') return kind === 'pill';
   return slot === kind;
 }
+
+/**
+ * 弟子陨落时装备的回收率（与功法的 60% 对齐）。
+ *
+ * 原本**没有**这一条：功法会回收、装备直接消失 —— 于是实测终盘是
+ * "累计发出 1774 件、库存 0 件"。不对称本身不是错，但既然功法能捡回来，
+ * 装备（同样是随身之物）一起捡回来更符合直觉，也让"炼装备"这件事
+ * 不至于变成填不满的坑。设定集没写这一条，所以这里是**本作自己的决定**。
+ */
+export const GEAR_SALVAGE_RATE = 0.6;
 
 export const GEAR_GRADE_NAMES: Record<number, string> = {
   1: '凡品',

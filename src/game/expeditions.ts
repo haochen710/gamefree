@@ -81,7 +81,7 @@ import {
   consumeGear,
 } from './engine';
 import { getPartyManualYieldBonusOf, rollFragmentDrop, salvageManualsOnDeath } from './manuals';
-import { consumePartyPills, getPartyPillSafety } from './gear';
+import { consumePartyPills, getPartyPillSafety, salvageGearsOnDeath } from './gear';
 import { changeFame, fameFromRealm, fameFromSurvey } from './fame';
 import {
   addInsight,
@@ -625,7 +625,14 @@ export function resolveExpedition(
   if (casualties.length > 0) {
     const diedIds = new Set(casualties.map((c) => c.id));
     const died = working.sect.disciples.filter((d) => diedIds.has(d.id));
-    const salvage = salvageManualsOnDeath(gearState, died, random);
+    // 功法与装备各自掷骰（都是 60% 回收 / 40% 损毁）
+    const manualSalvage = salvageManualsOnDeath(gearState, died, random);
+    const gearSalvage = salvageGearsOnDeath(manualSalvage.state, died, random);
+    const salvage = {
+      state: gearSalvage.state,
+      salvaged: [...manualSalvage.salvaged, ...gearSalvage.salvaged],
+      lost: [...manualSalvage.lost, ...gearSalvage.lost],
+    };
     gearState = salvage.state;
     if (salvage.salvaged.length > 0 || salvage.lost.length > 0) {
       gearState = {

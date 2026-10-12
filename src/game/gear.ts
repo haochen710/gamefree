@@ -16,6 +16,7 @@
 import { gameRandom, type RandomSource } from './random';
 import {
   DEFAULT_FURNACE_ID,
+  GEAR_SALVAGE_RATE,
   FURNACE_MAP,
   FURNACES,
   GEARS,
@@ -110,10 +111,14 @@ export function furnaceBatchBonus(state: GameState): number {
   return getFurnace(state).batchBonus;
 }
 
-/** 自动合成的速度加成 —— 读取点：engine.getAutoRefineRate */
-export function furnaceRefineSpeedBonus(state: GameState): number {
-  return getFurnace(state).refineSpeedBonus;
-}
+/**
+ * 自动合成的速度加成。
+ *
+ * 实现在 engine.getFurnaceRefineSpeedBonus（那里的注释解释了为什么不能
+ * 反过来 import 本模块 —— gear 依赖 engine，反向引用会成环）。
+ * 这里只做转发，保证界面与逻辑读的是同一个数。
+ */
+export { getFurnaceRefineSpeedBonus as furnaceRefineSpeedBonus } from './engine';
 
 /* ------------------------------------------------------------------ */
 /* 弟子装备：库存与装卸                                                 */
@@ -389,6 +394,38 @@ export function forgeGear(
     rate,
     message: `炼成 ${def.name}×${batch}`,
   };
+}
+
+/**
+ * 弟子陨落时回收身上的装备（60% 回收 / 40% 损毁，与功法同一套规则）。
+ *
+ * 逐件掷骰而不是"整体 60%"：玩家看到的是"这件东西回没回来"。
+ * 设定集没写这一条（它只写了功法的回收），所以这是**本作自己的决定**：
+ * 既然功法能捡回来，随身装备一起捡回来更符合直觉，
+ * 也让"炼装备"不至于变成一个填不满的坑。
+ */
+export function salvageGearsOnDeath(
+  state: GameState,
+  died: Disciple[],
+  random: RandomSource = gameRandom,
+): { state: GameState; salvaged: string[]; lost: string[] } {
+  let working = state;
+  const salvaged: string[] = [];
+  const lost: string[] = [];
+  for (const disciple of died) {
+    for (const slot of GEAR_SLOTS) {
+      const gearId = disciple.gear[slot];
+      const def = GEAR_MAP[gearId];
+      if (!def) continue;
+      if (random() < GEAR_SALVAGE_RATE) {
+        working = addGear(working, gearId, 1);
+        salvaged.push(def.name);
+      } else {
+        lost.push(def.name);
+      }
+    }
+  }
+  return { state: working, salvaged, lost };
 }
 
 /** 界面用：装备在某名弟子身上的展示串 */

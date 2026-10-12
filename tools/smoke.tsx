@@ -94,6 +94,7 @@ import {
   GEAR_SLOTS,
   GEAR_MAP,
   GEARS,
+  FURNACE_MAP,
   FURNACES,
   LOYALTY_IDLE_DECAY_SECONDS,
   LOYALTY_INITIAL,
@@ -6833,6 +6834,26 @@ section('[48] 丹炉九件 · 弟子五装备栏 · 炼器');
       '好炉子影响的是成功率而不是"相差三品必成"（那条硬规则仍在）',
       crafting.getCraftSuccessRate(withFurnace, 'alchemy', 2) === 1,
     );
+    /*
+     * ⚠️ 丹炉的第 4 类效果（自动合成速度）曾经**完全没有读取点**，
+     * 而它的注释还写着"作用在 engine.getAutoRefineRate 上" ——
+     * 文档代理第五次核出这一类问题。这条断言就是为了让它不能再悄悄死掉。
+     */
+    const refining: GameState = { ...plain, autoRefineLevel: 3 };
+    check(
+      '丹炉真的加快自动合成',
+      engine.getAutoRefineRate({ ...refining, furnaceId: 'primordialCauldron' }) > engine.getAutoRefineRate(refining),
+      `${engine.getAutoRefineRate(refining)} → ${engine.getAutoRefineRate({ ...refining, furnaceId: 'primordialCauldron' })}`,
+    );
+    check(
+      '自动合成加速的比例就是炉鼎的 refineSpeedBonus',
+      Math.abs(
+        engine.getAutoRefineRate({ ...refining, furnaceId: 'primordialCauldron' }) /
+          engine.getAutoRefineRate(refining) -
+          (1 + FURNACE_MAP.primordialCauldron.refineSpeedBonus),
+      ) < 1e-9,
+    );
+    check('没开自动合成时炉鼎不该凭空变出速度', engine.getAutoRefineRate({ ...refining, autoRefineLevel: 0 }) === 0);
   }
 
   /* ---- 装备：数据与约束 ---- */
@@ -6909,6 +6930,16 @@ section('[48] 丹炉九件 · 弟子五装备栏 · 炼器');
     check('出战后丹药栏被清空', consumed.sect.disciples.find((d) => d.id === 'b2')?.gear.pill1 === '');
     check('装备的其他栏位不受影响', consumed.sect.disciples.find((d) => d.id === 'b2')?.gear.attack === 'talismanBlade');
     check('没参战的人丹药不会被吃', gear.consumePartyPills(state, ['b1']) === state);
+
+    /*
+     * 装备也要能被回收（与功法的 60% 对齐）。
+     * 原本没有这一条 —— 实测终盘是"累计发出 1774 件、库存 0 件"。
+     */
+    const emptySect: GameState = { ...state, sect: { ...state.sect, disciples: [] } };
+    const back = gear.salvageGearsOnDeath(emptySect, [kitted], () => 0);
+    check('弟子陨落时装备会被回收', gear.getGearCount(back.state, 'talismanBlade') === 1, back.salvaged.join('、'));
+    const gone = gear.salvageGearsOnDeath(emptySect, [kitted], () => 0.99);
+    check('也可能全部损毁', Object.keys(gone.state.gears).length === 0, gone.lost.join('、'));
   }
 
   /* ---- 炼器 ---- */
