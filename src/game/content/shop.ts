@@ -18,7 +18,14 @@ import { BLUEPRINTS } from './techs';
 import { BASE_MATERIAL_IDS } from './resources';
 import { SHOP_SEEDS, shopSeedPrice } from './planting';
 
-export type ShopGoodKind = 'resource' | 'seed' | 'material' | 'blueprint';
+/**
+ * 商品种类。
+ *
+ * 需求 7：「商行不仅可以购买材料和种子、图纸等，**装备、丹药、符箓、法宝**
+ * 也可以包含进去」—— 所以后四种也是合法的货品种类。
+ * 它们只出现在 RARE_GOODS 里（普通商品池不掺这些）。
+ */
+export type ShopGoodKind = 'resource' | 'seed' | 'material' | 'blueprint' | 'pill' | 'talisman' | 'gear' | 'artifact';
 
 export interface ShopGoodDef {
   kind: ShopGoodKind;
@@ -116,3 +123,115 @@ export const SHOP_GOOD_MAP: Record<string, ShopGoodDef> = SHOP_GOODS.reduce(
   },
   {} as Record<string, ShopGoodDef>,
 );
+
+/* ------------------------------------------------------------------ */
+/* 卖出与商队（需求 7）                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 卖价 = 买入价 × 40%（与用户确认）。
+ *
+ * ⚠️ 必须明显小于 1：商行是"方便"，不是印钞机。
+ * 40% 彻底堵死"同一轮低买高卖"的套利（买进再卖出必亏 60%），
+ * 而"把用不上的材料换成灵石"仍然划算。
+ */
+export const SELL_RATIO = 0.4;
+
+/** 商队多久来一次（需求 8：所有事件的刷新率都要很低） */
+export const CARAVAN_INTERVAL_SECONDS = 12 * 60;
+/** 商队停留多久 */
+export const CARAVAN_STAY_SECONDS = 5 * 60;
+/** 商队最多同时要几样东西 */
+export const CARAVAN_MAX_WANTS = 3;
+
+/* ------------------------------------------------------------------ */
+/* 稀有货品（需求 7：装备、丹药、符箓、法宝也可以上架）                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 需求原文：「商行不仅可以购买材料和种子、图纸等，**装备、丹药、符箓、法宝**
+ * 也可以包含进去，但是**很稀有**，而且商行刷新的这些**与玩家等级挂钩**，
+ * 等级越高刷新的这些装备啥的**品阶才越高**」。
+ *
+ * 落地方式：
+ *   - 单独一张 RARE_GOODS 表，**不进**普通商品池（否则货架会被它们占满，
+ *     普通材料反而买不到了）；
+ *   - 每条带 `unlockSectLevel`：**宗门品阶**就是这里的"玩家等级"，
+ *     品阶不到就不上架 —— 所以低级宗门不会刷出天纵装备；
+ *   - 权重很低（1~3，普通货品是 10 上下），所以它们**很稀有**。
+ */
+export interface RareGoodDef extends ShopGoodDef {
+  /** 需要几品宗门才会刷出（宗门品阶 1~9，1 最低） */
+  unlockSectLevel: number;
+  /** 显示用的一句话 */
+  note: string;
+}
+
+const RARE_POOL: { item: string; kind: ShopGoodKind; basePrice: number; note: string; unlockSectLevel: number; weight?: number }[] = [
+  /* ---- 丹药：成品直接买，省一炉火 -------------------------------- */
+  { item: 'foundationPill', kind: 'pill', basePrice: 4e4, note: '筑基丹：突破筑基的敲门砖', unlockSectLevel: 2 },
+  { item: 'goldenCorePill', kind: 'pill', basePrice: 6e5, note: '金丹：结丹期的必需品', unlockSectLevel: 3 },
+  { item: 'nascentPill', kind: 'pill', basePrice: 4e6, note: '元婴丹：化婴之资', unlockSectLevel: 4 },
+  { item: 'spiritPill', kind: 'pill', basePrice: 5e7, note: '化神丹：神魂蜕变', unlockSectLevel: 5 },
+  { item: 'voidPill', kind: 'pill', basePrice: 8e8, note: '炼虚丹：触及虚空', unlockSectLevel: 6 },
+  { item: 'unityPill', kind: 'pill', basePrice: 2e10, note: '合体丹：法体合一', unlockSectLevel: 7 },
+  { item: 'tribulationPill', kind: 'pill', basePrice: 5e11, note: '渡劫丹：直面天劫', unlockSectLevel: 8 },
+  // 保命丹与返魂丹是弟子装备栏里的消耗品，商行偶尔也会带几颗
+  { item: 'safetyPill', kind: 'pill', basePrice: 2e5, note: '保命丹：一趟探索免死', unlockSectLevel: 3, weight: 2 },
+  { item: 'bloodPill', kind: 'pill', basePrice: 9e6, note: '返魂丹：高阶护命', unlockSectLevel: 6, weight: 2 },
+
+  /* ---- 符箓：稀有，且按品阶解锁 ---------------------------------- */
+  { item: 'spiritBasic', kind: 'talisman', basePrice: 3e4, note: '聚灵符：限时抬产量', unlockSectLevel: 2, weight: 2 },
+  { item: 'spiritSilver', kind: 'talisman', basePrice: 5e5, note: '银纹聚灵符', unlockSectLevel: 4 },
+  { item: 'breakSilver', kind: 'talisman', basePrice: 8e5, note: '银纹破境符：突破成功率 +5%', unlockSectLevel: 4 },
+  { item: 'spiritGold', kind: 'talisman', basePrice: 9e6, note: '金篆聚灵符：产量 ×2', unlockSectLevel: 6 },
+  { item: 'breakGold', kind: 'talisman', basePrice: 1.4e7, note: '金篆破境符：突破成功率 +8%', unlockSectLevel: 6 },
+
+  /* ---- 装备：弟子五栏的成品（id 就是 GEARS 里的那些） ------------- */
+  { item: 'jadePendant', kind: 'gear', basePrice: 6e4, note: '凝神玉佩：增益栏', unlockSectLevel: 2 },
+  { item: 'spiritCrown', kind: 'gear', basePrice: 4e5, note: '聚灵冠：增益栏（修行加成）', unlockSectLevel: 3 },
+  { item: 'daoSeal', kind: 'gear', basePrice: 5e6, note: '悟道印：高阶增益栏', unlockSectLevel: 5 },
+  { item: 'ironSword', kind: 'gear', basePrice: 3e4, note: '玄铁剑：进攻栏', unlockSectLevel: 2, weight: 2 },
+  { item: 'talismanBlade', kind: 'gear', basePrice: 8e5, note: '符箓飞刃：进攻栏', unlockSectLevel: 4 },
+  { item: 'immortalTreasure', kind: 'gear', basePrice: 6e9, note: '仙家重宝：顶阶进攻栏', unlockSectLevel: 8 },
+  { item: 'hideArmor', kind: 'gear', basePrice: 2e4, note: '妖兽皮甲：防御栏（降伤亡）', unlockSectLevel: 2, weight: 2 },
+  { item: 'spiritRobe', kind: 'gear', basePrice: 9e5, note: '灵蚕宝衣：防御栏', unlockSectLevel: 4 },
+  { item: 'starArmor', kind: 'gear', basePrice: 7e8, note: '星穹法衣：高阶防御栏', unlockSectLevel: 7 },
+
+  /* ---- 法宝（器物）：设定集里"每名弟子最多持有一件"的那类 ---------- */
+  { item: 'compass', kind: 'artifact', basePrice: 1.2e5, note: '洞天罗盘：提高发现秘境概率', unlockSectLevel: 3 },
+  { item: 'jadePendant', kind: 'artifact', basePrice: 6e4, note: '聚灵玉佩', unlockSectLevel: 2, weight: 1 },
+  { item: 'ward', kind: 'artifact', basePrice: 9e5, note: '护身玉符：探索更安全', unlockSectLevel: 4 },
+  { item: 'heavyBlade', kind: 'artifact', basePrice: 8e6, note: '玄铁重剑：战力加成', unlockSectLevel: 5 },
+  { item: 'cosmosBag', kind: 'artifact', basePrice: 6e8, note: '乾坤袋：探索产出加成', unlockSectLevel: 6 },
+  { item: 'immortalSword', kind: 'artifact', basePrice: 3e11, note: '斩仙剑：顶阶法宝', unlockSectLevel: 8 },
+];
+
+/**
+ * 稀有货品。
+ *
+ * ⚠️ baseAmount 一律是 1：这些东西"很稀有"，一档一件。
+ * 权重 1~2 也很低 —— 与普通货品（权重 10 上下）相比，它们只是偶尔露面。
+ */
+export const RARE_GOODS: RareGoodDef[] = RARE_POOL.map((entry) => ({
+  kind: entry.kind,
+  item: entry.item,
+  baseAmount: 1,
+  basePrice: entry.basePrice,
+  weight: entry.weight ?? 1,
+  unlockSectLevel: entry.unlockSectLevel,
+  note: entry.note,
+}));
+
+export const RARE_GOOD_MAP: Record<string, RareGoodDef> = RARE_GOODS.reduce(
+  (acc, good) => {
+    acc[good.item] = good;
+    return acc;
+  },
+  {} as Record<string, RareGoodDef>,
+);
+
+/** 当前宗门品阶能刷出的稀有货品 */
+export function rareGoodsForSectLevel(sectLevel: number): RareGoodDef[] {
+  return RARE_GOODS.filter((good) => good.unlockSectLevel <= sectLevel);
+}

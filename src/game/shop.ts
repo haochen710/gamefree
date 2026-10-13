@@ -17,6 +17,7 @@ import {
   MATERIAL_MAP,
   SEED_MAP,
   SHOP_GOODS,
+  rareGoodsForSectLevel,
   SHOP_REFRESH_SECONDS,
   type ShopGoodDef,
   type ShopGoodKind,
@@ -83,14 +84,32 @@ export function buildShopOffers(state: GameState, random: RandomSource = gameRan
 
   const picked = weightedDraw(pool, capacity, random);
 
-  return picked.map((good) => ({
-    id: randomId('o', random),
-    kind: good.kind,
-    item: good.item,
-    amount: Math.max(1, Math.round(good.baseAmount * amountScale(state, good.kind))),
-    price: Math.max(1, Math.round(good.basePrice * priceScale(state, good.kind))),
-    sold: false,
-  }));
+  /*
+   * 需求 7：「装备、丹药、符箓、法宝也可以包含进去，但是**很稀有**，
+   * 而且商行刷新的这些**与玩家等级挂钩**」——
+   * 这里用**宗门品阶**当那个"玩家等级"：品阶不到就不上架，
+   * 所以低级宗门永远刷不出天纵装备。
+   *
+   * 每轮最多掺 1 件稀有货（`RARE_GOODS` 的权重本来就极低，
+   * 但仍然单独限一件：否则一轮出三件天纵，就不叫"很稀有"了）。
+   */
+  const rarePool = rareGoodsForSectLevel(state.sect.level);
+  const rarePick = rarePool.length > 0 && pool.length > 0 && capacity > 2 ? weightedDraw(rarePool, 1, random) : [];
+  const allPicked = [...picked, ...rarePick].slice(0, capacity);
+
+  return allPicked.map((good) => {
+
+    const rare = (good as { unlockSectLevel?: number }).unlockSectLevel;
+    return {
+      id: randomId('o', random),
+      kind: good.kind,
+      item: good.item,
+      // 稀有货一律 1 件（"很稀有"），普通货按境界放大
+      amount: rare !== undefined ? 1 : Math.max(1, Math.round(good.baseAmount * amountScale(state, good.kind))),
+      price: Math.max(1, Math.round(good.basePrice * priceScale(state, good.kind))),
+      sold: false,
+    };
+  });
 }
 
 /** 手动刷新货架（商行建成时、以及倒计时归零时调用） */

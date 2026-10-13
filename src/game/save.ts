@@ -38,6 +38,7 @@ import {
   HAPPINESS_MAX,
   HAPPINESS_MIN,
   HAPPINESS_NEUTRAL,
+  CARAVAN_INTERVAL_SECONDS,
   TALISMAN_MAP,
   MANUAL_MAP,
   manualIdOfFragment,
@@ -237,6 +238,10 @@ export interface SerializedGame {
   hp?: unknown;
   /** 空间禁制层数（需求 6） */
   sw?: unknown;
+  /** 到访中的商队（需求 7） */
+  cv?: unknown;
+  /** 下一支商队的倒计时（需求 7） */
+  cvt?: unknown;
   /** 秘境探索次数（需求 9 的危险度进度） */
   rr?: unknown;
   /** 各条配方的自动合成目标存量（本轮需求 2） */
@@ -336,6 +341,8 @@ export function serialize(state: GameState): SerializedGame {
     rr: { ...state.realmRuns },
     hp: state.happiness,
     sw: { ...state.spatialWards },
+    cv: state.caravan ?? undefined,
+    cvt: state.caravanTimer,
     gc: { ...state.gearCharges },
     ri: state.realmIndex,
     li: state.layer,
@@ -423,6 +430,41 @@ function toDec(value: unknown, fallback = 0): Decimal {
 }
 
 /** 读一个夹在区间里的**浮点**数（幸福度用；toInt 会截断小数） */
+/**
+ * 读回商队（需求 7）。
+ *
+ * ⚠️ 这一块是**唯一**需要"读档时清洗嵌套结构"的地方：wants / offers
+ * 都是数组，旧存档或手改存档里可能是任意东西。宁可把整支商队丢掉
+ * （玩家只是少了一次交易），也不能让一个坏对象把界面炸掉。
+ */
+function sanitizeCaravan(raw: unknown): GameState['caravan'] {
+  if (raw === null || typeof raw !== 'object') return null;
+  const source = raw as Record<string, unknown>;
+  const cleanList = (list: unknown): { id: string; name: string; icon: string; amount: number; value: number }[] => {
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((x): x is Record<string, unknown> => x !== null && typeof x === 'object')
+      .map((x) => ({
+        id: String(x.id ?? ''),
+        name: String(x.name ?? ''),
+        icon: String(x.icon ?? '📦'),
+        amount: Math.max(1, Math.floor(Number(x.amount ?? 1)) || 1),
+        value: Math.max(0, Number(x.value ?? 0) || 0),
+      }))
+      .filter((x) => x.id !== '')
+      .slice(0, 8);
+  };
+  const wants = cleanList(source.wants);
+  const offers = cleanList(source.offers);
+  if (wants.length === 0 && offers.length === 0) return null;
+  return {
+    id: String(source.id ?? 'c0'),
+    wants,
+    offers,
+    secondsLeft: Math.max(0, Number(source.secondsLeft ?? 0) || 0),
+  };
+}
+
 function toClamped(value: unknown, fallback: number, min: number, max: number): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -1126,6 +1168,9 @@ export function deserialize(raw: unknown): GameState | null {
     realmRuns: toIntMap(data.rr),
     happiness: toClamped(data.hp, HAPPINESS_NEUTRAL, HAPPINESS_MIN, HAPPINESS_MAX),
     spatialWards: toIntMap(data.sw, 64),
+    // 商队（需求 7）：到访中的那一支要连清单一起恢复
+    caravan: sanitizeCaravan(data.cv),
+    caravanTimer: toInt(data.cvt, 0, 0, CARAVAN_INTERVAL_SECONDS),
     realmIndex,
     layer,
     globalBreakthroughBonus: toFloat(data.gb, 0, 0, 10),

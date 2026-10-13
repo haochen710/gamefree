@@ -205,6 +205,39 @@ export interface ShopState {
 /* 主状态                                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 商队交易的物品 id 是**跨表**的：资源、材料、丹药、符箓、装备、器物
+ * 各有各的 id 空间，所以这里用一个宽类型（string），
+ * 只在真正落到 addItem / payCost 时断言。
+ */
+export type TradeItemId = string;
+
+export interface CaravanWant {
+  id: TradeItemId;
+  name: string;
+  icon: string;
+  amount: number;
+  /** 这一份"想要的东西"值多少灵石（用来折算对方给多少货） */
+  value: number;
+}
+
+export interface CaravanOffer {
+  id: TradeItemId;
+  name: string;
+  icon: string;
+  amount: number;
+  value: number;
+}
+
+export interface Caravan {
+  id: string;
+  /** 商队想要的东西（从玩家手上收） */
+  wants: CaravanWant[];
+  /** 商队带来的东西（给玩家） */
+  offers: CaravanOffer[];
+  secondsLeft: number;
+}
+
 export interface GameState {
   /** 存档格式版本 */
   version: number;
@@ -334,6 +367,15 @@ export interface GameState {
    * 每层给那座库房 +25% 容量，可叠加、逐次变贵。
    */
   spatialWards: Record<string, number>;
+  /**
+   * 到访中的商队（需求 7）：为 null 表示当前没有商队。
+   *
+   * ⚠️ 它连 wants / offers 一起存进存档 —— 商队停在门口时玩家下线，
+   * 回来应该还是那一队人、那一张清单。
+   */
+  caravan: Caravan | null;
+  /** 下一支商队还有多久到（秒） */
+  caravanTimer: number;
   /** 已铸成的丹炉（设定集第 11 章）：炉鼎 id 列表；开局那口默认炉不在这里 */
   furnaces: string[];
   /** 当前在用的炉鼎 */
@@ -575,6 +617,8 @@ export function createInitialState(now = Date.now()): GameState {
     talismanTier: 1,
     happiness: 50,
     spatialWards: {},
+    caravan: null,
+    caravanTimer: 0,
     furnaces: [],
     furnaceId: DEFAULT_FURNACE_ID,
     fame: 0,

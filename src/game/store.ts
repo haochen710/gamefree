@@ -46,6 +46,7 @@ import * as gear from './gear';
 import * as posting from './posting';
 import * as talismans from './talismans';
 import * as spatial from './spatial';
+import * as caravan from './caravan';
 import * as travel from './travel';
 import * as encounter from './encounter';
 import * as enlightenment from './enlightenment';
@@ -190,6 +191,14 @@ export interface GameStore {
   /* 空间禁制（需求 6） */
   /** 给某座库房施加一层空间禁制：永久 +25% 容量，可叠加、逐次变贵 */
   applySpatialWard(buildingId: string): void;
+
+  /* 商行卖出与商队（需求 7） */
+  /** 卖出一样材料 / 资源换灵石（买价的 40%） */
+  sellItem(id: string, amount: number): void;
+  /** 与到访的商队以物易物 */
+  barterCaravan(): void;
+  /** 把商队打发走 */
+  dismissCaravan(): void;
 
   /* 仆人 */
   recruitServant(job: string): void;
@@ -891,6 +900,29 @@ export const useGame = create<GameStore>()((set, get) => ({
         ...nextGame(s.game, next),
         notice: `${name}已施加第 ${stacks} 层空间禁制（容量 +${Math.round(stacks * SPATIAL_WARD_CAPACITY_BONUS * 100)}%）`,
       };
+    });
+  },
+
+  sellItem: (id, amount) => {
+    set((s) => {
+      const result = caravan.sellItem(s.game, id, amount);
+      if (result.gained <= 0) return { notice: result.message };
+      return { ...nextGame(s.game, result.state), notice: result.message };
+    });
+  },
+
+  barterCaravan: () => {
+    set((s) => {
+      const result = caravan.doBarter(s.game);
+      if (result.state === s.game) return { notice: result.message };
+      return { ...nextGame(s.game, result.state), notice: result.message };
+    });
+  },
+
+  dismissCaravan: () => {
+    set((s) => {
+      if (!s.game.caravan) return { notice: '现在没有商队' };
+      return { ...nextGame(s.game, caravan.dismissCaravan(s.game)), notice: '商队已经离开' };
     });
   },
 

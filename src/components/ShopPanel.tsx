@@ -7,10 +7,11 @@
  * ⚠️ 本轮需求 5 起它是**与洞府同级的独立页签**（原先挤在灵植页的右栏里）。
  */
 import { fmt, fmtDuration } from '../game/decimal';
-import { BLUEPRINT_MAP, SHOP_OFFER_COUNT, SHOP_REFRESH_SECONDS } from '../game/content';
+import { BLUEPRINT_MAP, CARAVAN_INTERVAL_SECONDS, SELL_RATIO, SHOP_OFFER_COUNT, SHOP_REFRESH_SECONDS } from '../game/content';
 import { getShopOfferCapacity, hasShop } from '../game/engine';
 import { canBuyOffer, describeOffer } from '../game/shop';
 import { getOfferPrice } from '../game/shop';
+import { canBarter, getSellableGoods } from '../game/caravan';
 // 需求 12：声望商店并到商行之后，这两个也跟着过来
 import { famGoodView, getFame } from '../game/fame';
 import { useGame } from '../game/store';
@@ -109,6 +110,12 @@ export function ShopPanel() {
         })}
       </div>
 
+      {/* 需求 7：卖出 —— 把用不上的材料换成灵石 */}
+      <SellSection />
+
+      {/* 需求 7：商队事件 —— 以物易物 */}
+      <CaravanSection />
+
       {/*
         需求 12：声望商店合并到商行。
         灵石货架（上面）与声望货架（下面）现在同页 ——
@@ -125,9 +132,137 @@ export function ShopPanel() {
   );
 }
 
-/** 声望商店 */
-function FameShelf() {
+/* ------------------------------------------------------------------ */
+/* 需求 7：卖出与商队                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 卖出（需求 7）。
+ *
+ * 卖价 = 买入价 × 40%。界面上把这一条**直接写在标题旁边** ——
+ * 玩家第一次卖东西时最想知道的就是"我亏多少"。
+ */
+function SellSection() {
   const game = useGame((s) => s.game);
+  const sell = useGame((s) => s.sellItem);
+  const goods = getSellableGoods(game);
+
+  return (
+    <>
+      <h3 className="panel__subtitle">卖出（按买入价的 {Math.round(SELL_RATIO * 100)}%）</h3>
+      <p className="panel__note">
+        商行也收货。卖价是买入价的 {Math.round(SELL_RATIO * 100)}% ——
+        所以「低买高卖」是赚不到钱的，但把秘境里用不上的材料换成灵石很划算。
+      </p>
+      {goods.length === 0 && <p className="panel__note">你手上还没有商行收的东西。</p>}
+      <div className="shop-grid">
+        {goods.map((good) => (
+          <article key={good.id} className="shop-card">
+            <div className="shop-card__head">
+              <span className="shop-card__icon">{good.icon}</span>
+              <span className="shop-card__name">{good.name}</span>
+            </div>
+            <div className="shop-card__amount">持有 {good.have}</div>
+            <div className="shop-card__foot">
+              <span className="shop-card__price">💎{fmt(good.price)}/个</span>
+              <span className="btn-row">
+                <button type="button" className="btn btn--tiny" onClick={() => sell(good.id, 1)}>
+                  卖 1
+                </button>
+                <button type="button" className="btn btn--tiny" onClick={() => sell(good.id, 100)}>
+                  卖 100
+                </button>
+              </span>
+            </div>
+          </article>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/**
+ * 商队（需求 7）。
+ *
+ * 商队来时列两栏：**它要什么**与**它带什么**，按价值对等折算。
+ * 玩家的决策点因此是"我舍不舍得拿这些换那些"，而不是"够不够钱"。
+ */
+function CaravanSection() {
+  const game = useGame((s) => s.game);
+  const barter = useGame((s) => s.barterCaravan);
+  const dismiss = useGame((s) => s.dismissCaravan);
+  const caravan = game.caravan;
+
+  if (!caravan) {
+    const left = CARAVAN_INTERVAL_SECONDS - (game.caravanTimer ?? 0);
+    return (
+      <>
+        <h3 className="panel__subtitle">商队</h3>
+        <p className="panel__note">
+          下一支商队约 <strong>{fmtDuration(Math.max(0, left))}</strong> 后到（商队来得很稀，
+          这是需求 8 定下的口径）。商队会带上你**拿不出来**的东西 ——
+          用你富余的材料去换，是稀有货最稳的来源之一。
+        </p>
+      </>
+    );
+  }
+
+  const check = canBarter(game);
+  return (
+    <>
+      <h3 className="panel__subtitle">商队到访（{fmtDuration(caravan.secondsLeft)} 后离开）</h3>
+      <p className="panel__note">
+        以物易物：商队按<strong>价值对等</strong>折算，所以换不换只取决于你舍不舍得。
+        {check.ok ? '' : ` 现在换不了：${check.reason}`}
+      </p>
+
+      <div className="shop-grid">
+        <div className="notice-board">
+          <div className="notice-board__head">
+            <span>📤 商队想要</span>
+          </div>
+          {caravan.wants.map((want) => (
+            <div key={want.id} className="notice-board__row">
+              <span className="notice-board__name">
+                {want.icon}
+                {want.name}
+              </span>
+              <span className="notice-board__missing">×{want.amount}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="notice-board">
+          <div className="notice-board__head">
+            <span>📥 商队带来</span>
+          </div>
+          {caravan.offers.length === 0 && <p className="panel__note">这一趟只收不卖（它也没货了）。</p>}
+          {caravan.offers.map((offer) => (
+            <div key={offer.id} className="notice-board__row">
+              <span className="notice-board__name">
+                {offer.icon}
+                {offer.name}
+              </span>
+              <span className="notice-board__missing">×{offer.amount}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="btn-row">
+        <button type="button" className="btn btn--primary" disabled={!check.ok} onClick={barter}>
+          成交
+        </button>
+        <button type="button" className="btn btn--tiny" onClick={dismiss}>
+          送客
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** 声望商店 */
+function FameShelf() {  const game = useGame((s) => s.game);
   const buy = useGame((s) => s.buyFameOffer);
 
   if (game.fameShop.offers.length === 0) {
