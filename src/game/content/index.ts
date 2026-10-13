@@ -43,5 +43,6 @@ export * from './fame';
 export * from './diplomacy';
 export * from './furnace';
 export * from './skills';
+export * from './talismans';
 export * from './servants';
 export * from './enlightenment';

@@ -18,6 +18,7 @@ import { fmt, fmtDuration } from '../game/decimal';
 import {
   APTITUDE_MAP,
   HIGH_RISK_CASUALTY,
+  PARTY_SIZE_MAX,
   ITEM_MAP,
   MAJOR_REGIONS,
   MAP_REGIONS,
@@ -53,6 +54,9 @@ import {
 } from '../game/engine';
 import {
   autoSelectParty,
+  effectiveMinParty,
+  getRealmDanger,
+  getRealmRuns,
   autoSelectSurveyParty,
   canStartExpedition,
   MAX_EXPEDITION_REPEAT,
@@ -107,7 +111,11 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
 
   const toggle = (id: string) => {
     setSelected((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : prev.length >= def.maxParty ? prev : [...prev, id],
+      prev.includes(id)
+        ? prev.filter((x) => x !== id)
+        : prev.length >= PARTY_SIZE_MAX
+          ? prev
+          : [...prev, id],
     );
   };
 
@@ -139,7 +147,11 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
 
       <div className="realm-card__stats">
         <span>推荐战力 <strong>{fmt(def.requiredPower)}</strong></span>
-        <span>人数 {def.minParty}~{def.maxParty}</span>
+        {/* 需求 9：队伍规模固定 12~20（早期人手不足时下限自动放宽） */}
+        <span>
+          人数 {effectiveMinParty(state, def)}~{PARTY_SIZE_MAX}
+        </span>
+        <span title="探得越多越熟，伤亡越低">危险度 {Math.round(getRealmDanger(state, def.id) * 100)}%</span>
         <span>{REALMS[def.minRealm].name}以上</span>
         <span>约 {Math.round(def.duration / 60)} 分钟</span>
         <span>伤亡率 {(def.baseCasualty * 100).toFixed(0)}%</span>
@@ -160,7 +172,8 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
         >
           当前队伍战力 {fmt(Math.round(partyPower))} / {fmt(def.requiredPower)}
           <em>
-            （{selected.length}/{def.maxParty} 人 · 产量 ×{sizeFactor.toFixed(2)} · 抽 {rolls} 条）
+            （{selected.length}/{PARTY_SIZE_MAX} 人 · 产量 ×{sizeFactor.toFixed(2)} · 抽 {rolls} 条 · 已探
+            {getRealmRuns(state, def.id)} 次）
           </em>
         </div>
       )}
@@ -248,7 +261,7 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
         <button
           type="button"
           className="btn"
-          disabled={idle.length < def.minParty}
+          disabled={idle.length === 0}
           onClick={() => setSelected(autoSelectParty(state, def.id))}
         >
           满编推荐

@@ -48,6 +48,42 @@ export interface RealmDef {
   desc: string;
 }
 
+/**
+ * 进度放缓系数（需求 16：当前游戏进度过快，而且**越到后面越慢**）。
+ *
+ * 这两个表按境界下标逐项变大，作用在两处闸门上：
+ *   - `progressQiScale`：掌门突破所需的灵气；
+ *   - `progressYearScale`：弟子推进一个境界所需的修为。
+ *
+ * 为什么用"系数表"而不是直接改九行数字：改数字会同时改变界面上
+ * 每一处"还需 X 灵气"的读数，而系数表让"慢了多少"这件事本身有一个
+ * 可以调整、可以解释、也可以一键回退的地方。
+ *
+ * 曲线形状：前三个境界基本不动（新手期不能劝退），从元婴期开始加速变陡，
+ * 渡劫期约为炼气期的 6 倍 —— 所以"越到后面越慢"是**真的越到后面越慢**。
+ */
+export const PROGRESS_QI_SCALE: number[] = [1, 1, 1.15, 1.5, 2.1, 2.8, 3.6, 4.6, 6];
+/*
+ * ⚠️ 弟子那条线要乘得更狠：需求 9 同时把"探索心得"抬了 1.7 倍，
+ * 而弟子的修行速度基本等于心得 × 建筑加成。系数不够大的话，
+ * 弟子会比掌门跑得还快（实测弟子一度比掌门先进渡劫）。
+ */
+export const PROGRESS_YEAR_SCALE: number[] = [1, 1, 1.5, 2.2, 3.4, 5, 7.5, 11, 16];
+
+/** 掌门突破所需灵气的实际值（已含进度系数） */
+export function scaledBreakthroughQi(index: number): number {
+  const realm = REALMS[index];
+  if (!realm) return 0;
+  return realm.breakthroughQi * (PROGRESS_QI_SCALE[index] ?? 1);
+}
+
+/** 弟子推进一个境界所需的实际修为（已含进度系数） */
+export function scaledCultivationYears(index: number): number {
+  const realm = REALMS[index];
+  if (!realm) return 0;
+  return realm.cultivationYears * (PROGRESS_YEAR_SCALE[index] ?? 1);
+}
+
 export const REALMS: RealmDef[] = [
   {
     name: '炼气期',

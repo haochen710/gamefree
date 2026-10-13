@@ -226,8 +226,12 @@ export function canCraftPill(state: GameState, pillId: string): CraftCheck {
  *   5. 弟子的**种田天赋**（炉火通灵 / 锻器巧手，设定集第 8.4 章）——
  *      按 √人数 给全宗加成，所以不会因为"招了一千个弟子"把成功率顶穿。
  */
-export function getCraftSuccessRate(state: GameState, kind: 'alchemy' | 'refining', targetTier: number): number {
-  const own = kind === 'alchemy' ? state.alchemyTier : state.refiningTier;
+export function getCraftSuccessRate(
+  state: GameState,
+  kind: 'alchemy' | 'refining' | 'talisman',
+  targetTier: number,
+): number {
+  const own = kind === 'alchemy' ? state.alchemyTier : kind === 'refining' ? state.refiningTier : state.talismanTier;
   const gap = own - targetTier;
 
   // 需求明文：差三个品阶必定成功
@@ -237,16 +241,19 @@ export function getCraftSuccessRate(state: GameState, kind: 'alchemy' | 'refinin
   const building =
     kind === 'alchemy'
       ? getStructureBonus(state, 'alchemySuccessBonus')
-      : getStructureBonus(state, 'refiningSuccessBonus');
+      : kind === 'refining'
+        ? getStructureBonus(state, 'refiningSuccessBonus')
+        : 0;
   /*
    * 生产天赋（√人数）与**派遣岗位**（需求 3 / 12）是两条独立加算线：
    *   天赋 = "你招到了什么人"，岗位 = "你把谁安排在了哪儿"。
    * 前者随人数递减，后者受岗位数封顶 —— 各有一道天花板。
    */
-  const talent = getFarmTalentBonus(state, kind === 'alchemy' ? 'alchemyRate' : 'refiningRate');
+  const talentTarget = kind === 'alchemy' ? 'alchemyRate' : kind === 'refining' ? 'refiningRate' : 'talismanRate';
+  const talent = getFarmTalentBonus(state, talentTarget);
   const post = getPostBonusHere(state, kind);
-  // 丹炉九件（设定集第 11 章）：当前那口炉子的成功率加成
-  const furnace = kind === 'alchemy' ? furnaceAlchemyBonus(state) : furnaceRefiningBonus(state);
+  // 丹炉九件（设定集第 11 章）：当前那口炉子的成功率加成（符箓不吃炉子）
+  const furnace = kind === 'alchemy' ? furnaceAlchemyBonus(state) : kind === 'refining' ? furnaceRefiningBonus(state) : 0;
   // 丹鼎天成（先天特质）：炼丹成功率 +12%
   const trait = kind === 'alchemy' ? getTraitEffect(state, 'alchemyBonus', 0) : 0;
   const bonus = gap > 0 ? gap * CRAFT_MASTER_GAP_BONUS : 0;
@@ -256,7 +263,11 @@ export function getCraftSuccessRate(state: GameState, kind: 'alchemy' | 'refinin
 }
 
 /** 界面用：说清楚"为什么会失败/为什么会必成" */
-export function describeCraftRate(state: GameState, kind: 'alchemy' | 'refining', targetTier: number): string {
+export function describeCraftRate(
+  state: GameState,
+  kind: 'alchemy' | 'refining' | 'talisman',
+  targetTier: number,
+): string {
   const own = kind === 'alchemy' ? state.alchemyTier : state.refiningTier;
   const rate = getCraftSuccessRate(state, kind, targetTier);
   if (own - targetTier >= CRAFT_MASTER_GAP) {

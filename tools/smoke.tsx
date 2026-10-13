@@ -41,7 +41,11 @@ import JournalPanel from '../src/components/JournalPanel';
 import ManualPanel from '../src/components/ManualPanel';
 import FamePanel from '../src/components/FamePanel';
 import GearPanel from '../src/components/GearPanel';
+import PostPanel from '../src/components/PostPanel';
+import TalismanPanel from '../src/components/TalismanPanel';
 import * as manuals from '../src/game/manuals';
+import * as posting from '../src/game/posting';
+import * as talismans from '../src/game/talismans';
 import * as fame from '../src/game/fame';
 import * as gear from '../src/game/gear';
 import * as diplomacy from '../src/game/diplomacy';
@@ -97,7 +101,16 @@ import {
   GEARS,
   FURNACE_MAP,
   INJURY_FROM_REALM,
+  EXPEDITION_COOLDOWN_SCALE,
+  EXPEDITION_DURATION_SCALE,
+  EXPEDITION_INSIGHT_SCALE,
+  FARM_TALENT_MAP,
   FURNACES,
+  PARTY_SIZE_MAX,
+  SKILL_MAX_LEVEL,
+  skillBonus,
+  skillLevelOf,
+  TALISMANS,
   LOYALTY_IDLE_DECAY_SECONDS,
   LOYALTY_INITIAL,
   LOYALTY_NEGLECT_FLOOR,
@@ -1292,7 +1305,11 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
   let strong: GameState = grant(createInitialState(0), { stone: '1e9' });
   strong = forceBuild(strong, 'thatchHut', 5);
   strong = { ...strong, sect: { ...strong.sect, founded: true } };
-  for (let i = 0; i < 6; i += 1) strong = recruitHoused(strong, makeRandom(100 + i)).state;
+  /*
+   * 需求 9 之后队伍规模是 12~20 人 —— 测试宗门至少得凑得出一支满编队伍，
+   * 否则"人多产出多""未被派遣的仍空闲"这些断言根本无从成立（原为 6 人）。
+   */
+  for (let i = 0; i < 24; i += 1) strong = recruitHoused(strong, makeRandom(100 + i)).state;
   strong = {
     ...strong,
     sect: {
@@ -1309,19 +1326,30 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
   );
   check('未发现的秘境不能派遣', !expeditions.canStartExpedition(strong, 'boundlessSea_15_r0', ['x']).ok);
 
-  const minIds = strong.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
+  /*
+   * 需求 9：队伍规模改成 12~20（人手不足时自动放宽到"有多少派多少"），
+   * 所以测试不能再按 realm.minParty 派一两个人 —— 用同一个口径算。
+   */
+  const wantParty = Math.min(expeditions.effectiveMinParty(strong, realm), strong.sect.disciples.length);
+  const minIds = strong.sect.disciples.slice(0, wantParty).map((d) => d.id);
   check('战力充足的队伍可以派遣', expeditions.canStartExpedition(strong, realm.id, minIds).ok);
 
   const started = expeditions.startExpedition(strong, realm.id, minIds);
   check('派遣后产生探索任务', started.expeditions.length === 1);
   check(
     '被派遣的弟子状态为探索中',
-    started.sect.disciples.filter((d) => d.status === 'exploring').length === realm.minParty,
+    started.sect.disciples.filter((d) => d.status === 'exploring').length === wantParty,
   );
   check('未被派遣的弟子仍空闲', started.sect.disciples.some((d) => d.status === 'idle'));
 
   // 推进到完成
-  const done = expeditions.tickExpeditions(started, realm.duration + 1, makeRandom(42));
+  /*
+   * 需求 9 把探索时长整体拉长了（EXPEDITION_DURATION_SCALE），
+   * 所以推进的时间要按队伍里那条 expedition 的 duration 算，
+   * 不能再用 realm.duration（那是"原始时长"）。
+   */
+  const startedDuration = started.expeditions[0].duration;
+  const done = expeditions.tickExpeditions(started, startedDuration + 1, makeRandom(42));
   check('探索完成后清空任务', done.expeditions.length === 0);
   check('探索完成后弟子恢复空闲', done.sect.disciples.every((d) => d.status === 'idle'));
   check('探索获得妖丹', done.materials.demonCore.gt(0), `+${done.materials.demonCore.toString()}`);
@@ -1332,23 +1360,26 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
   /* ---- 需求 1：探索后需要隔一段时间才能再探 ---- */
   check('探索结束后进入冷却', engine.getRealmCooldown(done, realm.id) > 0, `${engine.getRealmCooldown(done, realm.id)} 秒`);
   check('冷却中不能立刻再派', !expeditions.canStartExpedition(done, realm.id, minIds).ok);
-  const cooled = engine.tickRealmCooldowns(done, realm.cooldown + 1);
+  // 冷却也被拉长了（需求 9），按实际冷却值走
+  const cooled = engine.tickRealmCooldowns(done, realm.cooldown * EXPEDITION_COOLDOWN_SCALE + 1);
   check('冷却走完就能再派', engine.getRealmCooldown(cooled, realm.id) === 0);
   check('冷却结束后可以再派遣', expeditions.canStartExpedition(cooled, realm.id, minIds).ok);
 
   /* ---- 需求 1：人越多最终获取的资源越多 ---- */
-  check('人数系数随人数增长', expeditions.getPartySizeFactor(realm, realm.minParty + 2) > 1);
+  check('人数系数随人数增长', expeditions.getPartySizeFactor(realm, wantParty + 2) > 1);
   check(
     '掉落条目数随人数增长',
-    expeditions.getLootRolls(realm, realm.maxParty) > expeditions.getLootRolls(realm, realm.minParty),
-    `${expeditions.getLootRolls(realm, realm.minParty)} → ${expeditions.getLootRolls(realm, realm.maxParty)}`,
+    // 6 条上限会被 12 人以上的队伍打满，所以用"小队 vs 满编"来验证这条规则
+    expeditions.getLootRolls(realm, 20) > expeditions.getLootRolls(realm, 2),
+    `${expeditions.getLootRolls(realm, 2)} → ${expeditions.getLootRolls(realm, 20)}`,
   );
-  check('超出上限会被拒绝', !expeditions.canStartExpedition(strong, realm.id, strong.sect.disciples.map((d) => d.id)).ok);
+  // 需求 9：上限提到 20 人，六个弟子的宗门已经派不满了 —— 造 25 个才能越界
+  check('超出上限会被拒绝', !expeditions.canStartExpedition(strong, realm.id, Array.from({ length: 25 }, (_, i) => `x${i}`)).ok);
   check('低于下限会被拒绝', !expeditions.canStartExpedition(strong, realm.id, []).ok);
 
   // 同样条件下，人多的一方拿到的资源更多
-  const smallParty = strong.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
-  const bigParty = strong.sect.disciples.slice(0, realm.maxParty).map((d) => d.id);
+  const smallParty = strong.sect.disciples.slice(0, 12).map((d) => d.id);
+  const bigParty = strong.sect.disciples.slice(0, 20).map((d) => d.id);
   const runWith = (party: string[]) => {
     const withStatus = disciples.setDiscipleStatus(strong, party, 'exploring', 'test');
     return expeditions.resolveExpedition(
@@ -1369,8 +1400,37 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
   weak = forceBuild(weak, 'thatchHut', 3);
   weak = { ...weak, sect: { ...weak.sect, founded: true } };
   for (let i = 0; i < 3; i += 1) weak = recruitHoused(weak, makeRandom(200 + i)).state;
-  const weakIds = weak.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
+  /*
+   * 弱队这一段：队伍下限现在走 effectiveMinParty（人手不足时放宽到"有多少派多少"），
+   * 所以这里派**全部**弟子 —— 而且要先确认派遣真的成立，
+   * 否则 weakStarted.expeditions[0] 会是 undefined（本轮就踩了这个）。
+   */
+  /*
+   * ⚠️ 先把个人减伤清成 0：需求 13 规定"个人减伤 ≥ 本次伤亡率 → 必定不死"，
+   * 而低级秘境 baseCasualty 只有 2% —— 普通弟子随便就有 5% 减伤，
+   * 不清零的话这条测试永远测不到"战力不足会死人"。
+   */
+  weak = {
+    ...weak,
+    sect: {
+      ...weak.sect,
+      disciples: weak.sect.disciples.map((d) => ({
+        ...d,
+        combatTalent: 'beastWhisper' as const, // 唯一一项不带减伤的战斗天赋
+        personality: 'greedy' as const, // 贪利也不减伤
+        loyalty: 50, // 寻常档：不加不减
+        cultivationManual: '',
+        combatManual: '',
+      })),
+    },
+  };
+  const weakIds = weak.sect.disciples.map((d) => d.id);
   const weakStarted = expeditions.startExpedition(weak, realm.id, weakIds);
+  check(
+    '战力不足的小队也能出发（下限会自动放宽）',
+    weakStarted.expeditions.length === 1,
+    `队伍 ${weakIds.length} 人 / 需 ${expeditions.effectiveMinParty(weak, realm)} 人`,
+  );
   const weakResolved = expeditions.resolveExpedition(
     weakStarted,
     weakStarted.expeditions[0],
@@ -5154,8 +5214,9 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
 
   /* ---- 需求 4：循环探索 ---- */
   {
-    check('循环上限是 30', MAX_EXPEDITION_REPEAT === 30);
-    check('次数会被夹到 1~30', clampRepeat(0) === 1 && clampRepeat(999) === 30 && clampRepeat(7) === 7);
+    // 需求 9：循环上限从 30 降到 10
+  check('循环上限是 10', MAX_EXPEDITION_REPEAT === 10);
+    check('次数会被夹到 1~10', clampRepeat(0) === 1 && clampRepeat(999) === 10 && clampRepeat(7) === 7);
 
     let s: GameState = grant(createInitialState(0), { qi: '1e12', stone: '1e9', wood: '1e9', ore: '1e9' });
     s = forceBuild(s, 'thatchHut', 20);
@@ -5165,10 +5226,14 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
     if (realm) {
       const discovered: GameState = { ...s, discoveredRealms: { ...s.discoveredRealms, [realm.id]: true } };
       let withParty = discovered;
-      for (let i = 0; i < realm.minParty + 1; i += 1) {
+      /*
+       * 需求 9 之后队伍下限是 12 人（人手不足时放宽）——
+       * 所以这里要招够一支满编队伍，否则会被"至少需派遣 N 名弟子"挡住。
+       */
+      for (let i = 0; i < 20; i += 1) {
         withParty = recruitHoused(withParty, makeRandom(500 + i)).state;
       }
-      const ids = withParty.sect.disciples.slice(0, realm.minParty).map((d) => d.id);
+      const ids = withParty.sect.disciples.slice(0, expeditions.effectiveMinParty(withParty, realm)).map((d) => d.id);
       const startCheck = canStartExpedition(withParty, realm.id, ids);
       check('可以派出队伍', startCheck.ok, startCheck.reason ?? '');
 
@@ -5180,7 +5245,9 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
       );
 
       // 推完第一趟：应该自动重新排上，并进入「等冷却」（负进度）
-      const done = tickExpeditions(looping, realm.duration + 1, makeRandom(2));
+      // 需求 9 把探索时长拉了 1.9 倍 —— 推进量要按队伍自己记的 duration 算
+      const oneRun = looping.expeditions[0]?.duration ?? realm.duration;
+      const done = tickExpeditions(looping, oneRun + 1, makeRandom(2));
       check('做完一趟后还剩 2 趟', done.expeditions[0]?.repeatLeft === 2, String(done.expeditions[0]?.repeatLeft));
       check(
         '重新排上时在等冷却（负进度）',
@@ -5192,9 +5259,10 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
         done.sect.disciples.filter((d) => ids.includes(d.id)).every((d) => d.status === 'exploring'),
       );
 
-      // 只做一趟时不该重排
+      // 只做一趟时不该重排（推进量同样按实际时长算）
       const single = startExpedition(withParty, realm.id, ids, makeRandom(3), 1);
-      const singleDone = tickExpeditions(single, realm.duration + 1, makeRandom(4));
+      const singleRun = single.expeditions[0]?.duration ?? realm.duration;
+      const singleDone = tickExpeditions(single, singleRun + 1, makeRandom(4));
       check('只做一趟时不会重排', singleDone.expeditions.length === 0);
       check(
         '只做一趟后队员恢复空闲',
@@ -7240,6 +7308,173 @@ section('[49] 回归：随机事件的节奏 · 道伤只来自玩家自己的�
       })(),
       `平均 ${Math.round(ENCOUNTER_INTERVAL / ENCOUNTER_CHANCE)} 秒一次`,
     );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 50. 需求文档第三批：天赋六类 · 派遣 · 技艺 · 符箓 · 秘境大改            */
+/* ------------------------------------------------------------------ */
+section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求 3 / 8 / 9 / 12）');
+{
+  const base = (): GameState => ({
+    // 三品符要星砂 / 月华晶这类高阶材料，所以"富裕宗门"要连它们一起发
+    ...grant(createInitialState(0), {
+      qi: '1e12',
+      wood: '1e9',
+      stone: '1e9',
+      herb: '1e9',
+      ore: '1e9',
+      spiritSilk: '1e6',
+      demonCore: '1e6',
+      starSand: '1e6',
+      lunarCrystal: '1e6',
+      moonDew: '1e6',
+      dragonBlood: '1e5',
+      netherFlame: '1e5',
+      immortalJade: '1e5',
+    }),
+    sect: { ...createInitialState(0).sect, founded: true, level: 5 },
+  });
+
+  /* ---- 天赋六类 ---- */
+  {
+    check('战斗辅助天赋 6 项，且都不给自己减伤', COMBAT_SUPPORT_TALENTS.length === 6 && COMBAT_SUPPORT_TALENTS.every((t) => t.family === 'support'));
+    check('生产天赋四类齐全',
+      (['alchemy', 'refining', 'talisman', 'farm'] as const).every((k) => FARM_TALENTS.some((t) => t.kind === k)),
+      FARM_TALENTS.map((t) => t.kind).join(','));
+    const rolls = Array.from({ length: 300 }, (_, i) => disciples.rollDisciple(9, i, makeRandom(i + 1)));
+    check('战斗槽只出战斗类（含辅助）', rolls.every((d) => COMBAT_TALENT_IDS.includes(d.combatTalent)));
+    check('生产槽只出四类生产天赋', rolls.every((d) => FARM_TALENT_MAP[d.farmTalent] !== undefined));
+  }
+
+  /* ---- 派遣与技艺 ---- */
+  {
+    let s = forceBuild(base(), 'alchemyRoom', 2);
+    s = forceBuild(s, 'herbField', 1);
+    check('丹房岗位 = 2 座 × 2 人 = 4', posting.getPostCapacity(s, 'alchemyRoom') === 4);
+    check('灵田岗位 = 1 座 × 3 人 = 3', posting.getPostCapacity(s, 'herbField') === 3);
+
+    // 造两个弟子：一个炼丹天赋（对口）、一个种田天赋（不对口）
+    const alchemist = makeDisciple({ id: 'p1', farmTalent: 'furnaceAdept', realmIndex: 2 });
+    const farmer = makeDisciple({ id: 'p2', farmTalent: 'herbWhisper', realmIndex: 2 });
+    s = { ...s, sect: { ...s.sect, disciples: [alchemist, farmer] } };
+
+    check('可以安排入岗', posting.canPost(s, 'p1', 'alchemyRoom').ok, posting.canPost(s, 'p1', 'alchemyRoom').reason ?? '');
+    const posted = posting.postDisciple(s, 'p1', 'alchemyRoom');
+    check('入岗后 post 记在弟子身上', posted.sect.disciples[0].post === 'alchemyRoom');
+    check('入岗后状态是 posted', posted.sect.disciples[0].status === 'posted');
+    check('派遣中的弟子不能去探索', !expeditions.canStartExpedition(posted, STARTER_REALM_ID, ['p1']).ok);
+    check('派遣给出设施加成', posting.getPostBonus(posted, 'alchemy') > 0, String(posting.getPostBonus(posted, 'alchemy')));
+    check('对口天赋的加成更高',
+      posting.getPostBonus(posted, 'alchemy') >
+        posting.getPostBonus({ ...posted, sect: { ...posted.sect, disciples: [{ ...posted.sect.disciples[0], farmTalent: 'herbWhisper' }] } }, 'alchemy'));
+
+    // 技艺点随时间积累
+    const ticked = posting.tickPosts(posted, 3600);
+    check('在岗会积累技艺点', (ticked.sect.disciples[0].skills.alchemy ?? 0) > 0, String(ticked.sect.disciples[0].skills.alchemy));
+    check('在岗也会涨心得', ticked.sect.disciples[0].insight > posted.sect.disciples[0].insight);
+    check('技艺等级是点数的纯函数', skillLevelOf(0) === 0 && skillLevelOf(1e9) === SKILL_MAX_LEVEL);
+    check('技艺等级越高加成越多', skillBonus(5000) > skillBonus(100));
+
+    // 一键填岗 + 全部撤回
+    const auto = posting.autoPostAll({ ...s, sect: { ...s.sect, disciples: [alchemist, farmer] } });
+    check('一键填岗把人放进对口的设施', auto.posted >= 1, String(auto.posted));
+    const cleared = posting.unpostAll(auto.state, 'alchemyRoom');
+    check('全部撤回后岗位清空', posting.getPostCount(cleared.state, 'alchemyRoom') === 0);
+    check('撤回后恢复空闲', cleared.state.sect.disciples.every((d) => d.post !== 'alchemyRoom' || d.status === 'idle'));
+  }
+
+  /* ---- 符箓 ---- */
+  {
+    check('符箓三类各三品共九张', TALISMANS.length === 9 && new Set(TALISMANS.map((t) => t.kind)).size === 3);
+    const s = { ...base(), talismanTier: 3 };
+    check('品阶不够就画不了一品以上的符', !talismans.canCraftTalisman({ ...s, talismanTier: 1 }, 'breakGold').ok);
+    check('品阶够就能画', talismans.canCraftTalisman(s, 'breakGold').ok, talismans.canCraftTalisman(s, 'breakGold').reason ?? '');
+
+    const rate = crafting.getCraftSuccessRate(s, 'talisman', 1);
+    check('制符走与炼丹同一条成功率公式', rate > 0 && rate <= 1, String(rate));
+    const made = talismans.craftTalisman(s, 'wardBasic', 5, 1, () => 0);
+    check('画符成功会进仓库', made.made === 5 && talismans.getTalismanCount(made.state, 'wardBasic') === 5, String(made.made));
+    const failed = talismans.craftTalisman(s, 'wardBasic', 3, 0.5, () => 0.99);
+    check('画符会失败且失败照样耗材料', failed.made === 0 && failed.state.resources.herb.lt(s.resources.herb));
+
+    // 三种符的效果各自落到 buff / 突破加成上
+    const withWard = talismans.craftTalisman(s, 'wardBasic', 1, 1, () => 0).state;
+    const usedWard = talismans.useTalisman(withWard, 'wardBasic');
+    check('护身符给的是「下一次探索免伤」', usedWard.ok && usedWard.state.buffs.safetyOnce === true && usedWard.state.buffs.safetyReduction > 0);
+    check('用掉后库存减一', talismans.getTalismanCount(usedWard.state, 'wardBasic') === 0);
+
+    const withSpirit = talismans.craftTalisman(s, 'spiritBasic', 1, 1, () => 0).state;
+    const usedSpirit = talismans.useTalisman(withSpirit, 'spiritBasic');
+    check('聚灵符给的是限时产量加成', usedSpirit.state.buffs.productionMultiplier > 1 && usedSpirit.state.buffs.productionSeconds > 0);
+
+    const withBreak = talismans.craftTalisman(s, 'breakBasic', 1, 1, () => 0).state;
+    const beforeRate = engine.getSuccessRate(engine.refreshUnlocks({ ...withBreak, realmIndex: 3 }));
+    const usedBreak = talismans.useTalisman(withBreak, 'breakBasic');
+    const afterRate = engine.getSuccessRate(engine.refreshUnlocks({ ...usedBreak.state, realmIndex: 3 }));
+    check('破境符提高突破成功率', afterRate > beforeRate, `${beforeRate.toFixed(3)} → ${afterRate.toFixed(3)}`);
+    check('没存货就用不了', !talismans.useTalisman(s, 'wardBasic').ok);
+  }
+
+  /* ---- 秘境大改（需求 9） ---- */
+  {
+    const realm = SECRET_REALM_MAP[STARTER_REALM_ID];
+    check('循环上限降到 10', MAX_EXPEDITION_REPEAT === 10);
+    check('队伍上限是 20', PARTY_SIZE_MAX === 20);
+    check('探索时长被拉长', EXPEDITION_DURATION_SCALE > 1);
+    check('探索冷却被拉长', EXPEDITION_COOLDOWN_SCALE > 1);
+    check('探索心得被提高', EXPEDITION_INSIGHT_SCALE > 1);
+
+    // 最低境界按「所在小区域」来定
+    const s = base();
+    check('最低境界取秘境与所在小区域里更高的那个',
+      expeditions.effectiveMinRealm(s, realm) >= realm.minRealm,
+      `${realm.minRealm} → ${expeditions.effectiveMinRealm(s, realm)}`);
+    const deepRealm = SECRET_REALMS.filter((r) => expeditions.effectiveMinRealm(s, r) >= 4)[0];
+    check('深处的秘境要求更高的境界', Boolean(deepRealm), deepRealm ? `${deepRealm.name} 需 ${expeditions.effectiveMinRealm(s, deepRealm)}` : '（没找到）');
+
+    // 危险度递减
+    check('新秘境危险度是满的', expeditions.getRealmDanger(s, realm.id) === 1);
+    const explored = { ...s, realmRuns: { [realm.id]: 6 } };
+    check('探过之后危险度下降', expeditions.getRealmDanger(explored, realm.id) === 0.5);
+    const safe = { ...s, realmRuns: { [realm.id]: 12 } };
+    check('探够次数就没有危险', expeditions.getRealmDanger(safe, realm.id) === 0);
+
+    // 境界压制：高出两个大境界不会伤亡
+    let party: GameState = {
+      ...grant(s, { stone: '1e9' }),
+      sect: {
+        ...s.sect,
+        disciples: Array.from({ length: 20 }, (_, i) =>
+          makeDisciple({ id: `x${i}`, aptitude: 'heaven', realmIndex: realm.minRealm + 3 }),
+        ),
+      },
+    };
+    const ids = party.sect.disciples.map((d) => d.id);
+    const started = expeditions.startExpedition(party, realm.id, ids);
+    check('满编队伍可以出发', started.expeditions.length === 1, `${ids.length} 人`);
+    check('出发时按倍率拉长了时长', (started.expeditions[0]?.duration ?? 0) >= realm.duration);
+    const resolved = expeditions.resolveExpedition(started, started.expeditions[0], () => 0.0001).state;
+    check('高出两个大境界的弟子不会伤亡', resolved.sect.disciples.length === ids.length, `${ids.length} → ${resolved.sect.disciples.length}`);
+    check('探过一次之后危险度进度 +1', expeditions.getRealmRuns(resolved, realm.id) === 1);
+  }
+
+  /* ---- 界面上看得见 ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    let rich = forceBuild(base(), 'alchemyRoom', 2);
+    rich = forceBuild(rich, 'talismanRoom', 1);
+    Object.assign(initial, { game: engine.refreshUnlocks(rich) });
+    const postHtml = renderToString(<PostPanel />);
+    check('派遣面板渲染出来了', postHtml.includes('派遣与技艺'));
+    check('列出四类技艺面', ['炼丹', '炼器', '制符', '种田'].every((n) => postHtml.includes(n)));
+
+    const talismanHtml = renderToString(<TalismanPanel />);
+    check('符箓面板渲染出来了', talismanHtml.includes('符箓'));
+    check('列出三类符', ['护身符', '聚灵符', '破境符'].every((n) => talismanHtml.includes(n)));
+    check('有画符按钮', talismanHtml.includes('画一张'));
+    Object.assign(initial, { game: backup.game });
   }
 }
 

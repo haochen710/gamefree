@@ -235,6 +235,13 @@ export interface GameState {
   /** 各秘境的冷却剩余秒数（需求 1：每次探索后要隔一段时间才能再探） */
   realmCooldowns: Record<string, number>;
   /**
+   * 每处秘境被探索过几次（需求 9 的"危险度进度条"）。
+   *
+   * 探得越多越熟，伤亡越低，直到完全无危险 —— 这让"反复刷同一处"
+   * 从单纯的重复劳动变成一条降低风险的路径。
+   */
+  realmRuns: Record<string, number>;
+  /**
    * 已经**开启**的秘境（需求 1）。
    *
    * 只有资源富集区的秘境需要先花一笔资源开启（见 `SecretRealmDef.unlockCost`），
@@ -310,6 +317,10 @@ export interface GameState {
   manualFragments: ItemCountMap;
   /** 弟子装备库存（设定集第 8.7 章）：装备 id → 件数 */
   gears: ItemCountMap;
+  /** 符箓库存（需求 8）：符箓 id → 张数 */
+  talismans: ItemCountMap;
+  /** 制符品阶（需求 8 / 12）：与炼丹术 / 炼器术同构 */
+  talismanTier: number;
   /** 已铸成的丹炉（设定集第 11 章）：炉鼎 id 列表；开局那口默认炉不在这里 */
   furnaces: string[];
   /** 当前在用的炉鼎 */
@@ -528,6 +539,7 @@ export function createInitialState(now = Date.now()): GameState {
     unlockedBuildings: createEmptyUnlocked(),
     discoveredRealms: createEmptyDiscoveredRealms(),
     realmCooldowns: {},
+    realmRuns: {},
     openedRealms: {},
     buildQueue: [],
     tiangongLevel: 0,
@@ -546,6 +558,8 @@ export function createInitialState(now = Date.now()): GameState {
     manuals: {},
     manualFragments: {},
     gears: {},
+    talismans: {},
+    talismanTier: 1,
     furnaces: [],
     furnaceId: DEFAULT_FURNACE_ID,
     fame: 0,

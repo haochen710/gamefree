@@ -654,6 +654,41 @@ export const DISCOVERY_MAX_CHANCE = 0.75;
 /** 伤亡率上限，避免高难度直接把队伍全灭 */
 export const MAX_CASUALTY_RATE = 0.6;
 
+/* ------------------------------------------------------------------ */
+/* 需求 9：队伍规模 / 危险度 / 境界压制                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 队伍规模固定在这个区间，具体人数由玩家选。
+ *
+ * 下限对**人手不足的早期宗门**会自动放宽：effectiveMinParty 取
+ * 「12 与能派出的空闲弟子数」里较小的那个。否则开局只有 3 个弟子时
+ * 所有秘境都进不去，游戏直接死在这里 —— 需求要的是"队伍要大"，
+ * 不是"早期不许玩"。
+ */
+export const PARTY_SIZE_MIN = 12;
+export const PARTY_SIZE_MAX = 20;
+
+/** 探索时长与冷却的整体倍率（需求 9：两者都要增加） */
+export const EXPEDITION_DURATION_SCALE = 1.9;
+export const EXPEDITION_COOLDOWN_SCALE = 2.6;
+
+/** 弟子每次探索获得的心得倍率（需求 9：从探索获取的经验增加） */
+export const EXPEDITION_INSIGHT_SCALE = 1.7;
+
+/**
+ * 一个秘境被探索多少次之后危险度归零（需求 9 的"危险度进度条"）。
+ *
+ * 取 12 是配着"循环上限 10 次"来的：挂满一轮循环之后这处秘境基本就熟了，
+ * 玩家的体感是"这地方我摸透了"。
+ */
+export const RUNS_TO_SAFE = 12;
+
+/** 境界压制：每高出一个大境界，个人伤亡额外削减多少 */
+export const REALM_OVERMATCH_REDUCTION = 0.35;
+/** 高出两个大境界 → 完全不会伤亡（需求 9 明文） */
+export const REALM_SAFE_GAP = 2;
+
 /**
  * 需求 13：战力不足时伤亡率的额外惩罚上限。
  *

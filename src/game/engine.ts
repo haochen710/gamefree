@@ -69,6 +69,8 @@ import {
   MIND_REGEN_SECONDS,
   PILL_MAP,
   REALMS,
+  PROGRESS_QI_SCALE,
+  scaledBreakthroughQi,
   REFINING_SLOT_REQUIREMENT,
   REGION_PREVIEW_REALMS,
   RESOURCE_IDS,
@@ -1484,7 +1486,16 @@ export function getMaxRefiningTierBySlots(state: GameState): number {
 export function getLayerCost(state: GameState): Decimal | null {
   const realm = getRealm(state);
   if (state.layer >= realm.layerCount) return null;
-  return D(realm.baseLayerCost).mul(Decimal.pow(realm.costGrowth, state.layer));
+  /*
+   * 需求 16：小境界参悟的灵气也按境界系数放大。
+   *
+   * ⚠️ 第一版只放大了大境界突破的灵气，实测**完全没有效果** ——
+   * 掌门的真正闸门是"每个大境界的 9 个小境界"，那一部分没动，
+   * 结果渡劫期还是在第 7 天就到了。两条闸门必须一起加系数。
+   */
+  return D(realm.baseLayerCost)
+    .mul(Decimal.pow(realm.costGrowth, state.layer))
+    .mul(PROGRESS_QI_SCALE[Math.min(state.realmIndex, PROGRESS_QI_SCALE.length - 1)] ?? 1);
 }
 
 export function canAdvanceLayer(state: GameState): boolean {
@@ -1562,7 +1573,8 @@ export function getBreakthroughStatus(state: GameState): BreakthroughStatus {
       safe,
     };
   }
-  if (state.resources.qi.lt(realm.breakthroughQi)) {
+  // 需求 16：突破所需灵气按境界系数放大（越往后越陡）
+  if (state.resources.qi.lt(scaledBreakthroughQi(state.realmIndex))) {
     return { possible: false, reason: '灵气不足', pillId, hasPill, injurySeconds, safe };
   }
   /*
@@ -1651,7 +1663,6 @@ export function breakthrough(
   const status = getBreakthroughStatus(state);
   if (!status.possible) return null;
 
-  const realm = getRealm(state);
   const rate = getSuccessRate(state);
   const success = random() < rate;
 
@@ -1667,7 +1678,8 @@ export function breakthrough(
   //   成功        → 全额消耗
   //   低境界失败  → 全额返还（无任何代价）
   //   高境界失败  → 返还一半
-  const qiSpent = success ? realm.breakthroughQi : status.safe ? 0 : realm.breakthroughQi * 0.5;
+  const need = scaledBreakthroughQi(state.realmIndex);
+  const qiSpent = success ? need : status.safe ? 0 : need * 0.5;
 
   const injurySeconds =
     success || status.safe ? 0 : (INJURY_SECONDS[state.realmIndex] ?? INJURY_FALLBACK_SECONDS);

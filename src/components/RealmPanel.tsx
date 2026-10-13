@@ -18,6 +18,8 @@ import {
   INJURY_PRODUCTION_PENALTY,
   PILL_MAP,
   REALMS,
+  // 需求 16：突破所需灵气的实际值（含"越到后面越陡"的系数）
+  scaledBreakthroughQi,
 } from '../game/content';
 import {
   canAdvanceLayer,
@@ -55,7 +57,7 @@ export function RealmPanel() {
       : `\n失败将道伤缠身，一段时间内无法再度突破，且期间产量下降。\n失败返还一半灵气（丹药不返还）。`;
     const ok = window.confirm(
       `确定突破至${realm.name}之后的境界？\n\n` +
-        `消耗 ${fmt(realm.breakthroughQi)} 灵气\n` +
+        `消耗 ${fmt(scaledBreakthroughQi(game.realmIndex))} 灵气\n` +
         `消耗 ${pillDef?.name ?? '境界丹'} ×1（现有 ${pillOwned} 颗）\n` +
         `成功率 ${Math.round(rate * 100)}%${risk}`,
     );
@@ -116,7 +118,7 @@ export function RealmPanel() {
             )}
 
             <div className="realm__req">
-              突破消耗：☯ {fmt(realm.breakthroughQi)} 灵气 +{' '}
+              突破消耗：☯ {fmt(scaledBreakthroughQi(game.realmIndex))} 灵气 +{' '}
               {pillDef ? `${pillDef.icon}${pillDef.name} ×1` : '境界丹 ×1'}
               <em>（丹药与弟子共用仓库）</em>
             </div>

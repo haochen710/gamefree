@@ -17,6 +17,7 @@ import {
   ENDING_MAP,
   FURNACE_MAP,
   POST_BUILDINGS,
+  TALISMAN_MAP,
   GEAR_MAP,
   MANUAL_GRADE_MIN_REALM,
   REFINE_RECIPE_MAP,
@@ -41,6 +42,7 @@ import * as fame from './fame';
 import * as diplomacy from './diplomacy';
 import * as gear from './gear';
 import * as posting from './posting';
+import * as talismans from './talismans';
 import * as travel from './travel';
 import * as encounter from './encounter';
 import * as enlightenment from './enlightenment';
@@ -173,6 +175,14 @@ export interface GameStore {
   unpostAll(buildingId: string): void;
   /** 一键填岗：按「对口优先、技艺高优先」把空闲弟子安排进各设施 */
   autoPostAll(): void;
+
+  /* 符箓（需求 8） */
+  /** 精进制符术 */
+  upgradeTalisman(): void;
+  /** 画符（count 张，失败照样耗材料） */
+  craftTalisman(id: string, count?: number): void;
+  /** 用掉一张符 */
+  useTalisman(id: string): void;
 
   /* 仆人 */
   recruitServant(job: string): void;
@@ -827,6 +837,38 @@ export const useGame = create<GameStore>()((set, get) => ({
       const result = posting.autoPostAll(s.game);
       if (result.posted === 0) return { notice: '没有可安排的人（岗位已满或弟子都在忙）' };
       return { ...nextGame(s.game, result.state), notice: `已安排 ${result.posted} 名弟子入岗` };
+    });
+  },
+
+  upgradeTalisman: () => {
+    set((s) => {
+      const status = talismans.getTalismanUpgradeStatus(s.game);
+      if (!status.possible || status.nextTier === null) return { notice: status.reason ?? '无法精进' };
+      const next = talismans.upgradeTalisman(s.game);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: `制符术精进至 ${status.nextTier} 品` };
+    });
+  },
+
+  craftTalisman: (id, count = 1) => {
+    set((s) => {
+      const def = TALISMAN_MAP[id];
+      if (!def) return { notice: '没有这张符' };
+      const rate = crafting.getCraftSuccessRate(s.game, 'talisman', def.grade);
+      const result = talismans.craftTalisman(s.game, id, count, rate);
+      if (result.state === s.game) return { notice: talismans.canCraftTalisman(s.game, id).reason ?? '无法绘制' };
+      return {
+        ...nextGame(s.game, result.state),
+        notice: `${def.name}：成 ${result.made} 张、废 ${result.failed} 张`,
+      };
+    });
+  },
+
+  useTalisman: (id) => {
+    set((s) => {
+      const result = talismans.useTalisman(s.game, id);
+      if (!result.ok) return { notice: result.message };
+      return { ...nextGame(s.game, result.state), notice: result.message };
     });
   },
 

@@ -35,6 +35,7 @@ import {
   FURNACE_MAP,
   GEAR_MAP,
   GEAR_SLOTS,
+  TALISMAN_MAP,
   MANUAL_MAP,
   manualIdOfFragment,
   slotAccepts,
@@ -195,6 +196,10 @@ export interface SerializedGame {
   mf?: Record<string, number>;
   /** 装备库存（设定集第 8.7 章） */
   gr?: Record<string, number>;
+  /** 符箓库存（需求 8，键名 tmf 避开已被占用的 tl / tm） */
+  tmf?: Record<string, number>;
+  /** 制符品阶（键名 ttier 避开已被占用的 tt / tq） */
+  ttier?: unknown;
   /** 已铸成的丹炉（设定集第 11 章） */
   fn?: unknown;
   /** 当前在用的炉鼎 */
@@ -225,6 +230,8 @@ export interface SerializedGame {
   wm?: unknown;
   /** 论道冷却 */
   pc?: unknown;
+  /** 秘境探索次数（需求 9 的危险度进度） */
+  rr?: unknown;
   /** 各条配方的自动合成目标存量（本轮需求 2） */
   art?: Record<string, number>;
   /** 天工院特殊升级等级（需求 2） */
@@ -296,6 +303,9 @@ export function serialize(state: GameState): SerializedGame {
     mf: { ...state.manualFragments },
     /* 装备库存 gr / 丹炉 fn + fd（设定集第 8.7 / 11 章） */
     gr: { ...state.gears },
+    /* 符箓库存 tmf 与制符品阶 ttier（需求 8：这两个键名都是先查过整份表才定的） */
+    tmf: { ...state.talismans },
+    ttier: state.talismanTier,
     fn: [...state.furnaces],
     fd: state.furnaceId,
     /* ---- 声望 / 特质 / 外交 / 结局（设定集第 1 / 9 / 10 章） ---- */
@@ -316,6 +326,7 @@ export function serialize(state: GameState): SerializedGame {
     aw: [...state.atWarWith],
     wm: state.warTimer,
     pc: { ...state.parleyCooldowns },
+    rr: { ...state.realmRuns },
     gc: { ...state.gearCharges },
     ri: state.realmIndex,
     li: state.layer,
@@ -465,6 +476,18 @@ function sanitizeIds(raw: unknown, accept?: (id: string) => boolean): string[] {
 }
 
 /** 把任意输入读成"字符串 → 非负有限数"的表（冷却时间之类） */
+/** 把任意输入读成"字符串 → 非负整数"的表（秘境探索次数这类计数用它） */
+function toIntMap(raw: unknown, max = 1e6): Record<string, number> {
+  if (raw === null || typeof raw !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      out[key] = Math.min(Math.floor(value), max);
+    }
+  }
+  return out;
+}
+
 function sanitizeNumberMap(raw: unknown, max = 1e9): Record<string, number> {
   if (raw === null || typeof raw !== 'object') return {};
   const out: Record<string, number> = {};
@@ -1049,6 +1072,9 @@ export function deserialize(raw: unknown): GameState | null {
     manualFragments: toCountMap(data.mf, 0, 1e12, (key) => manualIdOfFragment(key) !== null),
     // 装备库存与丹炉（设定集第 8.7 / 11 章）：同样只认还存在的 id
     gears: toCountMap(data.gr, 0, 1e12, (id) => GEAR_MAP[id] !== undefined),
+    // 符箓（需求 8）：只认还存在的符
+    talismans: toCountMap(data.tmf, 0, 1e12, (id) => TALISMAN_MAP[id] !== undefined),
+    talismanTier: toInt(data.ttier, 1, 1, 9),
     furnaces: sanitizeIds(data.fn, (id) => FURNACE_MAP[id] !== undefined),
     furnaceId: FURNACE_MAP[String(data.fd)] ? String(data.fd) : DEFAULT_FURNACE_ID,
     /*
@@ -1080,6 +1106,8 @@ export function deserialize(raw: unknown): GameState | null {
     atWarWith: sanitizeIds(data.aw, (id) => NPC_SECT_MAP[id] !== undefined),
     warTimer: toFloat(data.wm, WAR_BATTLE_INTERVAL, 0, 1e9),
     parleyCooldowns: sanitizeNumberMap(data.pc),
+    // 秘境探索次数（需求 9）：整数，上限给得很宽（危险度早就归零了）
+    realmRuns: toIntMap(data.rr),
     realmIndex,
     layer,
     globalBreakthroughBonus: toFloat(data.gb, 0, 0, 10),

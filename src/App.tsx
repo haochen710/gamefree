@@ -25,6 +25,7 @@ import ManualPanel from './components/ManualPanel';
 import FamePanel from './components/FamePanel';
 import PostPanel from './components/PostPanel';
 import GearPanel from './components/GearPanel';
+import TalismanPanel from './components/TalismanPanel';
 import MapPanel from './components/MapPanel';
 import AlchemyPanel from './components/AlchemyPanel';
 import RefiningPanel from './components/RefiningPanel';
@@ -57,6 +58,7 @@ type TabId =
   /* 需求 5：丹器拆成「炼丹」与「炼器」两页 —— 混在一起界面太长 */
   | 'alchemy'
   | 'refining'
+  | 'talisman'
   | 'shop'
   | 'farm'
   | 'enlighten'
@@ -70,6 +72,7 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'workshop', label: '工坊', icon: '⚒' },
   { id: 'alchemy', label: '炼丹', icon: '⚗' },
   { id: 'refining', label: '炼器', icon: '🔨' },
+  { id: 'talisman', label: '符箓', icon: '📜' },
   { id: 'shop', label: '商行', icon: '🏪' },
   { id: 'farm', label: '灵植', icon: '🌱' },
   { id: 'enlighten', label: '感悟', icon: '🧘' },
@@ -255,6 +258,15 @@ function RefiningTab() {
   );
 }
 
+/** 符箓（需求 8） */
+function TalismanTab() {
+  return (
+    <main className="layout layout--single">
+      <TalismanPanel />
+    </main>
+  );
+}
+
 function FarmTab() {
   return (
     <main className="layout layout--single">
@@ -311,6 +323,7 @@ export default function App() {
           {tab === 'workshop' && <WorkshopTab />}
           {tab === 'alchemy' && <AlchemyTab />}
           {tab === 'refining' && <RefiningTab />}
+          {tab === 'talisman' && <TalismanTab />}
           {tab === 'shop' && <ShopTab />}
           {tab === 'farm' && <FarmTab />}
           {tab === 'enlighten' && <EnlightenmentTab />}

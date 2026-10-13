@@ -30,13 +30,22 @@ import {
   LOOT_ROLLS,
   LOOT_ROLLS_MAX,
   LOOT_ROLLS_PER_EXTRA,
+  EXPEDITION_COOLDOWN_SCALE,
+  EXPEDITION_DURATION_SCALE,
+  EXPEDITION_INSIGHT_SCALE,
   MAX_CASUALTY_RATE,
+  PARTY_SIZE_MAX,
+  PARTY_SIZE_MIN,
+  REALM_OVERMATCH_REDUCTION,
+  REALM_SAFE_GAP,
+  RUNS_TO_SAFE,
   MAX_YIELD_FACTOR,
   MIN_YIELD_FACTOR,
   PARTY_YIELD_PER_EXTRA,
   PILL_DROP_CHANCE,
   PILL_MAP,
   REALMS,
+  MAP_REGION_MAP,
   SECRET_REALMS,
   POST_BUILDINGS,
   SECRET_REALM_MAP,
@@ -51,7 +60,6 @@ import {
   SURVEY_YIELD_MULT,
   YIELD_VARIANCE_MAX,
   YIELD_VARIANCE_MIN,
-  MAP_REGION_MAP,
   expeditionSlots,
   getSurveyLoot,
   isBasicMaterial,
@@ -126,6 +134,47 @@ export function getIdleDisciples(state: GameState): Disciple[] {
   return state.sect.disciples.filter((d) => d.status === 'idle');
 }
 
+/**
+ * 这一趟至少要派几个人（需求 9）。
+ *
+ * 正常是 12；但**能派出的空闲弟子不够 12 时**就放宽到"有多少派多少"。
+ * 判据用"够境界的空闲弟子数"而不是宗门总人数：能派的人都派出去了就不该再卡。
+ */
+export function effectiveMinParty(state: GameState, def: SecretRealmDef): number {
+  const minRealm = effectiveMinRealm(state, def);
+  const idle = getIdleDisciples(state).filter((d) => !d.post && d.realmIndex >= minRealm).length;
+  return Math.max(1, Math.min(PARTY_SIZE_MIN, Math.max(idle, 1)));
+}
+
+/**
+ * 这处秘境的最低境界（需求 9）。
+ *
+ * 原文：「秘境最低探索境界要求修改，怎么都真龙秘境了，最低还是练气，
+ * 根据解锁秘境所在小区域的境界设定最低境界要求」。
+ * 所以取"秘境自带的下限"与"所在小区域要求的境界"里更高的那个。
+ */
+export function effectiveMinRealm(_state: GameState, def: SecretRealmDef): number {
+  const region = MAP_REGION_MAP[def.regionId];
+  const regionRealm = region?.requiresRealm ?? 0;
+  return Math.max(def.minRealm, regionRealm > 0 ? regionRealm - 1 : 0);
+}
+
+/** 这处秘境已经探过几次（危险度进度条用） */
+export function getRealmRuns(state: GameState, realmId: string): number {
+  return state.realmRuns[realmId] ?? 0;
+}
+
+/**
+ * 危险度（1 = 完全危险，0 = 摸透了）。
+ *
+ * 需求 9：「秘境增加进度条设定，当玩家派遣弟子多次探索秘境后，
+ * 秘境危险程度降低，直至没有危险」。所以它直接乘在伤亡率上。
+ */
+export function getRealmDanger(state: GameState, realmId: string): number {
+  const runs = getRealmRuns(state, realmId);
+  return Math.max(0, 1 - runs / RUNS_TO_SAFE);
+}
+
 export interface StartCheck {
   ok: boolean;
   reason: string | null;
@@ -134,11 +183,12 @@ export interface StartCheck {
 /**
  * 循环探索的次数上限（本轮需求 4）。
  *
- * 需求原文：「弟子探索可以设置循环多次探索，上限 30 次」。
+ * 需求原文（这一轮改口）：「循环探索次数上限降低为十次」——
+ * 与"探索时长变长"配套，避免挂着一支队伍把时间线推得飞快。
  * 设上限是因为一支队伍挂上 30 趟之后，冷却 + 时长合起来可能要跑现实里好几个小时，
  * 再往上加只会让人忘了自己排过队。
  */
-export const MAX_EXPEDITION_REPEAT = 30;
+export const MAX_EXPEDITION_REPEAT = 10;
 
 /** 把玩家填的次数夹到 1~30 */
 export function clampRepeat(repeat: number): number {
@@ -160,11 +210,13 @@ export function canStartExpedition(state: GameState, realmId: string, ids: strin
   if (state.expeditions.length >= getMaxExpeditions(state)) {
     return { ok: false, reason: '探索队伍已满，提升宗门品阶可增加队伍' };
   }
-  if (ids.length < def.minParty) {
-    return { ok: false, reason: `至少需派遣 ${def.minParty} 名弟子` };
+  // 需求 9：队伍规模固定 12~20，早期人手不足时下限自动放宽
+  const minParty = effectiveMinParty(state, def);
+  if (ids.length < minParty) {
+    return { ok: false, reason: `至少需派遣 ${minParty} 名弟子` };
   }
-  if (ids.length > def.maxParty) {
-    return { ok: false, reason: `最多可派遣 ${def.maxParty} 名弟子` };
+  if (ids.length > PARTY_SIZE_MAX) {
+    return { ok: false, reason: `最多可派遣 ${PARTY_SIZE_MAX} 名弟子` };
   }
   if (new Set(ids).size !== ids.length) {
     return { ok: false, reason: '同一名弟子不能重复派遣' };
@@ -176,8 +228,8 @@ export function canStartExpedition(state: GameState, realmId: string, ids: strin
     if (!d) return { ok: false, reason: '弟子不存在' };
     if (d.post) return { ok: false, reason: `${d.name} 正被派在${POST_BUILDINGS[d.post]?.name ?? '设施'}里，先撤回来` };
     if (d.status !== 'idle') return { ok: false, reason: `${d.name} 正在探索中` };
-    if (d.realmIndex < def.minRealm) {
-      return { ok: false, reason: `需${REALMS[def.minRealm].name}以上弟子` };
+    if (d.realmIndex < effectiveMinRealm(state, def)) {
+      return { ok: false, reason: `需${REALMS[effectiveMinRealm(state, def)].name}以上弟子` };
     }
     /*
      * 心魔与性格会让人**拒绝执行任务**（设定集第 8.5 / 14.3 章）。
@@ -220,7 +272,7 @@ export function autoSelectParty(state: GameState, realmId: string, size?: number
     .filter((d) => !(highRisk && refusesHighRisk(d)))
     .sort((a, b) => REALMS[b.realmIndex].power - REALMS[a.realmIndex].power);
 
-  const want = Math.max(def.minParty, Math.min(size ?? def.maxParty, def.maxParty));
+  const want = Math.max(effectiveMinParty(state, def), Math.min(size ?? PARTY_SIZE_MAX, PARTY_SIZE_MAX));
   return candidates.slice(0, want).map((d) => d.id);
 }
 
@@ -254,7 +306,11 @@ export function startExpedition(
      * 折在**出发那一刻**的 duration 上，而不是每帧去乘 ——
      * 中途招到一个引路人不该让已经上路的队伍突然加速（进度条会抽风）。
      */
-    duration: Math.max(1, Math.round(def.duration / (1 + getSectTravelSpeedBonus(state)))),
+    // 需求 9：探索时长整体拉长（配合需求 16 的节奏放缓）；引路之人可缩短
+    duration: Math.max(
+      1,
+      Math.round((def.duration * EXPEDITION_DURATION_SCALE) / (1 + getSectTravelSpeedBonus(state))),
+    ),
     kind: 'realm',
     repeatLeft: clampRepeat(repeat),
   };
@@ -332,8 +388,15 @@ export function getLootRolls(def: SecretRealmDef, partySize: number): number {
 }
 
 /** 一次探索给每名参与者多少心得 */
+/**
+ * 一次探索给每名参与者多少心得。
+ *
+ * 需求 9「弟子从探索获取的经验增加」就落在这个倍率上
+ * （EXPEDITION_INSIGHT_SCALE）—— 探索变慢之后，单位时间的心得不能跟着变少，
+ * 否则"弟子成长"这条线会被拖垮。
+ */
 export function getExpeditionInsight(state: GameState, def: SecretRealmDef): number {
-  const base = INSIGHT_PER_EXPEDITION + def.minRealm * INSIGHT_PER_REALM_LEVEL;
+  const base = (INSIGHT_PER_EXPEDITION + def.minRealm * INSIGHT_PER_REALM_LEVEL) * EXPEDITION_INSIGHT_SCALE;
   return Math.max(1, Math.round(base * (1 + getStructureBonus(state, 'insightBonus'))));
 }
 
@@ -541,11 +604,18 @@ export function resolveExpedition(
   const shortfall = def.requiredPower > 0 ? Math.max(0, 1 - partyPower / def.requiredPower) : 0;
   const underpoweredMult = 1 + shortfall * shortfall * UNDERPOWERED_MAX_PENALTY;
 
+  /*
+   * 需求 9 的第 1 条：**危险度随探索次数递减**。
+   * 同一处秘境探得越多越熟，伤亡越低，直到完全无危险 ——
+   * "反复刷同一处"因此从重复劳动变成一条降低风险的路径。
+   */
+  const danger = getRealmDanger(state, def.id);
   const casualtyRate =
     Math.min(Math.max(baseRate, 0), MAX_CASUALTY_RATE) *
     (1 - safety) *
     getTraitEffect(state, 'casualtyMult', 1) *
-    underpoweredMult;
+    underpoweredMult *
+    danger;
 
   /*
    * 逐人掷骰（设定集第 8.3 / 8.5 / 8.6 章）。
@@ -563,7 +633,19 @@ export function resolveExpedition(
   const casualties: { id: string; name: string }[] = [];
   const survivors: string[] = [];
   for (const d of party) {
-    const personal = getDiscipleCasualtyReduction(d);
+    /*
+     * 需求 9 的第 2 条：**境界压制**。
+     *   - 高出最低境界 1 个大境界 → 个人伤亡再削 35%；
+     *   - 高出 2 个大境界 → **完全不会伤亡**（直接算生还）。
+     * 逐人判定而不是队伍级：一支队伍里带个高手不该让全队免疫。
+     */
+    const realmGap = d.realmIndex - effectiveMinRealm(state, def);
+    if (realmGap >= REALM_SAFE_GAP) {
+      survivors.push(d.id);
+      continue;
+    }
+    const overmatch = realmGap > 0 ? Math.min(0.7, realmGap * REALM_OVERMATCH_REDUCTION) : 0;
+    const personal = getDiscipleCasualtyReduction(d) + overmatch;
     if (personal >= 1) {
       // 减伤堆到 100%（极难，但要给条明路）
       survivors.push(d.id);
@@ -643,7 +725,10 @@ export function resolveExpedition(
     sect: { ...working.sect, disciples },
     expeditions: working.expeditions.filter((e) => e.id !== expedition.id),
     // 需求 1：每次探索后要隔一段时间才能再探
-    realmCooldowns: { ...working.realmCooldowns, [def.id]: def.cooldown },
+      // 需求 9：冷却也拉长，避免同一处秘境被无限连刷
+      realmCooldowns: { ...working.realmCooldowns, [def.id]: def.cooldown * EXPEDITION_COOLDOWN_SCALE },
+      // 需求 9：探索次数 +1 —— 这就是危险度进度条在走
+      realmRuns: { ...working.realmRuns, [def.id]: (working.realmRuns[def.id] ?? 0) + 1 },
     journal,
   };
 
@@ -756,7 +841,7 @@ export function resolveExpedition(
    */
   const repeatLeft = expedition.repeatLeft ?? 1;
   // 复用上面已经算好的 survivors（伤亡之后还活着的那批）
-  if (repeatLeft > 1 && survivors.length >= def.minParty) {
+    if (repeatLeft > 1 && survivors.length >= effectiveMinParty(state, def)) {
     const continued: Expedition = {
       ...expedition,
       progress: -def.cooldown,

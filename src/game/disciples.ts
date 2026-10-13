@@ -41,6 +41,7 @@ import {
   PERSONALITY_MAP,
   PILL_MAP,
   REALMS,
+  scaledCultivationYears,
   demonTierOf,
   discipleCapBySect,
   loyaltyFloorOf,
@@ -222,7 +223,8 @@ export function getDiscipleSpeed(state: GameState, disciple: Disciple): number {
  * 直接显示，装了减耗功法的弟子就会显示成"进度条永远差一点"）。
  */
 export function getDiscipleRealmNeed(disciple: Disciple, realmIndex: number): number {
-  const base = REALMS[Math.min(realmIndex, REALMS.length - 1)].cultivationYears;
+  // 需求 16：弟子推进一个境界所需的修为同样按境界系数放大
+  const base = scaledCultivationYears(Math.min(realmIndex, REALMS.length - 1));
   let reduction = 0;
   for (const id of [disciple.cultivationManual, disciple.combatManual]) {
     reduction += MANUAL_MAP[id]?.needReduction ?? 0;
