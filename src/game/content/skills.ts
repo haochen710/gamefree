@@ -123,11 +123,21 @@ export function skillView(kind: SkillKind, points: number): SkillView {
  * （posting 依赖 engine 的 getBuildingCount，反向引用成环）。
  * 数据放 content、逻辑放 posting，这条线就干净了。
  */
+/**
+ * 第 20 轮调整（玩家原话：「丹房等建筑可派遣的弟子数量要增加，
+ * 不然那么多弟子往哪放」）。
+ *
+ * ⚠️ 当时的真问题不只是"每座几个人"，而是**丹房与炼器房的 `max` 居然是 1** ——
+ * 全宗门最多 2 个炼丹岗位、2 个炼器岗位，1024 个弟子根本无处可去。
+ * 所以这一轮两件事一起做：
+ *   1. 丹房 / 炼器房的 max 从 1 放开到 12（符房 8 → 12）；
+ *   2. 每座岗位数大幅提高：丹房 / 炼器房 / 符房 2 → **10**，灵田 3 → **15**。
+ */
 export const POST_BUILDINGS: Record<string, { kind: SkillKind; perBuilding: number; name: string; icon: string }> = {
-  alchemyRoom: { kind: 'alchemy', perBuilding: 2, name: '丹房', icon: '⚗' },
-  refinery: { kind: 'refining', perBuilding: 2, name: '炼器房', icon: '🔨' },
-  talismanRoom: { kind: 'talisman', perBuilding: 2, name: '符房', icon: '📜' },
-  herbField: { kind: 'farm', perBuilding: 3, name: '灵田', icon: '🌱' },
+  alchemyRoom: { kind: 'alchemy', perBuilding: 10, name: '丹房', icon: '⚗' },
+  refinery: { kind: 'refining', perBuilding: 10, name: '炼器房', icon: '🔨' },
+  talismanRoom: { kind: 'talisman', perBuilding: 10, name: '符房', icon: '📜' },
+  herbField: { kind: 'farm', perBuilding: 15, name: '灵田', icon: '🌱' },
 };
 
 export const POST_BUILDING_IDS = Object.keys(POST_BUILDINGS);

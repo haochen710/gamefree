@@ -508,7 +508,8 @@ export const STRUCTURES: StructureDef[] = [
     unlock: { wood: 100 },
     requiresTech: 'alchemyArt',
     // 需求 2：丹房改为唯一建筑
-    max: 1,
+    // 第 20 轮：max 1 → 12（原来全宗门只能有一座丹房、两个岗位）
+    max: 12,
   },
   {
     id: 'refinery',
@@ -523,7 +524,8 @@ export const STRUCTURES: StructureDef[] = [
     unlock: { ore: 150 },
     requiresTech: 'refiningArt',
     // 需求 2：炼器房改为唯一建筑
-    max: 1,
+    // 第 20 轮：max 1 → 12（同理：原来全宗门只有一座炼器房）
+    max: 12,
   },
   {
     id: 'alchemyFurnace',
@@ -840,7 +842,8 @@ export const STRUCTURES: StructureDef[] = [
       costGrowth: 1.3,
       unlock: { spiritSilk: 20 },
       requiresRealm: 1,
-      max: 8,
+      // 第 20 轮：max 8 → 12，与丹房 / 炼器房对齐
+      max: 12,
     },
     {
       id: 'library',

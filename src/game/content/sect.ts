@@ -242,11 +242,16 @@ export const SECT_LEVELS: SectLevelDef[] = [
  * 后期又突然不够用。
  *
  * ⚠️ 这个数只是**上限**：真正能收多少还取决于弟子居所盖了多少（见
- * `engine.getDiscipleCapacity`）。所以"九品能收 2048 人"是一句承诺，
+ * `engine.getDiscipleCapacity`）。所以"九品能收 1024 人"是一句承诺，
  * 兑现它需要玩家一路盖房子。
+ *
+ * 第 20 轮调整（玩家原话：「宗门弟子数量修改，最多 1024 个弟子，
+ * 一品宗门起始 50 人」）：一品 100 → **50**，九品 2048 → **1024**，
+ * 中间仍走几何（每品约 ×1.47）—— 因为弟子是乘法级资源、升品成本也是
+ * 乘法级的，两条乘法曲线才对得上。
  */
 export const DISCIPLE_CAP_BY_SECT_LEVEL: number[] = [
-  100, 146, 213, 311, 453, 661, 965, 1408, 2048,
+  50, 73, 107, 156, 228, 333, 486, 710, 1024,
 ];
 
 export function discipleCapBySect(level: number): number {

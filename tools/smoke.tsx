@@ -118,6 +118,8 @@ import {
   // 第 18 轮：幸福度与空间禁制
   HAPPINESS_BUILDINGS,
   HAPPINESS_NEUTRAL,
+  // 第 20 轮：派遣岗位表（丹房等设施的岗位数）
+  POST_BUILDINGS,
   SPATIAL_WARD_CAPACITY_BONUS,
   SPATIAL_WARD_MAX_STACKS,
   // 第 18 轮批 C：卖出比例、商队参数、稀有货品
@@ -745,8 +747,14 @@ section('[3] 建筑与价格');
   // 丹房提供炼丹位（需求 2 起丹房唯一，所以"位"只剩展示意义，不再决定品阶上限）
   const withRooms = forceBuild(state, 'alchemyRoom', 2);
   check('丹房提供炼丹位', engine.getAlchemySlots(withRooms) === 2);
-  check('需求 2：丹房改为唯一建筑', BUILDABLE_MAP.alchemyRoom.max === 1);
-  check('需求 2：炼器房改为唯一建筑', BUILDABLE_MAP.refinery.max === 1);
+  /*
+   * 第 20 轮把方向反过来了：玩家说「丹房等建筑可派遣的弟子数量要增加，
+   * 不然那么多弟子往哪放」—— 所以丹房 / 炼器房不再唯一（max 12），
+   * 每座岗位数也从 2 提到 10。旧断言守的「唯一」是更早一轮的需求，已被覆盖。
+   */
+  check('第 20 轮：丹房不再唯一（max 12）', BUILDABLE_MAP.alchemyRoom.max === 12, String(BUILDABLE_MAP.alchemyRoom.max));
+  check('第 20 轮：炼器房不再唯一（max 12）', BUILDABLE_MAP.refinery.max === 12, String(BUILDABLE_MAP.refinery.max));
+  check('第 20 轮：符房上限对齐到 12', BUILDABLE_MAP.talismanRoom.max === 12, String(BUILDABLE_MAP.talismanRoom.max));
   check(
     '需求 2：炼丹位不再决定品阶上限（升品只看资源）',
     engine.getMaxAlchemyTierBySlots(createInitialState(0)) === MAX_CRAFT_TIER,
@@ -1764,9 +1772,9 @@ section('[14] 内容完整性');
     STRUCTURES.every((s) => !(s.servantCapacity && s.discipleCapacity)),
   );
   check(
-    '需求 1：弟子上限曲线单调递增且首尾为 100 / 2048',
-    DISCIPLE_CAP_BY_SECT_LEVEL[0] === 100 &&
-      DISCIPLE_CAP_BY_SECT_LEVEL[DISCIPLE_CAP_BY_SECT_LEVEL.length - 1] === 2048 &&
+    '第 20 轮：弟子上限曲线单调递增且首尾为 50 / 1024',
+    DISCIPLE_CAP_BY_SECT_LEVEL[0] === 50 &&
+      DISCIPLE_CAP_BY_SECT_LEVEL[DISCIPLE_CAP_BY_SECT_LEVEL.length - 1] === 1024 &&
       DISCIPLE_CAP_BY_SECT_LEVEL.every((v, i, arr) => i === 0 || v > arr[i - 1]),
   );
   check('丹房与炼器房都已定义', STRUCTURES.some((s) => s.alchemySlots) && STRUCTURES.some((s) => s.refiningSlots));
@@ -4693,9 +4701,21 @@ section('[38] 秘境档次 / 富集区开启（需求 1）');
 /* ------------------------------------------------------------------ */
 section('[39] 炼制成功率 / 可携带器物（需求 2）');
 {
-  /* ---- 丹房与炼器房唯一 ---- */
-  check('丹房唯一', BUILDABLE_MAP.alchemyRoom.max === 1);
-  check('炼器房唯一', BUILDABLE_MAP.refinery.max === 1);
+  /* ---- 第 20 轮：丹房与炼器房放开（原来各只允许一座）---- */
+  check('丹房可以建多座', BUILDABLE_MAP.alchemyRoom.max === 12);
+  check('炼器房可以建多座', BUILDABLE_MAP.refinery.max === 12);
+  /* ---- 岗位数：要能安置几百名弟子 ---- */
+  check('丹房每座 10 个岗位', POST_BUILDINGS.alchemyRoom.perBuilding === 10, String(POST_BUILDINGS.alchemyRoom.perBuilding));
+  check('炼器房每座 10 个岗位', POST_BUILDINGS.refinery.perBuilding === 10);
+  check('符房每座 10 个岗位', POST_BUILDINGS.talismanRoom.perBuilding === 10);
+  check('灵田每座 15 个岗位', POST_BUILDINGS.herbField.perBuilding === 15);
+  {
+    const total =
+      POST_BUILDINGS.alchemyRoom.perBuilding * 12 +
+      POST_BUILDINGS.refinery.perBuilding * 12 +
+      POST_BUILDINGS.talismanRoom.perBuilding * 12;
+    check('三座设施满编岗位足以安置数百名弟子（≥300）', total >= 300, `${total} 个`);
+  }
   check(
     '升品不再要求建筑数量（需求 2）',
     crafting.getAlchemyUpgradeStatus(grant(createInitialState(0), { qi: '1e15', herb: '1e9' })).slotsNeeded === 0,
@@ -5065,11 +5085,14 @@ section('[41] 界面布局 / 普通探索 / 唯一建筑 / 满仓倒计时');
     const unique = BUILDABLES.filter((def) => engine.getMaxCount(def) === 1);
     check('存在唯一类建筑', unique.length > 0, `${unique.length} 座`);
 
-    const target = BUILDABLE_MAP.alchemyRoom;
-    const built: GameState = {
-      ...forceBuild(grant(createInitialState(0), { qi: '1e12', wood: '1e9' }), 'alchemyRoom', 1),
-      techs: { ...createInitialState(0).techs, alchemyArt: true },
-    };
+    // 第 20 轮：丹房不再唯一，改拿**宗门大阵**（真·唯一建筑）来测
+    const target = BUILDABLE_MAP.sectArray;
+    // forceBuild 直接写库存、绕过门槛，所以这里把宗门大阵真的建起来
+    const built: GameState = forceBuild(
+      grant(createInitialState(0), { qi: '1e12', wood: '1e9', stone: '1e9', ore: '1e9' }),
+      'sectArray',
+      1,
+    );
     const out = renderToString(<BuildingsPanel />);
     void out;
 
@@ -5442,14 +5465,14 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
 /* ------------------------------------------------------------------ */
 section('[44] 弟子人数 · 居所拆分 · 新模块 · 突破丹药 · 派遣历练');
 {
-  /* ---- 需求 1：一品约 100 人、九品 2048 ---- */
+  /* ---- 第 20 轮：一品 50 人、九品 1024 人 ---- */
   {
     check(
-      '一品宗门约 100 人',
-      discipleCapBySect(1) === 100,
+      '一品宗门 50 人（第 20 轮：起始 50）',
+      discipleCapBySect(1) === 50,
       String(discipleCapBySect(1)),
     );
-    check('九品宗门 2048 人', discipleCapBySect(9) === 2048, String(discipleCapBySect(9)));
+    check('九品宗门 1024 人（第 20 轮上限）', discipleCapBySect(9) === 1024, String(discipleCapBySect(9)));
     check(
       '曲线严格递增（九档各不相同）',
       DISCIPLE_CAP_BY_SECT_LEVEL.every((v, i, arr) => i === 0 || v > arr[i - 1]),
@@ -5457,7 +5480,7 @@ section('[44] 弟子人数 · 居所拆分 · 新模块 · 突破丹药 · 派�
     );
     check(
       '越界品阶被夹到两端（不会返回 undefined）',
-      discipleCapBySect(0) === 100 && discipleCapBySect(99) === 2048,
+      discipleCapBySect(0) === 50 && discipleCapBySect(99) === 1024,
     );
     check(
       '旧规则 level × 6 已被取代（九品不再只有 54 人）',
@@ -7475,8 +7498,8 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
   {
     let s = forceBuild(base(), 'alchemyRoom', 2);
     s = forceBuild(s, 'herbField', 1);
-    check('丹房岗位 = 2 座 × 2 人 = 4', posting.getPostCapacity(s, 'alchemyRoom') === 4);
-    check('灵田岗位 = 1 座 × 3 人 = 3', posting.getPostCapacity(s, 'herbField') === 3);
+    check('丹房岗位 = 2 座 × 10 人 = 20（第 20 轮提高）', posting.getPostCapacity(s, 'alchemyRoom') === 20);
+    check('灵田岗位 = 1 座 × 15 人 = 15（第 20 轮提高）', posting.getPostCapacity(s, 'herbField') === 15);
 
     // 造两个弟子：一个炼丹天赋（对口）、一个种田天赋（不对口）
     const alchemist = makeDisciple({ id: 'p1', farmTalent: 'furnaceAdept', realmIndex: 2 });
