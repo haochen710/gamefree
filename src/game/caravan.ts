@@ -21,6 +21,7 @@ import {
   ITEM_MAP,
   MATERIAL_MAP,
   RARE_GOODS,
+  RARE_GOOD_MAP,
   SELL_RATIO,
   SHOP_GOODS,
   TALISMAN_MAP,
@@ -277,6 +278,37 @@ export function canBarter(state: GameState): { ok: boolean; reason: string | nul
   return { ok: true, reason: null };
 }
 
+/**
+ * 把一样货品真的发给玩家（需求 7）。
+ *
+ * ⚠️ 这里踩过一个**只有写测试才会暴露**的坑：`addItem` 只认"资源 / 材料 / 器物"
+ * 这些有数量表的键，而商队带来的可能是**装备 / 丹药 / 符箓 / 法宝** ——
+ * 直接 addItem 会抛 "Cannot read properties of undefined"，
+ * 也就是说"商队里的好东西根本拿不到"。所以按货品种类分流到各自的库存表。
+ */
+function grantGood(state: GameState, id: TradeItemId, amount: number): GameState {
+  const kind = RARE_GOOD_MAP[id]?.kind ?? SHOP_GOODS.find((g) => g.item === id)?.kind;
+
+  const bump = (map: Record<string, number>): Record<string, number> => ({
+    ...map,
+    [id]: (map[id] ?? 0) + amount,
+  });
+
+  switch (kind) {
+    case 'talisman':
+      return { ...state, talismans: bump(state.talismans) };
+    case 'pill':
+      return { ...state, pills: bump(state.pills) };
+    case 'gear':
+      return { ...state, gears: bump(state.gears) };
+    case 'artifact':
+      return { ...state, artifacts: bump(state.artifacts) };
+    default:
+      // 资源 / 材料 / 种子：走正常的 addItem
+      return addItem(state, id as never, D(amount));
+  }
+}
+
 export function doBarter(state: GameState): { state: GameState; message: string } {
   const caravan = state.caravan;
   const check = canBarter(state);
@@ -287,7 +319,7 @@ export function doBarter(state: GameState): { state: GameState; message: string 
     working = payCost(working, toCostMap({ [want.id]: want.amount } as never));
   }
   for (const offer of caravan.offers) {
-    working = addItem(working, offer.id as never, D(offer.amount));
+    working = grantGood(working, offer.id, offer.amount);
   }
 
   const gotText = caravan.offers.map((o: CaravanOffer) => `${o.icon}${o.name}×${o.amount}`).join(' ');

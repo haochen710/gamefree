@@ -17,6 +17,7 @@ import {
   MATERIAL_MAP,
   SEED_MAP,
   SHOP_GOODS,
+  RARE_GOODS_CHANCE,
   rareGoodsForSectLevel,
   SHOP_REFRESH_SECONDS,
   type ShopGoodDef,
@@ -94,8 +95,18 @@ export function buildShopOffers(state: GameState, random: RandomSource = gameRan
    * 但仍然单独限一件：否则一轮出三件天纵，就不叫"很稀有"了）。
    */
   const rarePool = rareGoodsForSectLevel(state.sect.level);
-  const rarePick = rarePool.length > 0 && pool.length > 0 && capacity > 2 ? weightedDraw(rarePool, 1, random) : [];
-  const allPicked = [...picked, ...rarePick].slice(0, capacity);
+  const rarePick =
+    rarePool.length > 0 && pool.length > 0 && capacity > 2 && random() < RARE_GOODS_CHANCE
+      ? weightedDraw(rarePool, 1, random)
+      : [];
+  /*
+   * ⚠️ 普通货要**少抽一件**再拼稀有货 ——
+   * 第一版是先抽满 capacity 再拼上稀有货后 slice，结果稀有货永远被切掉，
+   * 需求 7 的"很稀有"直接变成了"根本不存在"（冒烟补测才抓到）。
+   */
+  const normalPick =
+    rarePick.length > 0 ? weightedDraw(pool, Math.max(1, capacity - rarePick.length), random) : picked;
+  const allPicked = [...normalPick, ...rarePick].slice(0, capacity);
 
   return allPicked.map((good) => {
 

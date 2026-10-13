@@ -47,6 +47,7 @@ import TalismanPanel from '../src/components/TalismanPanel';
 import * as manuals from '../src/game/manuals';
 import * as happiness from '../src/game/happiness';
 import * as spatial from '../src/game/spatial';
+import * as caravan from '../src/game/caravan';
 import * as sectArray from '../src/game/sectArray';
 import * as posting from '../src/game/posting';
 import * as talismans from '../src/game/talismans';
@@ -119,6 +120,12 @@ import {
   HAPPINESS_NEUTRAL,
   SPATIAL_WARD_CAPACITY_BONUS,
   SPATIAL_WARD_MAX_STACKS,
+  // 第 18 轮批 C：卖出比例、商队参数、稀有货品
+  CARAVAN_INTERVAL_SECONDS,
+  RARE_GOODS,
+  RARE_GOOD_MAP,
+  SELL_RATIO,
+  rareGoodsForSectLevel,
   skillBonus,
   skillLevelOf,
   TALISMANS,
@@ -7857,6 +7864,180 @@ section('[51] 界面重排 · 幸福度 · 空间禁制（第 18 轮 需求 1~6 
     check('有稀有幸福建筑', HAPPINESS_BUILDINGS.every((b) => html.includes(b.name)));
     check('有空间禁制入口', html.includes('空间禁制') && html.includes('施加禁制'));
     Object.assign(initial, { game: backup.game });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 52. 第 18 轮批 C：商行卖出 · 商队 · 稀有货品（需求 7）                  */
+/* ------------------------------------------------------------------ */
+section('[52] 商行卖出 · 商队 · 稀有货品（第 18 轮 需求 7）');
+{
+  const base = (): GameState => ({
+    ...grant(createInitialState(0), {
+      qi: '1e12',
+      wood: '1e9',
+      stone: '1e9',
+      herb: '1e9',
+      ore: '1e9',
+      spiritSilk: '1e6',
+      demonCore: '1e6',
+      starSand: '1e6',
+      lunarCrystal: '1e6',
+      moonDew: '1e6',
+      immortalJade: '1e5',
+    }),
+    sect: { ...createInitialState(0).sect, founded: true, level: 9 },
+  });
+
+  /* ---- 卖出：卖价 = 买入价 × 40% ---- */
+  {
+    const s = forceBuild(base(), 'tradeHouse', 1);
+    // 拿"商行确实收"的一样东西：商品池里的第一件
+    const good = SHOP_GOODS[0];
+    const withStock = grant(s, { [good.item]: '1000' } as never);
+
+    const price = caravan.getSellPrice(withStock, good.item, 100);
+    check('商行给得出卖价', price > 0, `💎${price}`);
+    check('卖价比例是 40%', Math.abs(SELL_RATIO - 0.4) < 1e-9, String(SELL_RATIO));
+
+    const before = engine.getAmount(withStock, good.item as never);
+    const sold = caravan.sellItem(withStock, good.item, 100);
+    check('卖出后扣货', engine.getAmount(sold.state, good.item as never).lt(before));
+    check('卖出后进灵石', sold.state.resources.stone.gt(withStock.resources.stone), `+${sold.gained}`);
+    check('卖出写明得了多少', sold.message.includes('卖出'));
+
+    // 低买高卖必须亏：一轮买进再卖出，灵石净值下降
+    const buyPrice = good.basePrice * (1 + withStock.realmIndex);
+    const sellPricePer = caravan.getSellPrice(withStock, good.item, 1);
+    check('同一轮买进再卖出是亏的（堵死套利）', sellPricePer < buyPrice || sellPricePer < good.basePrice, `卖 ${sellPricePer} vs 买 ${good.basePrice}`);
+
+    check('数量不够时卖不出去', !caravan.canSell(withStock, good.item, 1e9).ok);
+    check('商行不收的东西给不出价', caravan.getSellPrice(withStock, 'notAThing' as never, 1) === 0);
+  }
+
+  /* ---- 商队：到访 → 以物易物 ---- */
+  {
+    const s = forceBuild(base(), 'tradeHouse', 1);
+    check('没有商行就没有商队', caravan.tickCaravan({ ...s, buildings: {} }, CARAVAN_INTERVAL_SECONDS + 1, makeRandom(1)).caravan == null);
+
+    // 到点之前不来
+    const early = caravan.tickCaravan(s, 60, makeRandom(1));
+    check('时间没到商队不会来', early.caravan == null && (early.caravanTimer ?? 0) > 0);
+
+    // 到点就来
+    const arrived = caravan.tickCaravan(s, CARAVAN_INTERVAL_SECONDS + 1, makeRandom(2));
+    check('到点商队会来', arrived.caravan !== null, caravan.getCaravanSummary(arrived));
+    const c = arrived.caravan!;
+    check('商队带了想要的东西', c.wants.length > 0, `${c.wants.length} 样`);
+    check(
+      '商队只要玩家真有的东西',
+      c.wants.every((w) => engine.getAmount(arrived, w.id as never).gt(0)),
+    );
+
+    // 兑换：给它要的，拿它带的
+    const can = caravan.canBarter(arrived);
+    check('够货时能成交', can.ok, can.reason ?? '');
+    const bartered = caravan.doBarter(arrived);
+    check('成交后商队离开', bartered.state.caravan == null);
+    check('成交写进了记事', bartered.state.journal.some((j) => j.text.includes('商队')));
+    /*
+     * ⚠️ 这里**不能**用 engine.getAmount 统一检查：商队带来的可能是装备 / 丹药 /
+     * 符箓 / 法宝，它们各有各的库存表（getAmount 对它们返回 undefined）。
+     * 这正好是 grantGood 那条修复的镜像。
+     */
+    for (const offer of c.offers) {
+      const kind = RARE_GOOD_MAP[offer.id]?.kind ?? SHOP_GOODS.find((g) => g.item === offer.id)?.kind;
+      const got =
+        kind === 'talisman'
+          ? (bartered.state.talismans[offer.id] ?? 0)
+          : kind === 'pill'
+            ? (bartered.state.pills[offer.id] ?? 0)
+            : kind === 'gear'
+              ? (bartered.state.gears[offer.id] ?? 0)
+              : kind === 'artifact'
+                ? (bartered.state.artifacts[offer.id] ?? 0)
+                : Number(engine.getAmount(bartered.state, offer.id as never));
+      check(`成交后拿到 ${offer.name}（${kind ?? '材料'}）`, got >= offer.amount, `${got} / ${offer.amount}`);
+    }
+
+    // 缺货时换不了
+    /*
+     * 缺货：把商队**真正要的那几样**清零（清零别的没意义 —— 它不要就不影响判定）。
+     */
+    let poor = arrived;
+    for (const want of c.wants) {
+      if (want.id === 'qi') poor = { ...poor, resources: { ...poor.resources, qi: D(0) } };
+      else poor = { ...poor, materials: { ...poor.materials, [want.id]: D(0) }, resources: { ...poor.resources, [want.id]: D(0) } };
+    }
+    const noGoods = caravan.canBarter(poor);
+    check('缺货时换不了（并说清缺什么）', !noGoods.ok, noGoods.reason ?? '');
+
+    // 打发走
+    check('可以送客', caravan.dismissCaravan(arrived).caravan == null);
+
+    // 离线大 dt 不会让商队"过期消失"
+    const longOffline = caravan.tickCaravan(s, 86400, makeRandom(3));
+    check('离线一整天回来商队还在门口', longOffline.caravan !== null);
+  }
+
+  /* ---- 稀有货品：很稀有 + 按宗门品阶解锁 ---- */
+  {
+    check('稀有货品表非空', RARE_GOODS.length > 0, `${RARE_GOODS.length} 条`);
+    check(
+      '稀有货品覆盖装备 / 丹药 / 符箓 / 法宝四类',
+      ['gear', 'pill', 'talisman', 'artifact'].every((k) => RARE_GOODS.some((g) => g.kind === k)),
+    );
+    check('稀有货品一律只上 1 件', RARE_GOODS.every((g) => g.baseAmount === 1));
+    check(
+      '每条稀有货都写了宗门品阶门槛',
+      RARE_GOODS.every((g) => g.unlockSectLevel >= 1 && g.unlockSectLevel <= 9),
+    );
+
+    // 品阶门槛真的在筛
+    const low = rareGoodsForSectLevel(1);
+    const high = rareGoodsForSectLevel(9);
+    check('一品宗门刷不出高阶装备', low.every((g) => g.unlockSectLevel <= 1));
+    check('九品宗门能看到全部稀有货', high.length === RARE_GOODS.length, `${low.length} → ${high.length}`);
+
+    /*
+     * 货架抽样：稀有货必须**很稀有** —— 跑 200 轮货架，含稀有货的比例要低。
+     * 这条是需求 7 里"但是很稀有"那句的直接量化。
+     *
+     * ⚠️ 货位来自 `shopSlots`（商行等建筑），没有商行时 capacity = 0、
+     * 货架直接是空的 —— 所以必须先建一座商行，否则这里量到的是"0/200"。
+     */
+    const shopState = forceBuild(base(), 'tradeHouse', 1);
+    let withRare = 0;
+    for (let i = 0; i < 200; i += 1) {
+      const offers = shop.buildShopOffers(shopState, makeRandom(1000 + i));
+      if (offers.some((o) => RARE_GOODS.some((g) => g.item === o.item))) withRare += 1;
+    }
+    const rareRatio = withRare / 200;
+    check('稀有货真的稀有（出场率低于 40%）', rareRatio < 0.4, `${Math.round(rareRatio * 100)}% 的货架上有稀有货`);
+    check('稀有货偶尔会出现（不然等于没有）', withRare > 0, `${withRare}/200`);
+
+    // 低级宗门不该刷出高阶稀有货
+    let lowTierRare = 0;
+    const lowState = { ...forceBuild(base(), 'tradeHouse', 1), sect: { ...base().sect, level: 1 } };
+    for (let i = 0; i < 100; i += 1) {
+      const offers = shop.buildShopOffers(lowState, makeRandom(2000 + i));
+      if (offers.some((o) => RARE_GOODS.some((g) => g.item === o.item && g.unlockSectLevel > 1))) lowTierRare += 1;
+    }
+    check('一品宗门刷不出超过门槛的稀有货', lowTierRare === 0, `${lowTierRare}/100`);
+  }
+
+  /* ---- 需求 4 的闭环：幸福度真的作用在弟子修行上 ---- */
+  {
+    let s = forceBuild(base(), 'thatchHut', 5);
+    s = recruitHoused(s, makeRandom(9)).state;
+    const happy: GameState = { ...s, happiness: 100 };
+    const sad: GameState = { ...s, happiness: 0 };
+    const d = s.sect.disciples[0];
+    check(
+      '幸福度确实作用在弟子修行速度上（需求 4 的闭环）',
+      disciples.getDiscipleSpeed(happy, d) > disciples.getDiscipleSpeed(sad, d),
+      `${disciples.getDiscipleSpeed(sad, d).toFixed(3)} → ${disciples.getDiscipleSpeed(happy, d).toFixed(3)}`,
+    );
   }
 }
 

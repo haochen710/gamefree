@@ -1392,7 +1392,7 @@ function injectAdvancedCosts(): void {
     const qi = def.baseCost.qi ?? 0;
     if (qi <= 0) continue;
     const cost = def.baseCost as Record<string, number>;
-    // 基础：灵矿（按灵气造价的 3%）
+    // 基础：灵矿（按灵气造价的 2% —— 力度调过一轮，注释跟着改）
 cost.ore = Math.max(1, Math.round(qi * 0.02));
     // 进阶：按境界挑一样，造价按比例
     const realm = def.requiresRealm ?? 0;

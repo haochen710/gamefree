@@ -30,6 +30,7 @@ import {
   SECRET_REALMS,
   ENDING_MAP,
   FURNACES,
+  CARAVAN_INTERVAL_SECONDS,
   GEARS,
   TALISMAN_MAP,
   MANUALS,
@@ -74,6 +75,8 @@ import * as fame from '../src/game/fame';
 import * as diplomacy from '../src/game/diplomacy';
 import * as gear from '../src/game/gear';
 import * as posting from '../src/game/posting';
+import * as happiness from '../src/game/happiness';
+import * as sectArray from '../src/game/sectArray';
 import * as talismans from '../src/game/talismans';
 import { applyTick } from '../src/game/tick';
 
@@ -1789,6 +1792,41 @@ function printDetail(result: SimResult): void {
   } else {
     console.log('  大比：未建比武台');
   }
+  /*
+   * 第 18 轮新增系统的四行诊断。
+   *
+   * ⚠️ 为什么必须有：新系统在报告里"不存在"已经发生**三次**了
+   * （只炼炉鼎不炼装备 / 符箓与派遣没 AI / 这一轮的四套系统又是零命中）。
+   * 四行诊断比给它们写完整 AI 便宜得多，而且能保证以后一眼看得见
+   * "这套系统到底转没转"。
+   */
+  console.log(
+    `  幸福度（需求 4）：${Math.round(state.happiness)} / 100 · ${happiness.describeHappiness(state)} · 弟子修行 ×${happiness
+      .getHappinessCultivationMultiplier(state)
+      .toFixed(3)}`,
+  );
+  console.log(
+    `  空间禁制（需求 6）：${
+      Object.keys(state.spatialWards).length === 0
+        ? '未施加'
+        : Object.entries(state.spatialWards)
+            .map(([id, stacks]) => `${id}×${stacks}`)
+            .join('、')
+    }`,
+  );
+  console.log(
+    `  商队（需求 7）：${
+      state.caravan
+        ? `到访中（要 ${state.caravan.wants.length} 样 / 带 ${state.caravan.offers.length} 样）`
+        : '无'
+    } · 下次约 ${Math.round((CARAVAN_INTERVAL_SECONDS - (state.caravanTimer ?? 0)) / 60)} 分钟后`,
+  );
+  console.log(
+    `  宗门大阵（需求 9）：${state.sectArrayOn ? '运转中' : '未启动'} · 阵法燃料 ${Math.round(
+      sectArray.getArrayFuel(state),
+    )} 点`,
+  );
+
   const insights = state.sect.disciples.map((d) => d.insight).sort((a, b) => b - a);
   const medianInsight = insights[Math.floor(insights.length / 2)] ?? 0;
   console.log(
