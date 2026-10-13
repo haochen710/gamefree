@@ -57,18 +57,25 @@ import type { GameState } from './state';
 /* ------------------------------------------------------------------ */
 
 /**
- * 按倍率打折之后再付钱（第 21 轮：在岗弟子的**省料 / 越阶减免**）。
+ * 按倍率打折之后再付钱。两个来源一起作用（第 21 轮）：
+ *   1. **在岗弟子的省料**（技艺 3 级起 + 越阶减免，见 posting.getPostCostMultiplier）；
+ *   2. **省料类天赋**（惜药如金 / 惜料如命 / 惜墨如金，√人数，上限 −40%）。
  *
- * ⚠️ 只缩不放：倍率被 `getPostCostMultiplier` 夹在 0.4~1 之间，
- * 所以永远不会出现"反向产出资源"这种事。
+ * ⚠️ 只缩不放：最终倍率夹在 0.4~1 之间，永远不会"反向产出资源"。
  */
 function scaleCostAsPay(state: GameState, cost: CostMap, multiplier: number): GameState {
-  if (multiplier >= 1) return payCost(state, cost);
+  const safe = Math.max(0.4, Math.min(1, multiplier));
+  if (safe >= 1) return payCost(state, cost);
   const scaled: CostMap = {};
   for (const [id, amount] of Object.entries(cost) as [ItemId, Decimal][]) {
-    scaled[id] = amount.mul(multiplier);
+    scaled[id] = amount.mul(safe);
   }
   return payCost(state, scaled);
+}
+
+/** 省料类天赋的总减免（√人数），封顶 −40% */
+function talentCostReduction(state: GameState, target: 'alchemyCost' | 'refiningCost' | 'talismanCost'): number {
+  return Math.min(0.4, getFarmTalentBonus(state, target));
 }
 
 export function getPillCount(state: GameState, id: string): number {
@@ -331,7 +338,11 @@ export function craftPill(
    * 第 21 轮：在岗弟子的**省料**与**越阶减免**直接作用在总消耗上 ——
    * 这是玩家点名要的第二类加成（"炼丹可以减少资源消耗"）。
    */
-  const paid = scaleCostAsPay(state, total, getPostCostMultiplier(state, 'alchemy', def.tier));
+  const paid = scaleCostAsPay(
+    state,
+    total,
+    getPostCostMultiplier(state, 'alchemy', def.tier) * (1 - talentCostReduction(state, 'alchemyCost')),
+  );
 
   const rate = getCraftSuccessRate(state, 'alchemy', def.tier);
   let made = 0;
@@ -345,8 +356,13 @@ export function craftPill(
    */
   const batch = furnaceBatchBonus(state);
   // 丹鼎天成（先天特质）：丹药产出翻倍的概率 +10% —— 与丹炉的批量加成同一条线
-  // 第 21 轮：在岗弟子的**增产**也进双份概率（技艺 5 级起才解锁）
-  const doubleChance = batch + getTraitEffect(state, 'alchemyDoubleChance', 0) + getPostEffect(state, 'alchemy', def.tier).output;
+  // 第 21 轮：在岗弟子的**增产**进双份概率（技艺 5 级起才解锁）
+  // ⚠️ 同时接上「丹心妙手」这类批量天赋 —— 它原来是**死配置**（0 处读取）
+  const doubleChance =
+    batch +
+    getTraitEffect(state, 'alchemyDoubleChance', 0) +
+    getFarmTalentBonus(state, 'alchemyBatch') +
+    getPostEffect(state, 'alchemy', def.tier).output;
   let bonus = 0;
   if (doubleChance > 0 && made > 0) {
     for (let i = 0; i < made; i += 1) if (random() < doubleChance) bonus += 1;
@@ -405,7 +421,11 @@ export function craftArtifact(
   for (const [id, amount] of Object.entries(unit) as [ItemId, Decimal][]) {
     total[id] = amount.mul(attempts);
   }
-  const paid = scaleCostAsPay(state, total, getPostCostMultiplier(state, 'refining', def.tier));
+  const paid = scaleCostAsPay(
+    state,
+    total,
+    getPostCostMultiplier(state, 'refining', def.tier) * (1 - talentCostReduction(state, 'refiningCost')),
+  );
 
   const rate = getCraftSuccessRate(state, 'refining', def.tier);
   let made = 0;

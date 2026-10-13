@@ -6061,7 +6061,7 @@ section('[45] 弟子养成：战斗天赋 · 种田天赋 · 性格 · 忠诚度
      * 需求 3 之后：生产天赋按四种归属分成十三项（炼丹 / 炼器 / 制符 / 种田），
      * 战斗类分成「战斗」与「战斗辅助」各六项。
      */
-    check('生产天赋共 13 项', FARM_TALENTS.length === 13, FARM_TALENTS.map((t) => t.name).join('、'));
+    check('生产天赋共 16 项（第 21 轮加了三个省料天赋）', FARM_TALENTS.length === 16, FARM_TALENTS.map((t) => t.name).join('、'));
     check(
       '生产天赋四类都有（炼丹 / 炼器 / 制符 / 种田）',
       (['alchemy', 'refining', 'talisman', 'farm'] as const).every((k) => FARM_TALENTS.some((t) => t.kind === k)),

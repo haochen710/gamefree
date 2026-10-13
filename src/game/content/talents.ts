@@ -286,6 +286,10 @@ export type FarmTalentId =
   | 'furnaceAdept'
   | 'pillHeart'
   | 'herbLore'
+  /* 第 21 轮新增：省料类（"加成不能只是成功率"） */
+  | 'thriftHerb'
+  | 'thriftOre'
+  | 'thriftInk'
   /* 炼器 */
   | 'forgeAdept'
   | 'firePrecision'
@@ -313,10 +317,14 @@ export type FarmTalentId =
 export type FarmTalentTarget =
   | 'alchemyRate'
   | 'alchemyBatch'
+  /** 第 21 轮新增：省料（减少炼制消耗）—— 玩家点名要的"不只有成功率" */
+  | 'alchemyCost'
   | 'refiningRate'
   | 'refiningBatch'
+  | 'refiningCost'
   | 'talismanRate'
   | 'talismanYield'
+  | 'talismanCost'
   | 'herb'
   | 'qi'
   | 'rareDrop'
@@ -363,6 +371,15 @@ export const FARM_TALENTS: FarmTalentDef[] = [
     rate: 0.006,
     desc: '熟知药性配比。全宗炼丹成功率 +0.6%/√人。',
   },
+  {
+    id: 'thriftHerb',
+    name: '惜药如金',
+    icon: '🍃',
+    kind: 'alchemy',
+    target: 'alchemyCost',
+    rate: 0.008,
+    desc: '一分药材能当两分用。全宗炼丹**省料** 0.8%/√人（上限 −40%）。',
+  },
   /* ---------------- 炼器 ---------------- */
   {
     id: 'forgeAdept',
@@ -391,6 +408,15 @@ export const FARM_TALENTS: FarmTalentDef[] = [
     rate: 0.006,
     desc: '一眼看出矿料的品相。全宗炼器成功率 +0.6%/√人。',
   },
+  {
+    id: 'thriftOre',
+    name: '惜料如命',
+    icon: '⚒',
+    kind: 'refining',
+    target: 'refiningCost',
+    rate: 0.008,
+    desc: '边角料也能派上用场。全宗炼器**省料** 0.8%/√人（上限 −40%）。',
+  },
   /* ---------------- 制符 ---------------- */
   {
     id: 'talismanAdept',
@@ -418,6 +444,15 @@ export const FARM_TALENTS: FarmTalentDef[] = [
     target: 'talismanRate',
     rate: 0.004,
     desc: '知道什么朱砂配什么符。全宗制符成功率 +0.4%/√人。',
+  },
+  {
+    id: 'thriftInk',
+    name: '惜墨如金',
+    icon: '🖋',
+    kind: 'talisman',
+    target: 'talismanCost',
+    rate: 0.008,
+    desc: '一笔符能省下三分朱砂。全宗制符**省料** 0.8%/√人（上限 −40%）。',
   },
   /* ---------------- 种田 ---------------- */
   {
