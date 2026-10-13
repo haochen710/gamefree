@@ -3844,13 +3844,17 @@ section('[30] 建造队列：3 个起步，天工院特殊升级到 7 个（需�
      * 现在还要灵矿与进阶材料 —— 所以这个场景要"专库撑上限 + 材料给足"。
      */
     let gated = grant(withBigStorage(createInitialState(0)), {
-      qi: '1e13',
+      qi: '1e15',
       wood: '1e11',
       stone: '1e11',
       blackIron: '1e7',
       ore: '1e11',
-      spiritSilk: '1e7',
+      spiritSilk: '1e9',
       herb: '1e11',
+      // 第 19 轮：筑基期以后的建筑掺入了进阶 / 稀有材料，场景要给足
+      demonCore: '1e9',
+      starSand: '1e9',
+      moonDew: '1e9',
     });
     gated = engine.enqueueBuild(gated, 'tiangongYuan');
     const stillGated = engine.tickBuildQueue(gated);

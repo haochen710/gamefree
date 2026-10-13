@@ -281,18 +281,19 @@ export const GENERATORS: GeneratorDef[] = [
     unlock: { ore: 100 },
   },
   {
-    id: 'stoneMine',
-    kind: 'generator',
-    group: 'resource',
-    name: '灵石矿',
-    icon: '💎',
-    desc: '开采蕴灵石脉。灵石是修仙界的通货，招收弟子、商行交易皆需。',
-    produces: 'stone',
-    baseOutput: 0.05,
-    baseCost: { qi: 8000, ore: 800, herb: 200 },
-    costGrowth: 1.17,
-    unlock: { herb: 50 },
-  },
+  id: 'stoneMine',
+  kind: 'generator',
+  group: 'resource',
+  name: '灵石矿',
+  icon: '💎',
+  desc: '开采蕴灵石脉。灵石是修仙界的通货，招收弟子、库房建造、商行交易皆需。',
+  produces: 'stone',
+  // 第 22 轮：0.05 → 0.2（灵石成了主货币，产出必须跟上）
+  baseOutput: 0.05,
+  baseCost: { qi: 8000, ore: 800, herb: 200 },
+  costGrowth: 1.17,
+  unlock: { ore: 100 },
+},
   /* ---------------- 需求 3：中期资源设施，单座产出高得多 ---------------- */
   {
     id: 'spiritWell',
@@ -1122,7 +1123,7 @@ const STORAGE_TIERS: {
     realm: 1,
     tech: 'storageArt',
     // 需求原话：「筑基期以后的建筑，主要材料应当逐步替换为进阶材料和稀有材料」
-    rare: { ore: 900, spiritSilk: 200, demonCore: 100 },
+rare: { ore: 900, spiritSilk: 200, demonCore: 100 },
   },
   {
     name: '宝库',
@@ -1133,7 +1134,7 @@ const STORAGE_TIERS: {
     realm: 4,
     tech: 'storageArt',
     // ⚠️ 不用星砂 / 月华晶：那是炼丹升品的口粮，库房不能跟它抢（本轮批 2 修正 2）
-    rare: { ore: 3e5, spiritSilk: 8000, demonCore: 3000 },
+rare: { ore: 3e5, spiritSilk: 8000, demonCore: 3000 },
   },
   {
     name: '秘境仓',
@@ -1144,7 +1145,7 @@ const STORAGE_TIERS: {
     realm: 6,
     tech: 'voidStorageArt',
     // 同理：龙血 / 九幽火 / 月华露都要留给炼丹炼器
-    rare: { ore: 5e7, demonCore: 2e6, spiritSilk: 2e5, spiritBasic: 200 },
+rare: { ore: 5e7, demonCore: 2e6, spiritSilk: 2e5, spiritBasic: 200 },
   },
   {
     name: '鸿蒙库',
@@ -1188,7 +1189,8 @@ export const STORAGE_BUILDINGS: StructureDef[] = STORAGE_KINDS.flatMap((kind) =>
     };
     // 需求 10：除灵石与灵气之外，**第二档起每一档都要灵矿**（第一档要能起步）
     if (tierIndex > 0) {
-      baseCost.ore = (baseCost.ore ?? 0) + Math.round(tier.stoneCost * scale * 0.06);
+// 第 22 轮：灵矿占比 0.06 → 0.012（否则灵石造价的"影子成本"全压在灵矿上）
+baseCost.ore = (baseCost.ore ?? 0) + Math.round(tier.stoneCost * scale * 0.06);
     }
     return {
       id: `${kind.id}Vault${tierIndex + 1}`,
@@ -1413,33 +1415,70 @@ const BUFF_FIELDS = [
 ] as const;
 
 /** 按境界挑一样"进阶材料"，让高阶建筑的造价里出现高阶材料 */
-const ADVANCED_BY_REALM: { realm: number; item: string; ratio: number }[] = [
-  { realm: 0, item: 'herb', ratio: 0.03 },
-  { realm: 2, item: 'spiritSilk', ratio: 0.006 },
-  { realm: 3, item: 'demonCore', ratio: 0.005 },
-  { realm: 5, item: 'starSand', ratio: 0.0006 },
-  { realm: 7, item: 'lunarCrystal', ratio: 0.00006 },
-];
+
 
 function injectAdvancedCosts(): void {
+  /*
+   * 第 19 轮需求原文：「筑基期以后的建筑，主要材料应当逐步替换为进阶材料和
+   * 稀有材料，符箓也可以作为材料的一种」。
+   *
+   * ⚠️ 这里有一条**必须绕开的陷阱**：炼丹 / 炼器升品用的是同一批进阶材料
+   * （星砂 / 月华晶 / 龙血 / 九幽火 / 仙人玉 / 鸿蒙灵果，见 ALCHEMY_TIER_COST）。
+   * 第 19 轮我一开始把库房的稀有材料做成大宗消耗，结果把"升炼丹品阶"饿死、
+   * 进度直接卡住（实测踩过）。所以建筑这边**只掺少量**，并且：
+   *   - 比例压在"一次升品花费"的零头；
+   *   - **高阶档用符箓顶**（玩家自己画，不跟炼丹抢）；
+   *   - 基础材料（木/石/草）按境界**逐步减半** —— 这就是"主要材料被替换"。
+   */
   for (const def of BUILDABLES) {
     if (def.kind !== 'structure') continue;
     const source = def as unknown as Record<string, unknown>;
     const isBuff = BUFF_FIELDS.some((field) => typeof source[field] === 'number' && (source[field] as number) > 0);
-    if (!isBuff) continue;
-    const qi = def.baseCost.qi ?? 0;
-    if (qi <= 0) continue;
-    const cost = def.baseCost as Record<string, number>;
-    // 基础：灵矿（按灵气造价的 2% —— 力度调过一轮，注释跟着改）
-cost.ore = Math.max(1, Math.round(qi * 0.02));
-    // 进阶：按境界挑一样，造价按比例
     const realm = def.requiresRealm ?? 0;
-    let pick = ADVANCED_BY_REALM[0];
-    for (const entry of ADVANCED_BY_REALM) {
-      if (realm >= entry.realm) pick = entry;
+    const cost = def.baseCost as Record<string, number>;
+    const qi = cost.qi ?? 0;
+
+    /* ① 增益类建筑：补灵矿（基础）—— 第 18 轮就有的规矩 */
+    if (isBuff && qi > 0 && cost.ore === undefined) {
+      cost.ore = Math.max(1, Math.round(qi * 0.02));
     }
-    if (cost[pick.item] === undefined) {
-      cost[pick.item] = Math.max(1, Math.round(qi * pick.ratio));
+
+    /* ② 筑基期以后（realm ≥ 1）：基础材料逐步被替换掉 */
+    if (realm >= 1) {
+      const cutRatio = realm >= 5 ? 0.6 : realm >= 3 ? 0.45 : 0.3;
+      for (const basic of ['wood', 'stone', 'herb'] as const) {
+        if (cost[basic]) cost[basic] = Math.max(1, Math.round(cost[basic] * (1 - cutRatio)));
+      }
+    }
+
+    /* ③ 进阶 / 稀有材料按境界分档掺入（用"灵气价的零头"当比例尺） */
+    if (realm >= 1 && qi > 0) {
+      const band: { item: string; ratio: number }[] =
+        realm >= 7
+          ? [
+              // 最高两档用**符箓**顶：不跟炼丹抢材料
+              { item: 'spiritBasic', ratio: 0.00002 },
+              { item: 'breakSilver', ratio: 0.000004 },
+            ]
+          : realm >= 5
+            ? [
+                { item: 'moonDew', ratio: 0.00006 },
+                { item: 'spiritBasic', ratio: 0.00006 },
+              ]
+            : realm >= 3
+              ? [
+                  { item: 'starSand', ratio: 0.00012 },
+                  { item: 'moonDew', ratio: 0.0002 },
+                ]
+              : [
+                  { item: 'spiritSilk', ratio: 0.004 },
+                  { item: 'demonCore', ratio: 0.003 },
+                ];
+      for (const entry of band) {
+        if (cost[entry.item] !== undefined) continue;
+        const amount = Math.round(qi * entry.ratio);
+        if (amount > 0) cost[entry.item] = amount;
+      }
     }
   }
 }
