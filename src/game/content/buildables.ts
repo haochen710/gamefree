@@ -1467,12 +1467,19 @@ function injectAdvancedCosts(): void {
               ]
             : realm >= 3
               ? [
-                  { item: 'starSand', ratio: 0.00012 },
+                  // ⚠️ 不能用星砂：炼丹升品 + 炼器升品 + 宗门晋升三条线都要它
+                  { item: 'spiritSilk', ratio: 0.002 },
                   { item: 'moonDew', ratio: 0.0002 },
                 ]
               : [
+                  /*
+                   * ⚠️ 不能用妖丹：炼丹升品、炼器升品、宗门晋升三条线都要它。
+                   * 实测：建筑抢了妖丹 → 宗门升不了品 → 人口卡在 73 → 炼丹也升不上去
+                   * → 掌门卡在化神（坑 107 的第二次）。
+                   * 建筑只用**灵蚕丝 / 月华露 / 符箓** —— 没有任何一条进度线在抢这三样。
+                   */
                   { item: 'spiritSilk', ratio: 0.004 },
-                  { item: 'demonCore', ratio: 0.003 },
+                  { item: 'moonDew', ratio: 0.0002 },
                 ];
       for (const entry of band) {
         if (cost[entry.item] !== undefined) continue;
