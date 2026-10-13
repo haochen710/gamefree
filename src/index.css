@@ -1759,6 +1759,22 @@ a {
   color: var(--warn);
 }
 
+/*
+ * 「推荐」标记（第 21 轮：岗位选人按适配性排序）
+ *
+ * 只给前 3 名打标：全都打标等于没打标。
+ */
+.picker__badge {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 4px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--jade);
+}
+
 .recipe--locked {
   opacity: 0.5;
 }

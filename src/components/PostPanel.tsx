@@ -18,6 +18,7 @@ import { useState } from 'react';
 import {
   FARM_TALENT_MAP,
   POST_BUILDINGS,
+  POST_UNLOCK,
   SKILL_BONUS_PER_LEVEL,
   SKILL_MAX_LEVEL,
   SKILL_NAMES,
@@ -27,41 +28,76 @@ import {
 import { getPostBonus, getPostCapacity, getPostCount, getPostFree, talentKindOf, describePost } from '../game/posting';
 import { skillLevelOf } from '../game/content';
 import { useGame } from '../game/store';
+import type { Disciple } from '../game/state';
 import Panel from './Panel';
 
 /** 选人名单：够资格进这座设施、且当前没在别处的弟子 */
+/**
+ * 选人名单（第 21 轮：按**适配性**排序并给出推荐）。
+ *
+ * 玩家原话：「岗位选人界面可以根据适配性做推荐，炼器制符同理」。
+ *
+ * 适配分由四件事加权而成 —— 而且**与加成的来源一一对应**，
+ * 所以玩家看到的排序就是他实际会拿到的收益排序：
+ *   1. 天赋对口（加成 ×1.5、技艺点攒得快）→ 最大权重；
+ *   2. 技艺等级（加成全部由它解锁：1 级成功率 / 3 级省料 / 5 级增产 / 7 级越阶）；
+ *   3. 已有的技艺点（离下一级还有多远）；
+ *   4. 境界（顺手带一点，高境界弟子更耐得住）。
+ * 前几名打「推荐」标记，并把"他到底能贡献什么"写在旁边。
+ */
+function scoreCandidate(d: Disciple, kind: SkillKind): { score: number; points: number; level: number; match: boolean; unlocks: string[] } {
+  const points = kind ? (d.skills[kind] ?? 0) : 0;
+  const level = skillLevelOf(points);
+  const match = talentKindOf(d) === kind;
+  const unlocks: string[] = [];
+  if (level >= POST_UNLOCK.success) unlocks.push('成功率');
+  if (level >= POST_UNLOCK.cost) unlocks.push('省料');
+  if (level >= POST_UNLOCK.output) unlocks.push('增产');
+  if (level >= POST_UNLOCK.quality) unlocks.push('越阶');
+  const score =
+    (match ? 100 : 0) +
+    level * 12 +
+    Math.min(30, Math.log10(1 + points) * 6) +
+    d.realmIndex * 2;
+  return { score, points, level, match, unlocks };
+}
+
 function PostPicker({ buildingId }: { buildingId: string }) {
   const game = useGame((s) => s.game);
   const postNow = useGame((s) => s.postDisciple);
   const kind = POST_BUILDINGS[buildingId]?.kind;
 
-  const candidates = game.sect.disciples
+  const ranked = game.sect.disciples
     .filter((d) => !d.post && d.status === 'idle')
-    .map((d) => ({
-      d,
-      match: kind ? talentKindOf(d) === kind : false,
-      points: kind ? (d.skills[kind] ?? 0) : 0,
-    }))
-    // 对口优先 → 技艺点高的优先 → 境界高的优先
-    .sort((a, b) => Number(b.match) - Number(a.match) || b.points - a.points || b.d.realmIndex - a.d.realmIndex)
+    .map((d) => ({ d, ...scoreCandidate(d, kind) }))
+    .sort((a, b) => b.score - a.score)
     .slice(0, 60);
 
-  if (candidates.length === 0) return <p className="panel__note">没有空闲弟子可安排（其余都在探索或已在岗）。</p>;
+  if (ranked.length === 0) return <p className="panel__note">没有空闲弟子可安排（其余都在探索或已在岗）。</p>;
 
   return (
     <div className="picker">
-      {candidates.map(({ d, match, points }) => (
+      {ranked.map(({ d, level, match, unlocks, score }, index) => (
         <button
           key={d.id}
           type="button"
           className={match ? 'picker__item picker__item--on' : 'picker__item'}
-          title={match ? '天赋对口：技艺点更快、加成翻倍' : '天赋不对口：只能拿到基础加成'}
+          title={
+            (match ? '天赋对口：加成 ×1.5、技艺点攒得更快' : '天赋不对口：加成打七折') +
+            (unlocks.length > 0 ? ` · 已解锁：${unlocks.join('、')}` : ' · 还没解锁任何加成（技艺 0 级）')
+          }
           onClick={() => postNow(d.id, buildingId)}
         >
-          <span className="picker__name">{d.name}</span>
+          <span className="picker__name">
+            {index < 3 && <span className="picker__badge">推荐</span>}
+            {d.name}
+          </span>
           <span className="picker__realm">{FARM_TALENT_MAP[d.farmTalent]?.name ?? '—'}</span>
           <span className="picker__power">
-            {kind ? `${SKILL_NAMES[kind]} ${skillLevelOf(points)} 级` : ''} {match ? '· 对口' : ''}
+            适配 {Math.round(score)}
+            {kind ? ` · ${SKILL_NAMES[kind]} ${level} 级` : ''}
+            {match ? ' · 对口' : ''}
+            {unlocks.length > 0 ? ` · ${unlocks.join('/')}` : ' · 无加成'}
           </span>
         </button>
       ))}
