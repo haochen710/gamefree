@@ -7511,10 +7511,57 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
     check('入岗后 post 记在弟子身上', posted.sect.disciples[0].post === 'alchemyRoom');
     check('入岗后状态是 posted', posted.sect.disciples[0].status === 'posted');
     check('派遣中的弟子不能去探索', !expeditions.canStartExpedition(posted, STARTER_REALM_ID, ['p1']).ok);
-    check('派遣给出设施加成', posting.getPostBonus(posted, 'alchemy') > 0, String(posting.getPostBonus(posted, 'alchemy')));
-    check('对口天赋的加成更高',
-      posting.getPostBonus(posted, 'alchemy') >
-        posting.getPostBonus({ ...posted, sect: { ...posted.sect, disciples: [{ ...posted.sect.disciples[0], farmTalent: 'herbWhisper' }] } }, 'alchemy'));
+    /*
+     * 第 21 轮把加成模型整个换掉了，玩家原话：
+     *   「加成的初始值一定要低，现在一个弟子的初始加成就直接百分之 9 了，
+     *     过于高了，加成应当是在技艺的提升过程中逐步解锁」。
+     * 所以现在**技艺 0 级的弟子贡献就是 0**（旧断言守的是"人到了就有效果"）。
+     */
+    check('技艺 0 级的弟子不提供加成（起点极低）', posting.getPostBonus(posted, 'alchemy') === 0, String(posting.getPostBonus(posted, 'alchemy')));
+
+    // 攒出技艺点（1 级 = 100 点）之后才有成功率加成
+    const leveled: GameState = {
+      ...posted,
+      sect: { ...posted.sect, disciples: [{ ...posted.sect.disciples[0], skills: { ...posted.sect.disciples[0].skills, alchemy: 120 } }] },
+    };
+    const lv1 = posting.getPostEffect(leveled, 'alchemy', 1);
+    check('技艺 1 级起才给成功率', lv1.success > 0, `${(lv1.success * 100).toFixed(2)}%`);
+    check('而且这个初始值很低（远低于旧版的 9%）', lv1.success < 0.05, `${(lv1.success * 100).toFixed(2)}%`);
+
+    // 对口天赋在**同一技艺等级**下更高
+    const asFarmer: GameState = {
+      ...leveled,
+      sect: { ...leveled.sect, disciples: [{ ...leveled.sect.disciples[0], farmTalent: 'herbWhisper' }] },
+    };
+    check(
+      '对口天赋的加成更高（同一技艺等级）',
+      posting.getPostEffect(leveled, 'alchemy', 1).success > posting.getPostEffect(asFarmer, 'alchemy', 1).success,
+      `${(posting.getPostEffect(leveled, 'alchemy', 1).success * 100).toFixed(2)}% vs ${(posting.getPostEffect(asFarmer, 'alchemy', 1).success * 100).toFixed(2)}%`,
+    );
+
+    /* ---- 分阶解锁：3 级省料、5 级增产、7 级越阶 ---- */
+    const at = (points: number): GameState => ({
+      ...posted,
+      sect: { ...posted.sect, disciples: [{ ...posted.sect.disciples[0], skills: { ...posted.sect.disciples[0].skills, alchemy: points } }] },
+    });
+    const lv2 = posting.getPostEffect(at(300), 'alchemy', 1);
+    const lv3 = posting.getPostEffect(at(700), 'alchemy', 1);
+    const lv5 = posting.getPostEffect(at(3200), 'alchemy', 1);
+    const lv7 = posting.getPostEffect(at(16000), 'alchemy', 1);
+    check('2 级还没有省料', lv2.cost === 0, String(lv2.cost));
+    check('3 级解锁省料', lv3.cost > 0, `${(lv3.cost * 100).toFixed(1)}%`);
+    check('5 级解锁增产', lv5.output > 0, `${(lv5.output * 100).toFixed(1)}%`);
+    check('7 级解锁越阶减免', lv7.quality > 0, `${(lv7.quality * 100).toFixed(1)}%`);
+    check('省料会真的抵掉消耗倍率', posting.getPostCostMultiplier(at(700), 'alchemy', 1) < 1, String(posting.getPostCostMultiplier(at(700), 'alchemy', 1)));
+
+    /* ---- 按品阶打折：低级技艺堆不动高级丹 ---- */
+    check('3 级弟子炼一品丹是满额', posting.effectiveSkillLevel(3, 1) === 3);
+    check('3 级弟子炼三品丹打折', posting.effectiveSkillLevel(3, 3) === 1);
+    check('3 级弟子炼五品丹等于零贡献', posting.effectiveSkillLevel(3, 5) === 0);
+    check(
+      '同一批人在高级品阶上给的成功率更低',
+      posting.getPostEffect(leveled, 'alchemy', 1).success > posting.getPostEffect(leveled, 'alchemy', 4).success,
+    );
 
     // 技艺点随时间积累
     const ticked = posting.tickPosts(posted, 3600);

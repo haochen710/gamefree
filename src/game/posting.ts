@@ -15,6 +15,11 @@ import {
   POST_BUILDINGS,
   POST_BUILDING_IDS,
   POST_BASE_BONUS,
+  POST_COST_CAP,
+  POST_EFFECT_PER_LEVEL,
+  POST_OUTPUT_CAP,
+  POST_TIER_FREE,
+  POST_UNLOCK,
   POST_BONUS_CAP,
   POST_INSIGHT_PER_MINUTE,
   SKILL_POINTS_PER_SECOND,
@@ -22,7 +27,6 @@ import {
   TALENT_MATCH_MULT,
   TALENT_SKILL_GAIN_MULT,
   emptySkills,
-  skillBonus,
   skillLevelOf,
   type SkillKind,
 } from './content';
@@ -158,23 +162,101 @@ export function autoPostAll(state: GameState): { state: GameState; posted: numbe
 /* ------------------------------------------------------------------ */
 
 /**
- * 某个技艺面得到的**设施加成**（0.03 = +3%）。
+ * 派遣带来的**四类**加成（第 21 轮重做）。
  *
- * 每名在岗弟子贡献 `(基础 3% + 技艺等级 ×2%) × 对口倍率`，全部相加后封顶。
- * 之所以让"对口"给一个很大的倍率（而不是加法），是为了让"把炼丹天赋的人
- * 放进丹房"成为唯一正确的事 —— 否则随手塞人也能拿到大部分收益。
+ * 玩家原话：
+ *   「弟子针对建筑的加成不能只是成功率上，炼丹可以减少资源消耗、增加产出等，
+ *     所以天赋可以更加多元化……但是加成的初始值一定要低，现在一个弟子的初始
+ *     加成都直接百分之 9 了，过于高了，加成应当是在技艺的提升过程中逐步解锁。
+ *     并且不同等级的技艺，对不同品级的丹药和器物的加成也是不一样的。」
+ *
+ * 所以这个模型有三条规则：
+ *   1. **起点极低**：技艺 0 级、天赋不对口的弟子贡献 **0**（连成功率都不给）；
+ *   2. **分阶解锁**：1 级起给成功率、3 级起省料、5 级起增产、7 级起越阶；
+ *   3. **按品阶打折**：`有效等级 = max(0, 等级 − max(0, 目标品阶 − 1))` ——
+ *      3 级炼丹弟子炼一品丹是满额，炼五品丹则是零贡献。
  */
-export function getPostBonus(state: GameState, kind: SkillKind): number {
-  let total = 0;
+export interface PostEffect {
+  /** 成功率加成（加算，0.05 = +5 个百分点） */
+  success: number;
+  /** 省料比例（0.1 = 少花 10% 材料） */
+  cost: number;
+  /** 增产比例（0.1 = 出双份的概率 +10%） */
+  output: number;
+  /** 越阶减免：目标品阶高于自身时抵掉的那部分惩罚 */
+  quality: number;
+  /** 有几个在岗弟子在真正出力（有效等级 > 0） */
+  contributors: number;
+  /** 在岗总人数（含还没练出技艺的） */
+  posted: number;
+}
+
+/** 有效等级：目标品阶越高，越吃"技艺不够"的折扣 */
+export function effectiveSkillLevel(level: number, targetTier: number): number {
+  const penalty = Math.max(0, targetTier - POST_TIER_FREE);
+  return Math.max(0, level - penalty);
+}
+
+/**
+ * 某个技艺面在**炼制品阶 targetTier** 时的四类加成。
+ *
+ * 注意 `targetTier` 是"要炼的东西的品阶"（丹药品阶 / 器物品阶 / 符箓品阶），
+ * 采集类（灵田）没有品阶，传 1 即可。
+ */
+export function getPostEffect(state: GameState, kind: SkillKind, targetTier = 1): PostEffect {
+  const out: PostEffect = { success: 0, cost: 0, output: 0, quality: 0, contributors: 0, posted: 0 };
+
   for (const d of state.sect.disciples) {
     if (!d.post) continue;
     const def = POST_BUILDINGS[d.post];
     if (!def || def.kind !== kind) continue;
-    const base = POST_BASE_BONUS + skillBonus(d.skills[kind] ?? 0);
+    out.posted += 1;
+
+    const level = skillLevelOf(d.skills[kind] ?? 0);
+    const eff = effectiveSkillLevel(level, targetTier);
+    if (eff <= 0) continue;
+    out.contributors += 1;
+
     const match = talentKindOf(d) === kind ? TALENT_MATCH_MULT : 1;
-    total += base * match;
+    if (level >= POST_UNLOCK.success) {
+      out.success += (POST_BASE_BONUS + eff * POST_EFFECT_PER_LEVEL.success) * match;
+    }
+    if (level >= POST_UNLOCK.cost) {
+      out.cost += eff * POST_EFFECT_PER_LEVEL.cost * match;
+    }
+    if (level >= POST_UNLOCK.output) {
+      out.output += eff * POST_EFFECT_PER_LEVEL.output * match;
+    }
+    if (level >= POST_UNLOCK.quality) {
+      out.quality += eff * POST_EFFECT_PER_LEVEL.quality * match;
+    }
   }
-  return Math.min(POST_BONUS_CAP, total);
+
+  out.success = Math.min(POST_BONUS_CAP, out.success);
+  out.cost = Math.min(POST_COST_CAP, out.cost);
+  out.output = Math.min(POST_OUTPUT_CAP, out.output);
+  out.quality = Math.min(POST_BONUS_CAP, out.quality);
+  return out;
+}
+
+/**
+ * 兼容旧调用点：成功率那一项（界面上的"+X%"也用它）。
+ *
+ * ⚠️ 传 targetTier 才能反映"按品阶打折"；不传就按一品算。
+ */
+export function getPostBonus(state: GameState, kind: SkillKind, targetTier = 1): number {
+  return getPostEffect(state, kind, targetTier).success;
+}
+
+/**
+ * 炼制消耗的倍率（省料）：`1 − 派遣省料 − 越阶减免`，有下限。
+ *
+ * 越阶减免放在这里而不是成功率上，是因为"手艺好的人来炼你的丹，
+ * 最直接的体现就是少浪费材料"。
+ */
+export function getPostCostMultiplier(state: GameState, kind: SkillKind, targetTier = 1): number {
+  const effect = getPostEffect(state, kind, targetTier);
+  return Math.max(0.4, 1 - effect.cost - effect.quality * 0.5);
 }
 
 /** 在岗人数（按技艺面） */

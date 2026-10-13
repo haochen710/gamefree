@@ -39,7 +39,6 @@ import {
   getFarmTalentBonus,
   getRefiningSlots,
   getStructureBonus,
-  getPostBonusHere,
   getTraitEffect,
   grantQiSeconds,
   payCost,
@@ -49,11 +48,28 @@ import {
 import { aptitudeRank, pushJournal, relieveDemonAll } from './disciples';
 import { furnaceAlchemyBonus, furnaceBatchBonus, furnaceRefiningBonus } from './gear';
 import { completeAllExpeditions } from './expeditions';
+// 第 21 轮：派遣的四类加成（成功率 / 省料 / 增产 / 越阶）
+import { getPostCostMultiplier, getPostEffect } from './posting';
 import type { GameState } from './state';
 
 /* ------------------------------------------------------------------ */
 /* 数量工具                                                            */
 /* ------------------------------------------------------------------ */
+
+/**
+ * 按倍率打折之后再付钱（第 21 轮：在岗弟子的**省料 / 越阶减免**）。
+ *
+ * ⚠️ 只缩不放：倍率被 `getPostCostMultiplier` 夹在 0.4~1 之间，
+ * 所以永远不会出现"反向产出资源"这种事。
+ */
+function scaleCostAsPay(state: GameState, cost: CostMap, multiplier: number): GameState {
+  if (multiplier >= 1) return payCost(state, cost);
+  const scaled: CostMap = {};
+  for (const [id, amount] of Object.entries(cost) as [ItemId, Decimal][]) {
+    scaled[id] = amount.mul(multiplier);
+  }
+  return payCost(state, scaled);
+}
 
 export function getPillCount(state: GameState, id: string): number {
   return state.pills[id] ?? 0;
@@ -251,7 +267,8 @@ export function getCraftSuccessRate(
    */
   const talentTarget = kind === 'alchemy' ? 'alchemyRate' : kind === 'refining' ? 'refiningRate' : 'talismanRate';
   const talent = getFarmTalentBonus(state, talentTarget);
-  const post = getPostBonusHere(state, kind);
+  // 第 21 轮：派遣的成功率加成按**目标品阶**打折（低级弟子堆不动高级丹）
+  const post = getPostEffect(state, kind, targetTier).success;
   // 丹炉九件（设定集第 11 章）：当前那口炉子的成功率加成（符箓不吃炉子）
   const furnace = kind === 'alchemy' ? furnaceAlchemyBonus(state) : kind === 'refining' ? furnaceRefiningBonus(state) : 0;
   // 丹鼎天成（先天特质）：炼丹成功率 +12%
@@ -310,7 +327,11 @@ export function craftPill(
   for (const [id, amount] of Object.entries(unit) as [ItemId, Decimal][]) {
     total[id] = amount.mul(attempts);
   }
-  const paid = payCost(state, total);
+  /*
+   * 第 21 轮：在岗弟子的**省料**与**越阶减免**直接作用在总消耗上 ——
+   * 这是玩家点名要的第二类加成（"炼丹可以减少资源消耗"）。
+   */
+  const paid = scaleCostAsPay(state, total, getPostCostMultiplier(state, 'alchemy', def.tier));
 
   const rate = getCraftSuccessRate(state, 'alchemy', def.tier);
   let made = 0;
@@ -324,7 +345,8 @@ export function craftPill(
    */
   const batch = furnaceBatchBonus(state);
   // 丹鼎天成（先天特质）：丹药产出翻倍的概率 +10% —— 与丹炉的批量加成同一条线
-  const doubleChance = batch + getTraitEffect(state, 'alchemyDoubleChance', 0);
+  // 第 21 轮：在岗弟子的**增产**也进双份概率（技艺 5 级起才解锁）
+  const doubleChance = batch + getTraitEffect(state, 'alchemyDoubleChance', 0) + getPostEffect(state, 'alchemy', def.tier).output;
   let bonus = 0;
   if (doubleChance > 0 && made > 0) {
     for (let i = 0; i < made; i += 1) if (random() < doubleChance) bonus += 1;
@@ -383,7 +405,7 @@ export function craftArtifact(
   for (const [id, amount] of Object.entries(unit) as [ItemId, Decimal][]) {
     total[id] = amount.mul(attempts);
   }
-  const paid = payCost(state, total);
+  const paid = scaleCostAsPay(state, total, getPostCostMultiplier(state, 'refining', def.tier));
 
   const rate = getCraftSuccessRate(state, 'refining', def.tier);
   let made = 0;
