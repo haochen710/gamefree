@@ -41,6 +41,7 @@ import {
   getInsightMax,
 } from '../game/engine';
 import { useGame } from '../game/store';
+import Panel from './Panel';
 import type { Disciple } from '../game/state';
 
 type SortKey = 'aptitude' | 'realm' | 'age' | 'loyalty' | 'demon';
@@ -214,7 +215,16 @@ function DiscipleRow({ disciple }: { disciple: Disciple }) {
   );
 }
 
-export function DisciplePanel() {
+/**
+ * 弟子管理。
+ *
+ * 需求 4：「弟子显示不全，只会显示一些。可以改为玩家根据弟子境界、资质、
+ * 天赋等显示，并且可以收起」—— 三件事分别落成：
+ *   - 每页 120 条 + 「显示更多 / 收起名单」；
+ *   - 五个筛选（境界 / 资质 / 天赋类别 / 状态 / 排序）；
+ *   - 整个面板由 Panel 承载，标题栏可点、折叠状态记在 localStorage（collapsible）。
+ */
+export function DisciplePanel({ collapsible }: { collapsible?: boolean } = {}) {
   const game = useGame((s) => s.game);
   const dismissBelow = useGame((s) => s.dismissBelow);
 
@@ -281,14 +291,12 @@ export function DisciplePanel() {
   ).length;
 
   return (
-    <section className="panel">
-      <div className="panel__head">
-        <h2>弟子</h2>
-        <span className="panel__hint">
-          {game.sect.disciples.length} / {capacity}（居所 {housing}）
-        </span>
-      </div>
-
+    <Panel
+      title="弟子"
+      hint={`${game.sect.disciples.length} / ${capacity}（居所 ${housing}）`}
+      collapsible={collapsible}
+      storageKey="disciples"
+    >
       <div className="disciple-toolbar">
         <label>
           排序
@@ -434,7 +442,7 @@ export function DisciplePanel() {
           已显示 {Math.min(shown, list.length)} / {list.length} 人（共 {game.sect.disciples.length} 名弟子）
         </span>
       </div>
-    </section>
+    </Panel>
   );
 }
 

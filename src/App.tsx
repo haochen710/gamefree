@@ -211,7 +211,7 @@ function SectTab() {
         {/* 需求 3 / 12：派遣与技艺 */}
         <PostPanel collapsible />
         <SectPanel />
-        <DisciplePanel />
+        <DisciplePanel collapsible />
         {/* 设定集第 7 章：藏经阁（功法碎片、合成、发书） */}
         <ManualPanel collapsible />
         {/* 设定集第 8.7 / 11 章：丹器阁（丹炉九件 + 弟子五装备栏） */}
