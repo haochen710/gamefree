@@ -76,6 +76,7 @@ import {
   BREAKTHROUGH_PILL_GAP_RECOVERY,
   COMBAT_TALENT_IDS,
   COMBAT_TALENT_MAP,
+  COMBAT_SUPPORT_TALENTS,
   COMBAT_TALENTS,
   DEMON_TIERS,
   FARM_TALENT_IDS,
@@ -377,6 +378,8 @@ function makeDisciple(overrides: Partial<Disciple> = {}): Disciple {
     combatManual: '',
     // 五装备栏（设定集第 8.7 章）：默认全空，测试要装什么自己覆盖
     gear: { gain: '', attack: '', defense: '', pill1: '', pill2: '' },
+    post: '',
+    skills: { alchemy: 0, refining: 0, talisman: 0, farm: 0 },
     idleSeconds: 0,
     realmIndex: 0,
     progress: 0,
@@ -5844,7 +5847,19 @@ section('[45] 弟子养成：战斗天赋 · 种田天赋 · 性格 · 忠诚度
   /* ---- 数据层：六项一组，id 与定义一一对应 ---- */
   {
     check('战斗天赋共 6 项', COMBAT_TALENTS.length === 6, COMBAT_TALENTS.map((t) => t.name).join('、'));
-    check('种田天赋共 6 项', FARM_TALENTS.length === 6, FARM_TALENTS.map((t) => t.name).join('、'));
+    /*
+     * 需求 3 之后：生产天赋按四种归属分成十三项（炼丹 / 炼器 / 制符 / 种田），
+     * 战斗类分成「战斗」与「战斗辅助」各六项。
+     */
+    check('生产天赋共 13 项', FARM_TALENTS.length === 13, FARM_TALENTS.map((t) => t.name).join('、'));
+    check(
+      '生产天赋四类都有（炼丹 / 炼器 / 制符 / 种田）',
+      (['alchemy', 'refining', 'talisman', 'farm'] as const).every((k) => FARM_TALENTS.some((t) => t.kind === k)),
+      (['alchemy', 'refining', 'talisman', 'farm'] as const)
+        .map((k) => k + ':' + FARM_TALENTS.filter((t) => t.kind === k).length)
+        .join(' '),
+    );
+    check('战斗天赋 6 项、战斗辅助 6 项', COMBAT_TALENTS.length === 6 && COMBAT_SUPPORT_TALENTS.length === 6, COMBAT_SUPPORT_TALENTS.map((t) => t.name).join('、'));
     check('性格共 6 项', PERSONALITIES.length === 6, PERSONALITIES.map((p) => p.name).join('、'));
     check(
       '战斗天赋 id 与查表一致',
@@ -5887,10 +5902,11 @@ section('[45] 弟子养成：战斗天赋 · 种田天赋 · 性格 · 忠诚度
     );
     check('新弟子的种田天赋都在定义集合里', rolls.every((d) => FARM_TALENT_IDS.includes(d.farmTalent)));
     check('新弟子的性格都在定义集合里', rolls.every((d) => PERSONALITY_IDS.includes(d.personality)));
+    // 战斗槽现在从「战斗 + 战斗辅助」十二项里抽（需求 3），所以只要求覆盖到 8 种以上
     check(
-      '六种战斗天赋在 200 次抽样里都出现过',
-      new Set(rolls.map((d) => d.combatTalent)).size === 6,
-      `${new Set(rolls.map((d) => d.combatTalent)).size}/6`,
+      '战斗类天赋（含辅助）在 200 次抽样里覆盖到 8 种以上',
+      new Set(rolls.map((d) => d.combatTalent)).size >= 8,
+      `${new Set(rolls.map((d) => d.combatTalent)).size}/12`,
     );
     check(
       '六种性格在 200 次抽样里都出现过',

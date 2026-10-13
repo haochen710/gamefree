@@ -38,6 +38,7 @@ import {
   PILL_MAP,
   REALMS,
   SECRET_REALMS,
+  POST_BUILDINGS,
   SECRET_REALM_MAP,
   UNDERPOWERED_MAX_PENALTY,
   SEED_MAP,
@@ -89,6 +90,10 @@ import {
   adjustLoyalty,
   getDiscipleCasualtyReduction,
   getPartyPower,
+  getPartyInsightBonusOf,
+  getSectTravelSpeedBonus,
+  getPartyPillEffectBonusOf,
+  getPartySafetyBonusOf,
   getPartyTalentYieldBonusOf,
   isRefusingTask,
   pushJournal,
@@ -169,6 +174,7 @@ export function canStartExpedition(state: GameState, realmId: string, ids: strin
   for (const id of ids) {
     const d = byId.get(id);
     if (!d) return { ok: false, reason: '弟子不存在' };
+    if (d.post) return { ok: false, reason: `${d.name} 正被派在${POST_BUILDINGS[d.post]?.name ?? '设施'}里，先撤回来` };
     if (d.status !== 'idle') return { ok: false, reason: `${d.name} 正在探索中` };
     if (d.realmIndex < def.minRealm) {
       return { ok: false, reason: `需${REALMS[def.minRealm].name}以上弟子` };
@@ -207,6 +213,8 @@ export function autoSelectParty(state: GameState, realmId: string, size?: number
 
   const highRisk = def.baseCasualty >= HIGH_RISK_CASUALTY;
   const candidates = getIdleDisciples(state)
+    // 派遣中的弟子不可用（需求 3）
+    .filter((d) => !d.post)
     .filter((d) => d.realmIndex >= def.minRealm)
     .filter((d) => !isRefusingTask(d))
     .filter((d) => !(highRisk && refusesHighRisk(d)))
@@ -241,7 +249,12 @@ export function startExpedition(
     realmId,
     discipleIds: [...ids],
     progress: 0,
-    duration: def.duration,
+    /*
+     * 「引路之人」（战斗辅助天赋，需求 3）让这一趟走得更快。
+     * 折在**出发那一刻**的 duration 上，而不是每帧去乘 ——
+     * 中途招到一个引路人不该让已经上路的队伍突然加速（进度条会抽风）。
+     */
+    duration: Math.max(1, Math.round(def.duration / (1 + getSectTravelSpeedBonus(state)))),
     kind: 'realm',
     repeatLeft: clampRepeat(repeat),
   };
@@ -491,7 +504,8 @@ export function resolveExpedition(
   const fragmentGain = fragmentRoll.drop;
 
   /* ---- 1e. 心得（需求 4：弟子探索后增加心得，加快进境） ---- */
-  const insightGain = getExpeditionInsight(working, def);
+  // 「同袍之义」：探索心得 +10%（需求 3）
+  const insightGain = Math.round(getExpeditionInsight(working, def) * (1 + getPartyInsightBonusOf(party)));
 
   /* ---- 2. 判定伤亡 ---- */
   const safety = Math.min(
@@ -502,7 +516,10 @@ export function resolveExpedition(
         artifacts.expeditionSafety +
         getStructureBonus(state, 'casualtyReduction') +
         // 丹药栏（设定集第 8.7 章）：出战时自动服下，全队伤亡减免，一趟用掉
-        getPartyPillSafety(party),
+        // 「药理通神」让这一份丹药效果再放大 50%
+        getPartyPillSafety(party) * (1 + getPartyPillEffectBonusOf(party)) +
+        // 战斗辅助天赋（需求 3）：阵道 / 疗伤这类人让整队更安全（取最高一项）
+        getPartySafetyBonusOf(party),
     ),
   );
   const baseRate = powerRatio > 0 ? def.baseCasualty / powerRatio : MAX_CASUALTY_RATE;  /*
@@ -864,6 +881,7 @@ export function canStartSurvey(state: GameState, regionId: string, ids: string[]
   for (const id of ids) {
     const d = byId.get(id);
     if (!d) return { ok: false, reason: '弟子不存在' };
+    if (d.post) return { ok: false, reason: `${d.name} 正被派在${POST_BUILDINGS[d.post]?.name ?? '设施'}里，先撤回来` };
     if (d.status !== 'idle') return { ok: false, reason: `${d.name} 正在探索中` };
     if (d.realmIndex < minRealm) return { ok: false, reason: `需${REALMS[minRealm].name}以上弟子` };
   }

@@ -798,6 +798,26 @@ export const STRUCTURES: StructureDef[] = [
       max: 12,
     },
     {
+      /**
+       * 符房（需求 8 / 12）：制符的地方。
+       *
+       * 与丹房 / 炼器房一样是"品阶 + 岗位"双重身份：
+       *   - 制符产线的地方（符箓在这里造出来）；
+       *   - 制符岗位的来源（每座 2 人，见 game/posting.ts）。
+       */
+      id: 'talismanRoom',
+      kind: 'structure',
+      group: 'hall',
+      name: '符房',
+      icon: '📜',
+      desc: '朱砂、黄纸、灵笔。制符的地方，每座可安排 2 名弟子在此制符并积累制符技艺。',
+      baseCost: { qi: 3e4, wood: 2200, stone: 900, herb: 600, spiritSilk: 120 },
+      costGrowth: 1.3,
+      unlock: { spiritSilk: 20 },
+      requiresRealm: 1,
+      max: 8,
+    },
+    {
       id: 'library',
       kind: 'structure',
       group: 'hall',

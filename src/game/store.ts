@@ -16,6 +16,7 @@ import {
   ITEM_MAP,
   ENDING_MAP,
   FURNACE_MAP,
+  POST_BUILDINGS,
   GEAR_MAP,
   MANUAL_GRADE_MIN_REALM,
   REFINE_RECIPE_MAP,
@@ -39,6 +40,7 @@ import * as manuals from './manuals';
 import * as fame from './fame';
 import * as diplomacy from './diplomacy';
 import * as gear from './gear';
+import * as posting from './posting';
 import * as travel from './travel';
 import * as encounter from './encounter';
 import * as enlightenment from './enlightenment';
@@ -161,6 +163,16 @@ export interface GameStore {
   contemplateManualBatch(grade: number, times: number): void;
   /** 批量招收弟子（需求 10） */
   recruitDiscipleBatch(count: number): void;
+
+  /* 派遣与技艺（需求 3 / 12） */
+  /** 把一名弟子安排进某座设施 */
+  postDisciple(discipleId: string, buildingId: string): void;
+  /** 把一名弟子从设施里撤回来 */
+  unpostDisciple(discipleId: string): void;
+  /** 撤回某座设施上的全部弟子 */
+  unpostAll(buildingId: string): void;
+  /** 一键填岗：按「对口优先、技艺高优先」把空闲弟子安排进各设施 */
+  autoPostAll(): void;
 
   /* 仆人 */
   recruitServant(job: string): void;
@@ -773,6 +785,48 @@ export const useGame = create<GameStore>()((set, get) => ({
         ...nextGame(s.game, result.state),
         notice: `一键打包：买下 ${result.bought} 件，共 ${fmt(result.spent)} 灵石`,
       };
+    });
+  },
+
+  postDisciple: (discipleId, buildingId) => {
+    set((s) => {
+      const check = posting.canPost(s.game, discipleId, buildingId);
+      if (!check.ok) return { notice: check.reason ?? '无法安排' };
+      const next = posting.postDisciple(s.game, discipleId, buildingId);
+      if (next === s.game) return {};
+      const d = s.game.sect.disciples.find((x) => x.id === discipleId);
+      return {
+        ...nextGame(s.game, next),
+        notice: `${d?.name ?? '弟子'} 已派往${POST_BUILDINGS[buildingId]?.name ?? '设施'}`,
+      };
+    });
+  },
+
+  unpostDisciple: (discipleId) => {
+    set((s) => {
+      const d = s.game.sect.disciples.find((x) => x.id === discipleId);
+      const next = posting.unpostDisciple(s.game, discipleId);
+      if (next === s.game) return {};
+      return { ...nextGame(s.game, next), notice: `${d?.name ?? '弟子'} 已撤回` };
+    });
+  },
+
+  unpostAll: (buildingId) => {
+    set((s) => {
+      const result = posting.unpostAll(s.game, buildingId);
+      if (result.removed === 0) return { notice: '这里本来就没有人' };
+      return {
+        ...nextGame(s.game, result.state),
+        notice: `已从${POST_BUILDINGS[buildingId]?.name ?? '设施'}撤回 ${result.removed} 人`,
+      };
+    });
+  },
+
+  autoPostAll: () => {
+    set((s) => {
+      const result = posting.autoPostAll(s.game);
+      if (result.posted === 0) return { notice: '没有可安排的人（岗位已满或弟子都在忙）' };
+      return { ...nextGame(s.game, result.state), notice: `已安排 ${result.posted} 名弟子入岗` };
     });
   },
 

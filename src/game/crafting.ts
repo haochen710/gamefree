@@ -39,6 +39,7 @@ import {
   getFarmTalentBonus,
   getRefiningSlots,
   getStructureBonus,
+  getPostBonusHere,
   getTraitEffect,
   grantQiSeconds,
   payCost,
@@ -237,7 +238,13 @@ export function getCraftSuccessRate(state: GameState, kind: 'alchemy' | 'refinin
     kind === 'alchemy'
       ? getStructureBonus(state, 'alchemySuccessBonus')
       : getStructureBonus(state, 'refiningSuccessBonus');
+  /*
+   * 生产天赋（√人数）与**派遣岗位**（需求 3 / 12）是两条独立加算线：
+   *   天赋 = "你招到了什么人"，岗位 = "你把谁安排在了哪儿"。
+   * 前者随人数递减，后者受岗位数封顶 —— 各有一道天花板。
+   */
   const talent = getFarmTalentBonus(state, kind === 'alchemy' ? 'alchemyRate' : 'refiningRate');
+  const post = getPostBonusHere(state, kind);
   // 丹炉九件（设定集第 11 章）：当前那口炉子的成功率加成
   const furnace = kind === 'alchemy' ? furnaceAlchemyBonus(state) : furnaceRefiningBonus(state);
   // 丹鼎天成（先天特质）：炼丹成功率 +12%
@@ -245,7 +252,7 @@ export function getCraftSuccessRate(state: GameState, kind: 'alchemy' | 'refinin
   const bonus = gap > 0 ? gap * CRAFT_MASTER_GAP_BONUS : 0;
 
   // 上限仍是 1（差两品也可能因为炉子好、弟子手巧而摸到满）
-  return Math.max(0.05, Math.min(1, base + bonus + building + talent + trait + furnace));
+  return Math.max(0.05, Math.min(1, base + bonus + building + talent + trait + furnace + post));
 }
 
 /** 界面用：说清楚"为什么会失败/为什么会必成" */

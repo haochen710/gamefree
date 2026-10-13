@@ -28,6 +28,32 @@ import type { AptitudeId } from './sect';
 import { APTITUDE_ORDER } from './sect';
 
 /* ------------------------------------------------------------------ */
+/* 天赋总览（需求 3）                                                   */
+/* ------------------------------------------------------------------ */
+/*
+ * 需求 3 把天赋分成六类：
+ *   **战斗天赋 / 战斗辅助天赋 / 炼丹天赋 / 炼器天赋 / 制符天赋 / 种田天赋**
+ *
+ * 落地方式是"两个槽"（与用户确认过的口径）：
+ *   - `Disciple.combatTalent`：**战斗类** —— 从「战斗天赋 + 战斗辅助天赋」里抽；
+ *   - `Disciple.farmTalent`：**生产类** —— 从「炼丹 / 炼器 / 制符 / 种田」里抽。
+ * 性格（`personality`）继续独立存在，见本文件后面的 PERSONALITIES。
+ *
+ * 这么分的好处是**派遣**有了明确的对口人：丹房要炼丹天赋、符房要制符天赋，
+ * 而战斗辅助天赋（阵道、药理、引路）在探索里各有一席之地。
+ */
+
+/** 生产类天赋的四种归属（同时就是四项"技艺"的口径） */
+export type TalentKind = 'alchemy' | 'refining' | 'talisman' | 'farm';
+
+export const TALENT_KIND_NAMES: Record<TalentKind, string> = {
+  alchemy: '炼丹',
+  refining: '炼器',
+  talisman: '制符',
+  farm: '种田',
+};
+
+/* ------------------------------------------------------------------ */
 /* 战斗天赋（每名弟子随机 1 项）                                        */
 /* ------------------------------------------------------------------ */
 
@@ -37,12 +63,21 @@ export type CombatTalentId =
   | 'dangerSense'
   | 'bloodlust'
   | 'beastWhisper'
-  | 'soulSteady';
+  | 'soulSteady'
+  /* ---- 战斗辅助（需求 3 新增） ---- */
+  | 'fieldMedic'
+  | 'arrayMaster'
+  | 'scoutEye'
+  | 'pathfinder'
+  | 'pillMaster'
+  | 'comrade';
 
 export interface CombatTalentDef {
   id: CombatTalentId;
   name: string;
   icon: string;
+  /** 战斗 or 战斗辅助（需求 3 的分类） */
+  family: 'combat' | 'support';
   /** **自己**受到的秘境伤亡率削减（加算，0.035 = -3.5%） */
   casualtyReduction: number;
   /** 秘境产出加成（按队伍取最高一项，不叠加） */
@@ -51,14 +86,34 @@ export interface CombatTalentDef {
   sectDefense: number;
   /** 心魔增长抵抗（0.2 = 心魔涨得慢 20%） */
   demonGuard: number;
+  /* ---- 以下四项只有战斗辅助天赋会给（读取点逐个写在括号里） ---- */
+  /** 队伍安全加成，取队伍最高（expeditions.resolveExpedition 的 safety） */
+  partySafetyBonus?: number;
+  /** 秘境发现概率加成（engine.getDiscoveryChance） */
+  discoveryBonus?: number;
+  /** 探索时长削减（expeditions 的时长结算） */
+  travelSpeedBonus?: number;
+  /** 丹药栏效果放大（gear.getPartyPillSafety） */
+  pillEffectBonus?: number;
+  /** 同门陨落时的忠诚损失削减（disciples.settlePartyAfterExpedition） */
+  loyaltyLossReduction?: number;
+  /** 探索心得加成（expeditions.getExpeditionInsight） */
+  insightBonus?: number;
   desc: string;
 }
 
+/**
+ * 六项战斗天赋（正面硬拼的那一类）。
+ *
+ * 效果刻意都压在 2~4%：伤亡是**逐人掷骰**的，一个人减 3.5% 就够明显了，
+ * 再高会让"带一队铁甲体魄"变成唯一正解。
+ */
 export const COMBAT_TALENTS: CombatTalentDef[] = [
   {
     id: 'ironBody',
     name: '铁甲体魄',
     icon: '🛡',
+    family: 'combat',
     casualtyReduction: 0.035,
     yieldBonus: 0,
     sectDefense: 0.05,
@@ -69,6 +124,7 @@ export const COMBAT_TALENTS: CombatTalentDef[] = [
     id: 'swiftHunt',
     name: '迅猎击伐',
     icon: '🏹',
+    family: 'combat',
     casualtyReduction: 0.025,
     yieldBonus: 0.04,
     sectDefense: 0,
@@ -79,6 +135,7 @@ export const COMBAT_TALENTS: CombatTalentDef[] = [
     id: 'dangerSense',
     name: '御险感知',
     icon: '👁',
+    family: 'combat',
     casualtyReduction: 0.035,
     yieldBonus: 0,
     sectDefense: 0,
@@ -89,149 +146,342 @@ export const COMBAT_TALENTS: CombatTalentDef[] = [
     id: 'bloodlust',
     name: '浴血奋战',
     icon: '🩸',
-    casualtyReduction: 0.02,
-    yieldBonus: 0.02,
+    family: 'combat',
+    casualtyReduction: 0.03,
+    yieldBonus: 0.03,
     sectDefense: 0,
-    demonGuard: 0,
-    desc: '越战越勇，血越流越凶。自己伤亡 −2%，队伍秘境产出 +2%。',
+    demonGuard: -0.1,
+    desc: '越战越勇，但也越战越疯。自己伤亡 −3%、产出 +3%，心魔涨得快 10%。',
   },
   {
     id: 'beastWhisper',
     name: '兽语通晓',
     icon: '🐾',
-    casualtyReduction: 0.025,
-    yieldBonus: 0.05,
+    family: 'combat',
+    casualtyReduction: 0,
+    yieldBonus: 0.06,
     sectDefense: 0,
     demonGuard: 0,
-    desc: '懂妖兽脾性，能哄能骗。自己伤亡 −2.5%；队伍秘境产出 +5%。',
+    desc: '能听懂妖兽的意思，知道哪里有好东西。队伍秘境产出 +6%。',
   },
   {
     id: 'soulSteady',
     name: '神魂稳固',
-    icon: '🧿',
+    icon: '🧘',
+    family: 'combat',
     casualtyReduction: 0.015,
     yieldBonus: 0,
     sectDefense: 0,
     demonGuard: 0.2,
-    desc: '神魂如铁，外邪难侵。自己伤亡 −1.5%，心魔增长 −20%。',
+    desc: '心神如渊，不易动摇。自己伤亡 −1.5%，心魔增长 −20%。',
   },
 ];
 
-export const COMBAT_TALENT_MAP: Record<CombatTalentId, CombatTalentDef> = COMBAT_TALENTS.reduce(
+/**
+ * 六项**战斗辅助**天赋（需求 3 新增）。
+ *
+ * 与上面那六项的区别：它们**不给自己减伤**，而是让"这一队人"
+ * 更安全、更快、找到更多东西、或者让身后的人更稳。
+ * 所以效果全部按"队伍取最高一项"结算 —— 带一个阵道天成就够了。
+ */
+export const COMBAT_SUPPORT_TALENTS: CombatTalentDef[] = [
+  {
+    id: 'fieldMedic',
+    name: '疗伤圣手',
+    icon: '🩹',
+    family: 'support',
+    casualtyReduction: 0,
+    yieldBonus: 0,
+    sectDefense: 0,
+    demonGuard: 0,
+    partySafetyBonus: 0.02,
+    desc: '同袍受伤有人包扎。全队探索伤亡 −2%。',
+  },
+  {
+    id: 'arrayMaster',
+    name: '阵道天成',
+    icon: '🔯',
+    family: 'support',
+    casualtyReduction: 0,
+    yieldBonus: 0,
+    sectDefense: 0.03,
+    demonGuard: 0,
+    partySafetyBonus: 0.04,
+    desc: '随手就能布下护身阵。全队探索伤亡 −4%，宗门防御 +3。',
+  },
+  {
+    id: 'scoutEye',
+    name: '洞察先机',
+    icon: '🔭',
+    family: 'support',
+    casualtyReduction: 0,
+    yieldBonus: 0,
+    sectDefense: 0,
+    demonGuard: 0,
+    discoveryBonus: 0.15,
+    desc: '一眼看出山势水脉的异常。发现新秘境的概率 +15%。',
+  },
+  {
+    id: 'pathfinder',
+    name: '引路之人',
+    icon: '🧭',
+    family: 'support',
+    casualtyReduction: 0,
+    yieldBonus: 0,
+    sectDefense: 0,
+    demonGuard: 0,
+    travelSpeedBonus: 0.08,
+    desc: '走过一遍的路记得清清楚楚。探索用时 −8%。',
+  },
+  {
+    id: 'pillMaster',
+    name: '药理通神',
+    icon: '💊',
+    family: 'support',
+    casualtyReduction: 0,
+    yieldBonus: 0,
+    sectDefense: 0,
+    demonGuard: 0,
+    pillEffectBonus: 0.5,
+    desc: '知道丹药该怎么吃才最顶用。队伍丹药栏的效果 +50%。',
+  },
+  {
+    id: 'comrade',
+    name: '同袍之义',
+    icon: '🤝',
+    family: 'support',
+    casualtyReduction: 0.01,
+    yieldBonus: 0,
+    sectDefense: 0,
+    demonGuard: 0.05,
+    loyaltyLossReduction: 0.5,
+    insightBonus: 0.1,
+    desc: '有他在，队伍散不了。同门陨落时忠诚损失减半，探索心得 +10%。',
+  },
+];
+
+/** 战斗类天赋（含辅助）的查表 */
+export const COMBAT_TALENT_MAP: Record<string, CombatTalentDef> = [
+  ...COMBAT_TALENTS,
+  ...COMBAT_SUPPORT_TALENTS,
+].reduce(
   (acc, t) => {
     acc[t.id] = t;
     return acc;
   },
-  {} as Record<CombatTalentId, CombatTalentDef>,
+  {} as Record<string, CombatTalentDef>,
 );
 
-export const COMBAT_TALENT_IDS: CombatTalentId[] = COMBAT_TALENTS.map((t) => t.id);
+export const COMBAT_TALENT_IDS: CombatTalentId[] = [
+  ...COMBAT_TALENTS.map((t) => t.id),
+  ...COMBAT_SUPPORT_TALENTS.map((t) => t.id),
+];
 
 /* ------------------------------------------------------------------ */
-/* 种田天赋（每名弟子随机 1 项，全宗按 √人数 生效）                      */
+/* 生产天赋（炼丹 / 炼器 / 制符 / 种田，每名弟子随机 1 项）              */
 /* ------------------------------------------------------------------ */
 
 export type FarmTalentId =
-  | 'herbWhisper'
+  /* 炼丹 */
   | 'furnaceAdept'
+  | 'pillHeart'
+  | 'herbLore'
+  /* 炼器 */
   | 'forgeAdept'
-  | 'keenEye'
+  | 'firePrecision'
+  | 'oreSense'
+  /* 制符 */
+  | 'talismanAdept'
+  | 'brushMaster'
+  | 'inkSense'
+  /* 种田 */
+  | 'herbWhisper'
   | 'soilMaster'
-  | 'springSense';
+  | 'springSense'
+  | 'keenEye';
 
+/**
+ * 生产天赋作用在哪个数字上。
+ *
+ * ⚠️ 每一条都必须有**唯一读取点**（本作已经栽过六次"声明了没人读"）：
+ *   alchemyRate / refiningRate / talismanRate → crafting.getCraftSuccessRate
+ *   alchemyBatch / refiningBatch / talismanYield → 炼制产出的批量结算
+ *   herb / qi → engine.getProduction
+ *   rareDrop → manuals.rollFragmentDrop
+ *   plantingSpeed → planting.plantSeed
+ */
 export type FarmTalentTarget =
-  /** 灵田类设施（herbField / hundredHerbGarden）的产量 */
-  | 'herb'
-  /** 灵气类设施的产量 */
-  | 'qi'
-  /** 炼丹成功率 */
   | 'alchemyRate'
-  /** 炼器成功率 */
+  | 'alchemyBatch'
   | 'refiningRate'
-  /** 秘境稀有材料的掉落权重 */
+  | 'refiningBatch'
+  | 'talismanRate'
+  | 'talismanYield'
+  | 'herb'
+  | 'qi'
   | 'rareDrop'
-  /** 灵植成熟速度 */
   | 'plantingSpeed';
 
 export interface FarmTalentDef {
   id: FarmTalentId;
   name: string;
   icon: string;
+  /** 四种归属（决定它能被派到哪座设施对口） */
+  kind: TalentKind;
   target: FarmTalentTarget;
-  /** 每 √人数 提供的加成（见 farmTalentBonus） */
+  /** 每 √人数 提供的加成（沿用聚灵阵那套收益递减） */
   rate: number;
   desc: string;
 }
 
 export const FARM_TALENTS: FarmTalentDef[] = [
-  {
-    id: 'herbWhisper',
-    name: '灵草亲和',
-    icon: '🌿',
-    target: 'herb',
-    rate: 0.015,
-    desc: '天生与草木相合。全宗灵田产出 +1.5% × √人数。',
-  },
+  /* ---------------- 炼丹 ---------------- */
   {
     id: 'furnaceAdept',
     name: '炉火通灵',
     icon: '🔥',
+    kind: 'alchemy',
     target: 'alchemyRate',
     rate: 0.004,
-    desc: '火候拿捏得分毫不差。炼丹成功率 +0.4% × √人数。',
+    desc: '与炉火有感应。全宗炼丹成功率 +0.4%/√人。',
   },
+  {
+    id: 'pillHeart',
+    name: '丹心妙手',
+    icon: '⚗',
+    kind: 'alchemy',
+    target: 'alchemyBatch',
+    rate: 0.02,
+    desc: '一炉能出双份。炼丹批量产出概率 +2%/√人。',
+  },
+  {
+    id: 'herbLore',
+    name: '药性通晓',
+    icon: '🌿',
+    kind: 'alchemy',
+    target: 'alchemyRate',
+    rate: 0.006,
+    desc: '熟知药性配比。全宗炼丹成功率 +0.6%/√人。',
+  },
+  /* ---------------- 炼器 ---------------- */
   {
     id: 'forgeAdept',
     name: '锻器巧手',
     icon: '🔨',
+    kind: 'refining',
     target: 'refiningRate',
     rate: 0.004,
-    desc: '手上有一把好力气。炼器成功率 +0.4% × √人数。',
+    desc: '手上功夫细。全宗炼器成功率 +0.4%/√人。',
   },
   {
-    id: 'keenEye',
-    name: '慧眼辨材',
-    icon: '💎',
-    target: 'rareDrop',
+    id: 'firePrecision',
+    name: '火候精准',
+    icon: '🌡',
+    kind: 'refining',
+    target: 'refiningBatch',
+    rate: 0.02,
+    desc: '火候分毫不差。炼器批量产出概率 +2%/√人。',
+  },
+  {
+    id: 'oreSense',
+    name: '辨矿之眼',
+    icon: '⛏',
+    kind: 'refining',
+    target: 'refiningRate',
     rate: 0.006,
-    desc: '一眼看穿材质好坏。秘境稀有材料权重 +0.6% × √人数。',
+    desc: '一眼看出矿料的品相。全宗炼器成功率 +0.6%/√人。',
+  },
+  /* ---------------- 制符 ---------------- */
+  {
+    id: 'talismanAdept',
+    name: '符箓天成',
+    icon: '📜',
+    kind: 'talisman',
+    target: 'talismanRate',
+    rate: 0.005,
+    desc: '下笔自成符。全宗制符成功率 +0.5%/√人。',
+  },
+  {
+    id: 'brushMaster',
+    name: '笔走龙蛇',
+    icon: '🖌',
+    kind: 'talisman',
+    target: 'talismanYield',
+    rate: 0.05,
+    desc: '一笔画到底不停顿。制符产出 +5%/√人。',
+  },
+  {
+    id: 'inkSense',
+    name: '朱砂通神',
+    icon: '🖍',
+    kind: 'talisman',
+    target: 'talismanRate',
+    rate: 0.004,
+    desc: '知道什么朱砂配什么符。全宗制符成功率 +0.4%/√人。',
+  },
+  /* ---------------- 种田 ---------------- */
+  {
+    id: 'herbWhisper',
+    name: '灵草亲和',
+    icon: '🌱',
+    kind: 'farm',
+    target: 'herb',
+    rate: 0.015,
+    desc: '灵草在他手里长得格外好。全宗灵草产量 +1.5%/√人。',
   },
   {
     id: 'soilMaster',
     name: '沃土专精',
     icon: '🪴',
+    kind: 'farm',
     target: 'plantingSpeed',
     rate: 0.005,
-    desc: '知道什么时候该浇水。灵植成熟速度 +0.5% × √人数。',
+    desc: '知道怎么养地。灵植成熟时间 −0.5%/√人。',
   },
   {
     id: 'springSense',
     name: '灵泉感悟',
-    icon: '⛲',
+    icon: '💧',
+    kind: 'farm',
     target: 'qi',
     rate: 0.01,
-    desc: '能感觉到地底灵脉的走向。全宗灵气产出 +1% × √人数。',
+    desc: '能听出地下灵脉的走向。全宗灵气产量 +1%/√人。',
+  },
+  {
+    id: 'keenEye',
+    name: '慧眼辨材',
+    icon: '👁',
+    kind: 'farm',
+    target: 'rareDrop',
+    rate: 0.006,
+    desc: '一眼看出哪块石头里有东西。稀有材料掉落 +0.6%/√人。',
   },
 ];
 
-export const FARM_TALENT_MAP: Record<FarmTalentId, FarmTalentDef> = FARM_TALENTS.reduce(
+export const FARM_TALENT_MAP: Record<string, FarmTalentDef> = FARM_TALENTS.reduce(
   (acc, t) => {
     acc[t.id] = t;
     return acc;
   },
-  {} as Record<FarmTalentId, FarmTalentDef>,
+  {} as Record<string, FarmTalentDef>,
 );
 
 export const FARM_TALENT_IDS: FarmTalentId[] = FARM_TALENTS.map((t) => t.id);
 
+/** 某一类生产天赋（炼丹 / 炼器 / 制符 / 种田）的清单 */
+export function farmTalentsOfKind(kind: TalentKind): FarmTalentDef[] {
+  return FARM_TALENTS.filter((t) => t.kind === kind);
+}
+
 /**
- * 某种种田天赋在全宗提供的加成 = `rate × √人数`（收益递减）。
+ * 收益递减：`rate × √count`。
  *
- * 与聚灵阵同一个理由：这些天赋是**人数乘出来的**，线性叠加会失控。
- * 一百名灵草亲和给 +15%，一千名给 +47% —— 增长明显，但永远顶不穿曲线。
+ * 与聚灵阵、功法碎片的加成同一个形状 —— 本作只有这一种"人数加成"的曲线，
+ * 玩家学一次就够（100 人 = 10 倍单件，1000 人 = 31.6 倍）。
  */
 export function farmTalentBonus(count: number, rate: number): number {
-  return count <= 0 ? 0 : rate * Math.sqrt(count);
+  if (count <= 0) return 0;
+  return rate * Math.sqrt(count);
 }
 
 /* ------------------------------------------------------------------ */

@@ -21,7 +21,16 @@ import {
   BLUEPRINT_MAP,
   FAME_MAX,
   FAME_TIERS,
+  COMBAT_TALENT_MAP,
   FURNACE_MAP,
+  POST_BASE_BONUS,
+  POST_BONUS_CAP,
+  POST_BUILDINGS,
+  SKILL_BONUS_PER_LEVEL,
+  TALENT_MATCH_MULT,
+  FARM_TALENT_MAP,
+  skillLevelOf,
+  type SkillKind,
   BREAKTHROUGH_MAX_SUCCESS,
   BREAKTHROUGH_PILL_GAP_RECOVERY,
   BUILDABLES,
@@ -354,6 +363,29 @@ export type StructureBonusKey =
   | 'mindDrain'
   | 'productionBonus';
 
+/**
+ * 某个技艺面的派遣加成（需求 3 / 12）。
+ *
+ * ⚠️ 实现在这里而不是 posting.ts：posting 依赖 engine（拿 getBuildingCount），
+ * engine 反过来 import posting 就成了环。数值只有一份来源（content/skills 与
+ * content/talents），posting.getPostBonus 是同一个算法对外的名字 ——
+ * 两处必须保持一致（冒烟里有断言比对）。
+ */
+export function getPostBonusHere(state: GameState, kind: SkillKind): number {
+  let total = 0;
+  for (const d of state.sect.disciples) {
+    if (!d.post) continue;
+    const def = POST_BUILDINGS[d.post];
+    if (!def || def.kind !== kind) continue;
+    const points = d.skills[kind] ?? 0;
+    const lv = skillLevelOf(points);
+    const base = POST_BASE_BONUS + lv * SKILL_BONUS_PER_LEVEL;
+    const match = FARM_TALENT_MAP[d.farmTalent]?.kind === kind ? TALENT_MATCH_MULT : 1;
+    total += base * match;
+  }
+  return Math.min(POST_BONUS_CAP, total);
+}
+
 export function getStructureBonus(state: GameState, key: StructureBonusKey): number {
   let total = 0;
   for (const def of STRUCTURES) {
@@ -622,9 +654,35 @@ export function getUndiscoveredCandidates(state: GameState, nearRegionId?: strin
  * 保底**不在这个公式里**：它是独立的一条机制（见 isDiscoveryGuaranteed），
  * 连续失败太多次时直接兜一次底，所以"概率"确实只有一个来源。
  */
+/**
+ * 发现新秘境的概率。
+ *
+ * 「洞察先机」（战斗辅助天赋，需求 3）在这里生效 —— 它读的是全宗最强的那一个，
+ * 所以带一个这样的弟子出门就够了。
+ */
 export function getDiscoveryChance(state: GameState): number {
   const compass = getArtifactBonuses(state).discovery;
-  return Math.min(DISCOVERY_BASE_CHANCE + compass, DISCOVERY_MAX_CHANCE);
+  /*
+   * 「洞察先机」（战斗辅助天赋，需求 3）：发现新秘境的概率 +15%。
+   * 只取全宗最高的那一个 —— 带一个这样的弟子出门就够了，带十个不会叠。
+   */
+  const talent = getSectTalentDiscoveryBonus(state);
+  return Math.min(DISCOVERY_BASE_CHANCE + compass + talent, DISCOVERY_MAX_CHANCE);
+}
+
+/**
+ * 全宗「洞察先机」带来的发现概率加成。
+ *
+ * ⚠️ 实现在 engine 里，因为 engine 不能 import disciples（两者会成环）。
+ * 数值仍然只有一份来源：`content/talents` 的 COMBAT_TALENTS。
+ */
+export function getSectTalentDiscoveryBonus(state: GameState): number {
+  let best = 0;
+  for (const d of state.sect.disciples) {
+    const def = COMBAT_TALENT_MAP[d.combatTalent];
+    if (def?.discoveryBonus) best = Math.max(best, def.discoveryBonus);
+  }
+  return best;
 }
 
 /** 寻宝宝盘带来的发现概率加成（界面用来解释"为什么概率是这个数"） */
@@ -856,6 +914,13 @@ export function getProduction(state: GameState): ResourceMap {
    * 盟约那一条作用于**所有**资源（它是"整个山门的景气"，不是某一条产线），
    * 特质那两条则各管自己那一味。
    */
+  /*
+   * 派遣加成（需求 3 / 12）：灵田里在岗的弟子提高灵草产量。
+   * 只作用于灵草这一条线 —— 丹房 / 炼器房 / 符房的岗位作用在
+   * 各自的**成功率**上（见 crafting.getCraftSuccessRate），不是产量。
+   */
+  out.herb = out.herb.mul(1 + getPostBonusHere(state, 'farm'));
+
   const alliance = 1 + getAllianceProductionBonus(state);
   for (const id of RESOURCE_IDS) out[id] = out[id].mul(alliance);
   out.qi = out.qi.mul(getTraitEffect(state, 'qiMult', 1));

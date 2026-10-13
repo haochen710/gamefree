@@ -34,7 +34,7 @@ export type ItemCountMap = Record<string, number>;
 /* 弟子与秘境                                                          */
 /* ------------------------------------------------------------------ */
 
-export type DiscipleStatus = 'idle' | 'exploring';
+export type DiscipleStatus = 'idle' | 'exploring' | 'posted';
 
 export interface Disciple {
   id: string;
@@ -61,6 +61,18 @@ export interface Disciple {
    * 卸下来加回去，于是"同一件装备挂在两个人身上"在数据上就不可能出现。
    */
   gear: { gain: string; attack: string; defense: string; pill1: string; pill2: string };
+  /**
+   * 派遣到的设施 id（空串 = 未派遣，需求 3）。
+   *
+   * 被派遣的弟子**不能同时去探索** —— 人手是一份要分配的稀缺资源。
+   */
+  post: string;
+  /**
+   * 四项技艺的累计技艺点（需求 12）：炼丹 / 炼器 / 制符 / 种田。
+   *
+   * 存**点数**而不是等级：等级是点数的纯函数，改曲线时旧存档不会跟着错位。
+   */
+  skills: { alchemy: number; refining: number; talisman: number; farm: number };
   /**
    * 已装备的修炼功法 / 战斗功法（设定集第 7 章：每名弟子各 1 本）。
    *

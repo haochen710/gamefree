@@ -424,6 +424,20 @@ function toFloat(value: unknown, fallback: number, min: number, max: number): nu
  * 校验两件事：id 还在定义里、且**大类与栏位匹配**（剑不能放进丹药栏）。
  * 旧存档没有这个字段时返回五个空栏 —— 与"新弟子一律空手"口径一致。
  */
+/** 读取四项技艺点（缺字段 → 全 0；非数字 / 负数一律归零） */
+function sanitizeSkills(raw: unknown): { alchemy: number; refining: number; talisman: number; farm: number } {
+  const out = { alchemy: 0, refining: 0, talisman: 0, farm: 0 };
+  if (raw === null || typeof raw !== 'object') return out;
+  const source = raw as Record<string, unknown>;
+  for (const kind of ['alchemy', 'refining', 'talisman', 'farm'] as const) {
+    const value = source[kind];
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      out[kind] = Math.min(value, 1e9);
+    }
+  }
+  return out;
+}
+
 function sanitizeGearSlots(raw: unknown): { gain: string; attack: string; defense: string; pill1: string; pill2: string } {
   const out = { gain: '', attack: '', defense: '', pill1: '', pill2: '' };
   if (raw === null || typeof raw !== 'object') return out;
@@ -559,6 +573,9 @@ function sanitizeDisciple(raw: unknown, index: number): Disciple | null {
     combatManual: MANUAL_MAP[String(d.combatManual)] ? String(d.combatManual) : '',
     // 弟子五装备栏（设定集第 8.7 章）：只认还在定义里、且大类与栏位匹配的 id
     gear: sanitizeGearSlots(d.gear),
+    // 派遣与技艺（需求 3 / 12）
+    post: typeof d.post === 'string' && d.post ? String(d.post) : '',
+    skills: sanitizeSkills(d.skills),
     // status 交给 repairState 依据探索列表重新推导，这里先一律置空闲
     status: 'idle',
   };

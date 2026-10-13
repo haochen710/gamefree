@@ -23,6 +23,7 @@ import SectHallPanel from './components/SectHallPanel';
 import DisciplePanel from './components/DisciplePanel';
 import ManualPanel from './components/ManualPanel';
 import FamePanel from './components/FamePanel';
+import PostPanel from './components/PostPanel';
 import GearPanel from './components/GearPanel';
 import MapPanel from './components/MapPanel';
 import AlchemyPanel from './components/AlchemyPanel';
@@ -204,6 +205,8 @@ function SectTab() {
       </div>
       <div className="layout__right">
         <FamePanel collapsible />
+        {/* 需求 3 / 12：派遣与技艺 */}
+        <PostPanel collapsible />
         <SectPanel />
         <DisciplePanel />
         {/* 设定集第 7 章：藏经阁（功法碎片、合成、发书） */}

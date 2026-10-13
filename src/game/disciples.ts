@@ -138,6 +138,9 @@ export function rollDisciple(
     combatManual: '',
     // 装备要靠玩家炼（设定集第 8.7 章），新弟子一律空手
     gear: { gain: '', attack: '', defense: '', pill1: '', pill2: '' },
+    // 派遣与技艺（需求 3 / 12）：新弟子既没岗位也没技艺
+    post: '',
+    skills: { alchemy: 0, refining: 0, talisman: 0, farm: 0 },
     idleSeconds: 0,
     realmIndex: 0,
     // 给一点随机初始进度，免得同一批弟子永远整齐划一地一起突破
@@ -279,6 +282,56 @@ export function getPartyTalentYieldBonus(state: GameState, ids: string[]): numbe
  * 再按 id 去全宗名册里找一遍是白费一趟 O(全宗人数) ——
  * 千人宗门下这一趟要被走上万次，模拟器就是这么慢下来的。
  */
+/**
+ * 队伍里**战斗辅助**天赋提供的安全加成（取最高一项，需求 3）。
+ *
+ * 与产出加成同一个口径：一个人会布阵就够了，带十个不会叠成无敌。
+ * 读取点：expeditions.resolveExpedition 的 safety。
+ */
+export function getPartySafetyBonusOf(party: Disciple[]): number {
+  let best = 0;
+  for (const d of party) {
+    best = Math.max(best, COMBAT_TALENT_MAP[d.combatTalent]?.partySafetyBonus ?? 0);
+  }
+  return best;
+}
+
+/** 队伍里"丹药效果放大"的最高一项（药理通神）—— 读取点：gear.getPartyPillSafety */
+export function getPartyPillEffectBonusOf(party: Disciple[]): number {
+  let best = 0;
+  for (const d of party) {
+    best = Math.max(best, COMBAT_TALENT_MAP[d.combatTalent]?.pillEffectBonus ?? 0);
+  }
+  return best;
+}
+
+/** 队伍里"探索心得加成"的最高一项 —— 读取点：expeditions.getExpeditionInsight */
+export function getPartyInsightBonusOf(party: Disciple[]): number {
+  let best = 0;
+  for (const d of party) {
+    best = Math.max(best, COMBAT_TALENT_MAP[d.combatTalent]?.insightBonus ?? 0);
+  }
+  return best;
+}
+
+/** 全宗里"探索时长削减"的最高一项（引路之人）—— 读取点：派遣时长结算 */
+export function getSectTravelSpeedBonus(state: GameState): number {
+  let best = 0;
+  for (const d of state.sect.disciples) {
+    best = Math.max(best, COMBAT_TALENT_MAP[d.combatTalent]?.travelSpeedBonus ?? 0);
+  }
+  return best;
+}
+
+/** 全宗里"秘境发现概率"的最高一项（洞察先机）—— 读取点：engine.getDiscoveryChance */
+export function getSectDiscoveryBonus(state: GameState): number {
+  let best = 0;
+  for (const d of state.sect.disciples) {
+    best = Math.max(best, COMBAT_TALENT_MAP[d.combatTalent]?.discoveryBonus ?? 0);
+  }
+  return best;
+}
+
 export function getPartyTalentYieldBonusOf(party: Disciple[]): number {
   let talent = 0;
   let personality = 0;
@@ -363,7 +416,9 @@ export function settlePartyAfterExpedition(
         let next = d;
         if (lostAlly) {
           // 同门陨落：忠诚下跌（重义翻倍），心神受创
-          next = adjustLoyalty(next, -LOYALTY_LOSS_ALLY_DEATH * personality.allyDeathMult);
+          // 「同袍之义」（战斗辅助天赋）能把这份损失砍掉一半（需求 3）
+          const guard = COMBAT_TALENT_MAP[next.combatTalent]?.loyaltyLossReduction ?? 0;
+          next = adjustLoyalty(next, -LOYALTY_LOSS_ALLY_DEATH * personality.allyDeathMult * (1 - guard));
           next = adjustDemon(next, DEMON_PER_ALLY_DEATH * perished);
         } else {
           // 圆满归来：忠诚小涨，心魔稍定
