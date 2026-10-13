@@ -1097,61 +1097,96 @@ export const STORAGE_KINDS: { id: string; resource: ResourceId; name: string; ic
 const STORAGE_TIERS: {
   name: string;
   powerMult: number;
-  qiMult: number;
+  /** 灵石造价（本轮的主货币） */
+  stoneCost: number;
+  /** 灵气造价（次要开销） */
+  qiCost: number;
   realm: number;
   tech?: string;
   rare: Record<string, number>;
 }[] = [
-  { name: '小仓', powerMult: 1, qiMult: 1, realm: 0, rare: {} },
+  /*
+   * 第 1 档：唯一一档必须是"从基础上限就买得起"的 ——
+   * 基础灵石上限 50、灵气上限 250（坑 103 的代价）。
+   */
+  { name: '小仓', powerMult: 1, stoneCost: 40, qiCost: 180, realm: 0, rare: {} },
   {
     name: '大仓',
-    powerMult: 250,
-    qiMult: 6.7,
+    // 容量抬到 1200 倍：它是筑基~元婴唯一能用的档位，撑不起上限就卡死炼药
+    powerMult: 1200,
+    stoneCost: 1.2e4,
+    qiCost: 3e3,
     realm: 1,
     tech: 'storageArt',
-    // 需求 10：从这一档起就要灵矿（不再只是灵气）
-    rare: { ore: 900 },
+    // 需求原话：「筑基期以后的建筑，主要材料应当逐步替换为进阶材料和稀有材料」
+    rare: { ore: 900, spiritSilk: 200, demonCore: 100 },
   },
   {
     name: '宝库',
-    powerMult: 125000,
-    qiMult: 67,
-    realm: 3,
+    powerMult: 4e5,
+    stoneCost: 3e6,
+    qiCost: 2e6,
+    // 元婴(3) → 化神(4)：玩家说"元婴期就解锁，进度太快了"
+    realm: 4,
     tech: 'storageArt',
-    rare: { ore: 2.4e4, spiritSilk: 600, starSand: 60 },
+    // ⚠️ 不用星砂 / 月华晶：那是炼丹升品的口粮，库房不能跟它抢（本轮批 2 修正 2）
+    rare: { ore: 3e5, spiritSilk: 8000, demonCore: 3000 },
   },
   {
     name: '秘境仓',
-    powerMult: 5e7,
-    qiMult: 670,
-    realm: 5,
+    powerMult: 2e8,
+    stoneCost: 1.5e9,
+    qiCost: 1e9,
+    // 炼虚(5) → 合体(6)
+    realm: 6,
     tech: 'voidStorageArt',
-    rare: { ore: 4e5, spiritSilk: 8000, starSand: 3000, lunarCrystal: 300, moonDew: 800 },
+    // 同理：龙血 / 九幽火 / 月华露都要留给炼丹炼器
+    rare: { ore: 5e7, demonCore: 2e6, spiritSilk: 2e5, spiritBasic: 200 },
   },
   {
     name: '鸿蒙库',
     powerMult: 2.5e10,
-    qiMult: 6700,
-    realm: 7,
+    stoneCost: 5e11,
+    qiCost: 4e11,
+    // 合体(7) → 渡劫(8)：最高档留到最后一个境界
+    realm: 8,
     tech: 'cosmosStorageArt',
-    rare: { ore: 8e6, spiritSilk: 2e5, starSand: 6e4, immortalJade: 200, primordialFruit: 2 },
+    /*
+     * 这里刻意**不用**仙人玉 / 混沌气 / 鸿蒙灵果：那几样是顶阶丹药与器物的材料，
+     * 库房抢过去就会把「升炼丹品阶」饿死（实测踩过，见本轮批 2 修正 2）。
+     * 所以顶档的代价全部压在**海量灵矿 + 符箓**上 —— 符箓可以自己画、
+     * 灵矿随地都是，不挡任何一条进度线。
+     */
+    rare: {
+      ore: 2e10,
+      demonCore: 5e7,
+      spiritSilk: 5e6,
+      // 符箓是合法的建筑材料（本轮需求 3）
+      spiritSilver: 2000,
+      breakSilver: 500,
+    },
   },
 ];
 
 /** 二十五座专库（5 种资源 × 5 档），只抬各自那一项上限 */
 export const STORAGE_BUILDINGS: StructureDef[] = STORAGE_KINDS.flatMap((kind) =>
   STORAGE_TIERS.map((tier, tierIndex) => {
+    /*
+     * 造价：**灵石为主 + 灵气为辅 + 稀有材料按档递进**。
+     *
+     * kind.cost 在这里当"这一档的基准量级"，五种专库按各自的基础量级错开
+     * （灵气库最贵，其余略便宜），所以五条线的相对关系保持不变。
+     */
+    const scale = kind.cost / 180;
     const baseCost: Record<string, number> = {
-      // 灵气需求比旧版高一个数量级（旧版第 1 档只要 150）
-      qi: kind.cost * tier.qiMult,
+      stone: Math.round(tier.stoneCost * scale),
+      qi: Math.round(tier.qiCost * scale),
       ...tier.rare,
     };
-    /*
-     * 需求 10：「灵矿和进阶或者稀有材料都可以用上」——
-     * 除灵气之外，**每一档都要灵矿**，且随档位与库房种类一起放大。
-     */
-    // 第一档不额外加灵矿：它得能从基础上限起步
-    if (tierIndex > 0) baseCost.ore = (baseCost.ore ?? 0) + Math.round(kind.cost * tier.qiMult * 0.22);
+    // 需求 10：除灵石与灵气之外，**第二档起每一档都要灵矿**（第一档要能起步）
+    if (tierIndex > 0) {
+      baseCost.ore = (baseCost.ore ?? 0) + Math.round(tier.stoneCost * scale * 0.06);
+    }
     return {
       id: `${kind.id}Vault${tierIndex + 1}`,
       kind: 'structure' as const,

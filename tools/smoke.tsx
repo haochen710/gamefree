@@ -129,6 +129,7 @@ import {
   rareGoodsForSectLevel,
   skillBonus,
   skillLevelOf,
+  TALISMAN_MAP,
   TALISMANS,
   LOYALTY_IDLE_DECAY_SECONDS,
   LOYALTY_INITIAL,
@@ -872,8 +873,14 @@ section('[4] 储存上限与储物建筑');
       `${first.baseCost.qi} < ${BASE_STORAGE.qi}`,
     );
     check(
-      '高阶档位的造价里有进阶 / 稀有材料',
-      ['starSand', 'lunarCrystal', 'immortalJade', 'primordialFruit', 'moonDew'].some(
+      /*
+       * 第 19 轮把库房的稀有材料换成了"不挡进度线"的那几样
+       * （灵矿 / 妖丹 / 灵蚕丝 / 符箓）—— 因为星砂、月华晶、龙血、月华露
+       * 是**炼丹升品的口粮**，库房抢过去会把炼丹这条线饿死（实测踩过）。
+       * 所以这里检查"高阶档确实带稀有/稀罕材料"，不再写死具体是哪几样。
+       */
+      '高阶档位的造价里有进阶 / 稀有材料（灵矿之外）',
+      ['demonCore', 'spiritSilk', 'starSand', 'lunarCrystal', 'immortalJade', 'moonDew', 'spiritBasic', 'spiritSilver'].some(
         (k) => ((top.baseCost as Record<string, number>)[k] ?? 0) > 0,
       ),
     );
@@ -8081,6 +8088,115 @@ section('[53] 符箓作为建筑材料（第 19 轮 需求 3）');
   const view = itemView('spiritBasic');
   check('符箓在成本里有中文名', view.name !== 'spiritBasic' && view.name.length > 0, view.name);
   check('符箓在成本里有图标', view.icon !== '📦', view.icon);
+}
+
+/* ------------------------------------------------------------------ */
+/* 54. 第 19 轮批 2：库房阶梯重做（需求 1）                              */
+/* ------------------------------------------------------------------ */
+section('[54] 库房阶梯：灵石为主 · 解锁推后 · 无死锁（第 19 轮 需求 1）');
+{
+  const kinds = ['qi', 'wood', 'ore', 'herb', 'stone'];
+
+  /* ---- 主货币换成灵石，数量极大 ---- */
+  {
+    const t1 = BUILDABLE_MAP.qiVault1.baseCost as Record<string, number>;
+    const t3 = BUILDABLE_MAP.qiVault3.baseCost as Record<string, number>;
+    const t5 = BUILDABLE_MAP.qiVault5.baseCost as Record<string, number>;
+
+    check('第一档用灵石计价', (t1.stone ?? 0) > 0, `石${t1.stone}`);
+    check('宝库的灵石造价是百万量级', (t3.stone ?? 0) >= 1e6, `石${t3.stone}`);
+    check('鸿蒙库的灵石造价是千亿量级', (t5.stone ?? 0) >= 1e11, `石${t5.stone}`);
+    check(
+      '造价确实是"极大增加"（顶档 / 首档 ≥ 1e9 倍）',
+      (t5.stone ?? 0) / (t1.stone ?? 1) >= 1e9,
+      `${Math.round((t5.stone ?? 0) / (t1.stone ?? 1)).toExponential(2)} 倍`,
+    );
+    /*
+     * 玩家原话是"一万灵气太少" —— 所以宝库那一档必须比那个量级高出一大截。
+     * 用"灵气+灵石按 1:1 粗算的量级"比一比就够了（不需要精确汇率）。
+     */
+    check(
+      '宝库不再是一万灵气的量级',
+      (t3.stone ?? 0) + (t3.qi ?? 0) >= 1e6,
+      `石${t3.stone} + 气${t3.qi}`,
+    );
+  }
+
+  /* ---- 解锁境界整体推后 ---- */
+  {
+    check('宝库推到化神期（不再元婴就解锁）', BUILDABLE_MAP.qiVault3.requiresRealm === 4, String(BUILDABLE_MAP.qiVault3.requiresRealm));
+    check('秘境仓推到合体期', BUILDABLE_MAP.qiVault4.requiresRealm === 6, String(BUILDABLE_MAP.qiVault4.requiresRealm));
+    check('最高档留到渡劫期', BUILDABLE_MAP.qiVault5.requiresRealm === 8, String(BUILDABLE_MAP.qiVault5.requiresRealm));
+    check(
+      '五档的境界门槛是递增的',
+      [1, 2, 3, 4, 5].every((t) => {
+        const def = BUILDABLE_MAP[`qiVault${t}`];
+        const prev = t === 1 ? null : BUILDABLE_MAP[`qiVault${t - 1}`];
+        return prev === null || (def.requiresRealm ?? 0) > (prev.requiresRealm ?? 0);
+      }),
+    );
+  }
+
+  /* ---- 高阶档位掺入符箓（需求 3） ---- */
+  {
+    const t4 = BUILDABLE_MAP.qiVault4.baseCost as Record<string, number>;
+    const t5 = BUILDABLE_MAP.qiVault5.baseCost as Record<string, number>;
+    check('秘境仓要符箓', TALISMAN_MAP[Object.keys(t4).find((k) => TALISMAN_MAP[k]) ?? ''] !== undefined);
+    check('鸿蒙库也要符箓', TALISMAN_MAP[Object.keys(t5).find((k) => TALISMAN_MAP[k]) ?? ''] !== undefined);
+  }
+
+  /* ---- 🚨 无死锁守卫（第 18 轮那个开局死锁就是缺了这条） ---- */
+  {
+    const capsWith = (qty: Record<string, number>) => {
+      const base = createInitialState(0);
+      return engine.getStorageCaps({ ...base, buildings: { ...base.buildings, ...qty } });
+    };
+
+    // 第一条：第一档必须从**基础上限**就买得起（否则开局永远攒不出第一座）
+    for (const id of kinds) {
+      const cost = BUILDABLE_MAP[`${id}Vault1`].baseCost as Record<string, number>;
+      for (const [item, amount] of Object.entries(cost)) {
+        if (item !== 'stone' && item !== 'qi') continue;
+        check(
+          `第一档 ${id}Vault1 的 ${item} 造价在基础上限之内`,
+          // BASE_STORAGE 是普通数字表，换算成 Decimal 再用 gte 比较
+          D(BASE_STORAGE[item as 'stone' | 'qi']).gte(amount),
+          `${amount} ≤ ${BASE_STORAGE[item as 'stone' | 'qi']}`,
+        );
+      }
+    }
+
+    // 第二条：每一档都要能用"上一档建满 8 座"的容量买得起
+    let worst = '';
+    let ok = true;
+    for (const id of kinds) {
+      for (let t = 2; t <= 5; t += 1) {
+        const prev: Record<string, number> = {};
+        for (const k of kinds) prev[`${k}Vault${t - 1}`] = 8;
+        const caps = capsWith(prev);
+        const cost = BUILDABLE_MAP[`${id}Vault${t}`].baseCost as Record<string, number>;
+        for (const [item, amount] of Object.entries(cost)) {
+          if (item !== 'stone' && item !== 'qi') continue;
+          if (!caps[item as 'stone' | 'qi'].gte(amount)) {
+            ok = false;
+            worst = `${id}Vault${t} 要 ${item} ${amount}，上一档建满只有 ${caps[item as 'stone' | 'qi'].toString()}`;
+          }
+        }
+      }
+    }
+    check('🚨 五档库房之间不存在"攒不出下一档"的死锁', ok, worst || '全部可通过');
+  }
+
+  /* ---- 界面能渲染（灵石与符箓都要显示得出来） ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    const rich = { ...grant(withBigStorage(createInitialState(0)), { stone: '1e15', qi: '1e15', ore: '1e15' }), realmIndex: 8 };
+    Object.assign(initial, { game: engine.refreshUnlocks(rich) });
+    const html = renderToString(<RefiningPanel />);
+    check('建筑面板/炼器面板能渲染（不炸）', html.length > 0);
+    Object.assign(initial, { game: backup.game });
+  }
 }
 
 /* ------------------------------------------------------------------ */
