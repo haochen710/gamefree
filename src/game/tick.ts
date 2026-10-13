@@ -36,6 +36,7 @@ import { tickSeason } from './season';
 import { tickArena, tickSectEvents } from './sectActivity';
 import { tickShop } from './shop';
 import { tickPosts } from './posting';
+import { tickHappiness } from './happiness';
 import { tickFameShop } from './fame';
 import { tickParleyCooldowns, tickWar } from './diplomacy';
 import { tickTravel } from './travel';
@@ -79,6 +80,8 @@ export function applyTick(state: GameState, dt: number, random: RandomSource = g
   next = tickDisciples(next, dt);
   // 派遣（需求 3 / 12）：在岗弟子持续长心得、积累技艺点
   next = tickPosts(next, dt);
+  // 幸福度（需求 4）：朝目标值平滑靠拢
+  next = tickHappiness(next, dt);
   next = tickPlantings(next, dt);
   next = tickTravel(next, dt, random);
   next = tickExpeditions(next, dt, random);

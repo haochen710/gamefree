@@ -44,5 +44,6 @@ export * from './diplomacy';
 export * from './furnace';
 export * from './skills';
 export * from './talismans';
+export * from './happiness';
 export * from './servants';
 export * from './enlightenment';

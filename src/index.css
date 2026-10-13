@@ -1726,6 +1726,39 @@ a {
   color: var(--warn);
 }
 
+/*
+ * 幸福度条（需求 4）
+ *
+ * 50 是中立点，所以条上必须能看出"中线在哪" ——
+ * 只有一条从 0 涨到 100 的进度条，玩家分不清"我现在到底算好还是不好"。
+ */
+.happiness-bar {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  margin: 6px 0;
+}
+
+.happiness-bar__fill {
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--warn), var(--jade));
+}
+
+.happiness-bar__zero {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.text--warn {
+  color: var(--warn);
+}
+
 .recipe--locked {
   opacity: 0.5;
 }

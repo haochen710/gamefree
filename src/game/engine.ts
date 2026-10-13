@@ -8,6 +8,7 @@
  * 默认 Math.random。这样模拟器和测试才能得到可复现的结果。
  */
 import Decimal, { D } from './decimal';
+import { getHappinessCultivationMultiplier } from './happiness';
 import {
   ALCHEMY_SLOT_REQUIREMENT,
   ALLIANCE_PRODUCTION_BONUS,
@@ -69,6 +70,7 @@ import {
   MIND_REGEN_SECONDS,
   PILL_MAP,
   REALMS,
+  SPATIAL_WARD_CAPACITY_BONUS,
   PROGRESS_QI_SCALE,
   scaledBreakthroughQi,
   REFINING_SLOT_REQUIREMENT,
@@ -503,6 +505,13 @@ export function getFarmTalentBonus(state: GameState, target: FarmTalentTarget): 
  * 改成加算之后：满配 功法殿 80% + 讲道堂 50% + 大比 50% = ×2.80。
  * （心得也在这个加算池里，由 disciples.getDiscipleSpeed 相加，满配 ×4.15。）
  */
+/**
+ * 弟子修行速度的全局倍率。
+ *
+ * 需求 4：「幸福度越高，可以给弟子修炼的增益，反之减益」——
+ * 所以最后一个乘数是 `getHappinessCultivationMultiplier`：
+ * 幸福 100 → ×1.30，幸福 0 → ×0.80。
+ */
 export function getCultivationSpeedMultiplier(state: GameState): number {
   const buildings = getStructureBonus(state, 'cultivationBonus');
     /*
@@ -516,7 +525,7 @@ export function getCultivationSpeedMultiplier(state: GameState): number {
   // 天象（灵雨 / 极寒之潮）临时改变修行速度（需求 1）。
   // 它是独立的一项，所以不会永久抬高前面算出来的那个天花板。
   const weather = getWeatherEffects(state).cultivation ?? 0;
-  return Math.max(0, 1 + buildings + spiritArray + arena + weather);
+  return (Math.max(0, 1 + buildings + spiritArray + arena + weather)) * getHappinessCultivationMultiplier(state);
 }
 
 /**
@@ -1056,6 +1065,16 @@ export function getBuildGate(def: BuildableDef, state: GameState): string | null
  * 上限是本作的重要压力来源：产量到达上限后多出来的部分直接损失，
  * 所以玩家必须在「继续堆产量」和「扩建仓库」之间做选择。
  */
+/**
+ * 某座库房的空间禁制加成（需求 6）：每层 +25% 容量。
+ *
+ * 读的是 `state.spatialWards[buildingId]`；施加动作在 game/spatial.ts。
+ */
+export function getSpatialWardBonus(state: GameState, buildingId: string): number {
+  const stacks = state.spatialWards[buildingId] ?? 0;
+  return stacks * SPATIAL_WARD_CAPACITY_BONUS;
+}
+
 export function getStorageCaps(state: GameState): Record<ResourceId, Decimal> {
   const caps = {} as Record<ResourceId, Decimal>;
   for (const id of RESOURCE_IDS) caps[id] = D(BASE_STORAGE[id]);
@@ -1064,8 +1083,14 @@ export function getStorageCaps(state: GameState): Record<ResourceId, Decimal> {
     if (!def.storage) continue;
     const count = state.buildings[def.id] ?? 0;
     if (count <= 0) continue;
+    /*
+     * 需求 6：空间禁制作用在**这一座库房**上，所以加成是逐建筑算的 ——
+     * `1 + 层数 × 25%`。这也是为什么它是"主动施加在某一座库房上"，
+     * 而不是一个全局被动：加成跟着建筑走。
+     */
+    const ward = 1 + getSpatialWardBonus(state, def.id);
     for (const [id, amount] of Object.entries(def.storage) as [ResourceId, number][]) {
-      caps[id] = caps[id].add(count * amount);
+      caps[id] = caps[id].add(count * amount * ward);
     }
   }
   return caps;

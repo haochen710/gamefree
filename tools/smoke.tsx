@@ -42,8 +42,11 @@ import ManualPanel from '../src/components/ManualPanel';
 import FamePanel from '../src/components/FamePanel';
 import GearPanel from '../src/components/GearPanel';
 import { PostOverview, PostSection } from '../src/components/PostPanel';
+import HappinessPanel from '../src/components/HappinessPanel';
 import TalismanPanel from '../src/components/TalismanPanel';
 import * as manuals from '../src/game/manuals';
+import * as happiness from '../src/game/happiness';
+import * as spatial from '../src/game/spatial';
 import * as posting from '../src/game/posting';
 import * as talismans from '../src/game/talismans';
 import * as fame from '../src/game/fame';
@@ -108,6 +111,11 @@ import {
   FURNACES,
   PARTY_SIZE_MAX,
   SKILL_MAX_LEVEL,
+  // 第 18 轮：幸福度与空间禁制
+  HAPPINESS_BUILDINGS,
+  HAPPINESS_NEUTRAL,
+  SPATIAL_WARD_CAPACITY_BONUS,
+  SPATIAL_WARD_MAX_STACKS,
   skillBonus,
   skillLevelOf,
   TALISMANS,
@@ -7483,6 +7491,221 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
     check('符箓面板渲染出来了', talismanHtml.includes('符箓'));
     check('列出三类符', ['护身符', '聚灵符', '破境符'].every((n) => talismanHtml.includes(n)));
     check('有画符按钮', talismanHtml.includes('画一张'));
+    Object.assign(initial, { game: backup.game });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 51. 第 18 轮批 A / 批 B：界面重排 · 库房命名 · 声望商店并入商行 ·        */
+/*     幸福度 · 稀有幸福建筑 · 空间禁制                                    */
+/* ------------------------------------------------------------------ */
+section('[51] 界面重排 · 幸福度 · 空间禁制（第 18 轮 需求 1~6 / 12）');
+{
+  const base = (): GameState => ({
+    ...grant(createInitialState(0), { qi: '1e14', wood: '1e9', stone: '1e9', herb: '1e9', ore: '1e9', spiritSilk: '1e6', demonCore: '1e6', starSand: '1e6', lunarCrystal: '1e6', moonDew: '1e6', immortalJade: '1e5', primordialFruit: '10' }),
+    sect: { ...createInitialState(0).sect, founded: true, level: 9 },
+  });
+
+  /* ---- 需求 1：心得并入弟子管理 ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    let rich = forceBuild(base(), 'thatchHut', 5);
+    rich = recruitHoused(rich, makeRandom(11)).state;
+    Object.assign(initial, { game: engine.refreshUnlocks(rich) });
+
+    const discipleHtml = renderToString(<DisciplePanel />);
+    check('弟子面板里有心得那一块（需求 1 已合并）', discipleHtml.includes('弟子心得'), '📖 弟子心得');
+    check('心得块说明了修行加成', discipleHtml.includes('修行速度') || discipleHtml.includes('修行 +'));
+
+    /*
+     * 合并之后 SectHallPanel 里不该再有独立的「弟子心得」小节 ——
+     * 否则就是"同一块内容两处各写一份"，正是需求 1 要消掉的东西。
+     */
+    const hallHtml = renderToString(<SectHallPanel />);
+    check('宗门左栏不再单独挂「弟子心得」', !hallHtml.includes('弟子心得'));
+
+    Object.assign(initial, { game: backup.game });
+  }
+
+  /* ---- 需求 3：三个库房各用各的标题 ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    Object.assign(initial, { game: engine.refreshUnlocks(base()) });
+
+    const pills = renderToString(<InventoryPanel mode="pills" />);
+    const artifacts = renderToString(<InventoryPanel mode="artifacts" />);
+    const talismansLib = renderToString(<InventoryPanel mode="talismans" />);
+    check('炼丹页的库房叫「丹药库」', pills.includes('丹药库'));
+    check('炼器页的库房叫「器物库」而不是丹药库', artifacts.includes('器物库') && !artifacts.includes('丹药库'));
+    check('符箓页有了「符箓库」（原来根本没有）', talismansLib.includes('符箓库'));
+    check('三个库房标题互不相同', new Set([pills, artifacts, talismansLib]).size === 3);
+
+    Object.assign(initial, { game: backup.game });
+  }
+
+  /* ---- 需求 2：派遣分化到四页 ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    let rich = forceBuild(base(), 'alchemyRoom', 1);
+    rich = forceBuild(rich, 'refinery', 1);
+    rich = forceBuild(rich, 'talismanRoom', 1);
+    rich = forceBuild(rich, 'herbField', 1);
+    Object.assign(initial, { game: engine.refreshUnlocks(rich) });
+
+    const alchemy = renderToString(<PostSection kind="alchemy" />);
+    const refining = renderToString(<PostSection kind="refining" />);
+    const talisman = renderToString(<PostSection kind="talisman" />);
+    const farm = renderToString(<PostSection kind="farm" />);
+    check('炼丹页挂的是丹房岗位', alchemy.includes('丹房') && !alchemy.includes('符房'));
+    check('炼器页挂的是炼器房岗位', refining.includes('炼器房'));
+    check('符箓页挂的是符房岗位', talisman.includes('符房'));
+    check('灵植页挂的是灵田岗位', farm.includes('灵田'));
+    const overview = renderToString(<PostOverview />);
+    check('修行页保留四类技艺总览', ['炼丹', '炼器', '制符', '种田'].every((n) => overview.includes(n)));
+
+    Object.assign(initial, { game: backup.game });
+  }
+
+  /* ---- 需求 12：声望商店并入商行 ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    let rich = base();
+    rich = forceBuild(rich, 'tradeHouse', 1);
+    rich = { ...rich, fame: 5000, fameShop: { offers: [{ goodId: 'fragmentPack' } as never], secondsLeft: 100 } };
+    Object.assign(initial, { game: engine.refreshUnlocks(rich) });
+
+    const shopHtml = renderToString(<ShopPanel />);
+    check('商行页有声望货架（需求 12）', shopHtml.includes('声望货架'));
+    const fameHtml = renderToString(<FamePanel />);
+    /*
+     * ⚠️ 不能断言"不含声望商店四个字" —— 名望面板里留了一句指引
+     * （"原先挂在这里的声望商店已经并到商行页"），那句话本身就带这四个字。
+     * 真正要守的是"兑换按钮不在名望面板里了"。
+     */
+    check('名望面板里不再有兑换按钮', !fameHtml.includes('兑换'));
+
+    Object.assign(initial, { game: backup.game });
+  }
+
+  /* ---- 需求 4 / 5：幸福度与稀有建筑 ---- */
+  {
+    const s = base();
+    check('开局幸福度是中立点', s.happiness === HAPPINESS_NEUTRAL, String(s.happiness));
+
+    // 空宗门：目标就是中立点
+    const empty = { ...s, sect: { ...s.sect, disciples: [] } };
+    check('没有弟子时目标幸福度 = 建筑基础 + 中立', engine.getStorageCaps(empty).qi.gt(0));
+
+    // 稀有建筑抬基础值
+    const withSpring = forceBuild(s, 'spiritSpring', 1);
+    check('稀有幸福建筑提供基础值', happiness.getHappinessBase(withSpring) > happiness.getHappinessBase(s), `${happiness.getHappinessBase(s)} → ${happiness.getHappinessBase(withSpring)}`);
+    check(
+      '目标幸福度随之上升',
+      happiness.getHappinessTarget(withSpring) > happiness.getHappinessTarget(s),
+      `${happiness.getHappinessTarget(s).toFixed(1)} → ${happiness.getHappinessTarget(withSpring).toFixed(1)}`,
+    );
+    check('三座幸福建筑都是唯一的', HAPPINESS_BUILDINGS.every((b) => BUILDABLE_MAP[b.id]?.max === 1));
+    check(
+      '它们的造价里都有稀有材料',
+      HAPPINESS_BUILDINGS.every((b) => ['starSand', 'lunarCrystal', 'moonDew', 'immortalJade', 'primordialFruit'].some((k) => (b.cost[k] ?? 0) > 0)),
+    );
+
+    // 幸福度 → 修行倍率：两端都要有
+    check('满幸福度给修行增益', happiness.getHappinessCultivationMultiplier({ ...s, happiness: 100 }) > 1.2);
+    check('零幸福度给修行减益', happiness.getHappinessCultivationMultiplier({ ...s, happiness: 0 }) < 0.85);
+    check('中立点不加不减', Math.abs(happiness.getHappinessCultivationMultiplier({ ...s, happiness: 50 }) - 1) < 1e-9);
+
+    // 动态修正：心魔拉低、忠诚拉高
+    const demonSect = {
+      ...s,
+      sect: { ...s.sect, disciples: [makeDisciple({ id: 'd1', demon: 100, loyalty: 10 })] },
+    };
+    const loyalSect = {
+      ...s,
+      sect: { ...s.sect, disciples: [makeDisciple({ id: 'd2', demon: 0, loyalty: 100 })] },
+    };
+    check(
+      '心魔高 / 忠诚低的宗门幸福度目标更低',
+      happiness.getHappinessTarget(demonSect) < happiness.getHappinessTarget(loyalSect),
+      `${happiness.getHappinessTarget(demonSect).toFixed(0)} < ${happiness.getHappinessTarget(loyalSect).toFixed(0)}`,
+    );
+    check('修正项列得出来（界面要能说清原因）', happiness.getHappinessFactors(demonSect).length >= 5);
+
+    // 交战扣幸福度
+    /*
+     * 交战的修正要**有弟子**才参与计算：空宗门的 factors 直接返回空数组
+     * （没人就没有人心可言），所以这里先塞一个人进去。
+     */
+    const oneMan = { ...s, sect: { ...s.sect, disciples: [makeDisciple({ id: 'w1' })] } };
+    const atWar = { ...oneMan, atWarWith: ['a', 'b'] };
+    check('交战时幸福度目标下降', happiness.getHappinessTarget(atWar) < happiness.getHappinessTarget(oneMan));
+
+    // 平滑靠拢：一小步不该直接到位，很久之后要到位
+    const low = { ...s, happiness: 0 };
+    const oneTick = happiness.tickHappiness(low, 1);
+    check('幸福度是平滑靠拢的（一秒不会跳到位）', oneTick.happiness > 0 && oneTick.happiness < happiness.getHappinessTarget(low));
+    const longTick = happiness.tickHappiness(low, 600);
+    check(
+      '离线很久之后会到位',
+      Math.abs(longTick.happiness - happiness.getHappinessTarget(low)) < 0.5,
+      `${longTick.happiness.toFixed(2)} vs ${happiness.getHappinessTarget(low).toFixed(2)}`,
+    );
+  }
+
+  /* ---- 需求 6：空间禁制 ---- */
+  {
+    const withVault = forceBuild(base(), 'storagePouch', 2);
+    const noDao = { ...withVault, enlightenment: {} };
+    const check0 = spatial.canApplyWard(noDao, 'storagePouch');
+    check('没感悟空间大道时不能施加禁制', !check0.ok, check0.reason ?? '');
+    check('拒绝的理由说得清', (check0.reason ?? '').includes('空间大道'));
+
+    const withDao = { ...withVault, enlightenment: { spatial: 20 } };
+    const okCheck = spatial.canApplyWard(withDao, 'storagePouch');
+    check('感悟空间大道之后可以施加', okCheck.ok, okCheck.reason ?? '');
+
+    const once = spatial.applyWard(withDao, 'storagePouch');
+    check('施加后层数 +1', (once.spatialWards.storagePouch ?? 0) === 1);
+    check('容量确实变大了', engine.getStorageCaps(once).qi.gt(engine.getStorageCaps(withDao).qi), `${engine.getStorageCaps(withDao).qi.toString()} → ${engine.getStorageCaps(once).qi.toString()}`);
+    check('加成是每层 25%', Math.abs(engine.getSpatialWardBonus(once, 'storagePouch') - SPATIAL_WARD_CAPACITY_BONUS) < 1e-9);
+
+    const twice = spatial.applyWard(once, 'storagePouch');
+    check('可以叠加', (twice.spatialWards.storagePouch ?? 0) === 2);
+    check(
+      '第二次比第一次贵（逐次变贵）',
+      (spatial.getWardCost(twice, 'storagePouch').qi ?? 0) > (spatial.getWardCost(once, 'storagePouch').qi ?? 0),
+    );
+    check('不能对非库房施加', !spatial.canApplyWard(withDao, 'thatchHut').ok);
+
+    // 上限
+    const maxed = { ...withDao, spatialWards: { storagePouch: SPATIAL_WARD_MAX_STACKS } };
+    check('叠到上限后拒绝', !spatial.canApplyWard(maxed, 'storagePouch').ok);
+
+    // 存档往返（用仓库里的 serialize / deserialize）
+    const round = serialize(twice);
+    const back = deserialize(round);
+    check('空间禁制能存能读', back !== null && (back.spatialWards.storagePouch ?? 0) === 2);
+    check('幸福度能存能读', back !== null && Math.abs(back.happiness - twice.happiness) < 0.001);
+  }
+
+  /* ---- 界面能渲染 ---- */
+  {
+    const initial = useGame.getInitialState();
+    const backup = { ...initial };
+    let rich = forceBuild(base(), 'storagePouch', 1);
+    rich = forceBuild(rich, 'spiritSpring', 1);
+    rich = { ...rich, enlightenment: { spatial: 20 } };
+    Object.assign(initial, { game: engine.refreshUnlocks(rich) });
+    const html = renderToString(<HappinessPanel />);
+    check('宗门气象面板渲染出来了', html.includes('宗门气象'));
+    check('显示幸福度', html.includes('幸福度'));
+    check('列得出幸福度的来源', html.includes('幸福度怎么来的'));
+    check('有稀有幸福建筑', HAPPINESS_BUILDINGS.every((b) => html.includes(b.name)));
+    check('有空间禁制入口', html.includes('空间禁制') && html.includes('施加禁制'));
     Object.assign(initial, { game: backup.game });
   }
 }

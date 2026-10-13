@@ -17,6 +17,8 @@ import {
   ENDING_MAP,
   FURNACE_MAP,
   POST_BUILDINGS,
+  SPATIAL_WARD_CAPACITY_BONUS,
+  STORAGE_BUILDINGS,
   TALISMAN_MAP,
   GEAR_MAP,
   MANUAL_GRADE_MIN_REALM,
@@ -43,6 +45,7 @@ import * as diplomacy from './diplomacy';
 import * as gear from './gear';
 import * as posting from './posting';
 import * as talismans from './talismans';
+import * as spatial from './spatial';
 import * as travel from './travel';
 import * as encounter from './encounter';
 import * as enlightenment from './enlightenment';
@@ -183,6 +186,10 @@ export interface GameStore {
   craftTalisman(id: string, count?: number): void;
   /** 用掉一张符 */
   useTalisman(id: string): void;
+
+  /* 空间禁制（需求 6） */
+  /** 给某座库房施加一层空间禁制：永久 +25% 容量，可叠加、逐次变贵 */
+  applySpatialWard(buildingId: string): void;
 
   /* 仆人 */
   recruitServant(job: string): void;
@@ -869,6 +876,21 @@ export const useGame = create<GameStore>()((set, get) => ({
       const result = talismans.useTalisman(s.game, id);
       if (!result.ok) return { notice: result.message };
       return { ...nextGame(s.game, result.state), notice: result.message };
+    });
+  },
+
+  applySpatialWard: (buildingId) => {
+    set((s) => {
+      const check = spatial.canApplyWard(s.game, buildingId);
+      if (!check.ok) return { notice: check.reason ?? '无法施加' };
+      const next = spatial.applyWard(s.game, buildingId);
+      if (next === s.game) return {};
+      const name = STORAGE_BUILDINGS.find((b) => b.id === buildingId)?.name ?? buildingId;
+      const stacks = next.spatialWards[buildingId] ?? 0;
+      return {
+        ...nextGame(s.game, next),
+        notice: `${name}已施加第 ${stacks} 层空间禁制（容量 +${Math.round(stacks * SPATIAL_WARD_CAPACITY_BONUS * 100)}%）`,
+      };
     });
   },
 

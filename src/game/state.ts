@@ -321,6 +321,19 @@ export interface GameState {
   talismans: ItemCountMap;
   /** 制符品阶（需求 8 / 12）：与炼丹术 / 炼器术同构 */
   talismanTier: number;
+  /**
+   * 宗门幸福度（需求 4）：0~100，50 是中立点。
+   *
+   * ⚠️ 它不是某一条公式的直接结果：目标值由"稀有建筑基础值 + 动态修正"
+   * 算出，这个字段是**平滑靠拢后的当前值**（见 game/happiness.ts）。
+   */
+  happiness: number;
+  /**
+   * 空间禁制层数（需求 6）：库房建筑 id → 已施加次数。
+   *
+   * 每层给那座库房 +25% 容量，可叠加、逐次变贵。
+   */
+  spatialWards: Record<string, number>;
   /** 已铸成的丹炉（设定集第 11 章）：炉鼎 id 列表；开局那口默认炉不在这里 */
   furnaces: string[];
   /** 当前在用的炉鼎 */
@@ -560,6 +573,8 @@ export function createInitialState(now = Date.now()): GameState {
     gears: {},
     talismans: {},
     talismanTier: 1,
+    happiness: 50,
+    spatialWards: {},
     furnaces: [],
     furnaceId: DEFAULT_FURNACE_ID,
     fame: 0,

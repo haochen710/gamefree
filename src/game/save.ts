@@ -35,6 +35,9 @@ import {
   FURNACE_MAP,
   GEAR_MAP,
   GEAR_SLOTS,
+  HAPPINESS_MAX,
+  HAPPINESS_MIN,
+  HAPPINESS_NEUTRAL,
   TALISMAN_MAP,
   MANUAL_MAP,
   manualIdOfFragment,
@@ -230,6 +233,10 @@ export interface SerializedGame {
   wm?: unknown;
   /** 论道冷却 */
   pc?: unknown;
+  /** 宗门幸福度（需求 4） */
+  hp?: unknown;
+  /** 空间禁制层数（需求 6） */
+  sw?: unknown;
   /** 秘境探索次数（需求 9 的危险度进度） */
   rr?: unknown;
   /** 各条配方的自动合成目标存量（本轮需求 2） */
@@ -327,6 +334,8 @@ export function serialize(state: GameState): SerializedGame {
     wm: state.warTimer,
     pc: { ...state.parleyCooldowns },
     rr: { ...state.realmRuns },
+    hp: state.happiness,
+    sw: { ...state.spatialWards },
     gc: { ...state.gearCharges },
     ri: state.realmIndex,
     li: state.layer,
@@ -411,6 +420,13 @@ function toDec(value: unknown, fallback = 0): Decimal {
   if (text === 'NaN' || text === 'Infinity' || text === '-Infinity') return D(fallback);
   if (d.lt(0)) return D(fallback);
   return d;
+}
+
+/** 读一个夹在区间里的**浮点**数（幸福度用；toInt 会截断小数） */
+function toClamped(value: unknown, fallback: number, min: number, max: number): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
 }
 
 function toInt(value: unknown, fallback: number, min: number, max: number): number {
@@ -1108,6 +1124,8 @@ export function deserialize(raw: unknown): GameState | null {
     parleyCooldowns: sanitizeNumberMap(data.pc),
     // 秘境探索次数（需求 9）：整数，上限给得很宽（危险度早就归零了）
     realmRuns: toIntMap(data.rr),
+    happiness: toClamped(data.hp, HAPPINESS_NEUTRAL, HAPPINESS_MIN, HAPPINESS_MAX),
+    spatialWards: toIntMap(data.sw, 64),
     realmIndex,
     layer,
     globalBreakthroughBonus: toFloat(data.gb, 0, 0, 10),

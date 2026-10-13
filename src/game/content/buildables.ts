@@ -17,12 +17,14 @@
  * ⚠️ 这里原先写的是"六种"，漏掉了 `requiresSect` —— 而它恰恰是需求 2 给
  * 弟子居所整组加上的那一道门，写漏了会让读者以为"没开宗也能盖弟子舍"。
  */
+import { HAPPINESS_BUILDINGS } from './happiness';
 import type { ItemId, ResourceId } from './resources';
 
 /** 建筑分组，用于界面归类 */
 export type BuildGroupId =
   | 'resource'
   | 'storage'
+  | 'happiness'
   | 'housing'
   | 'discipleHousing'
   | 'workshop'
@@ -41,6 +43,7 @@ export interface BuildGroupDef {
 export const BUILD_GROUPS: BuildGroupDef[] = [
   { id: 'resource', title: '资源设施', hint: '持续产出各类资源，无需钻研即可建造' },
   { id: 'storage', title: '储物建筑', hint: '提高资源储存上限，部分需要钻研储物之术' },
+  { id: 'happiness', title: '幸福度建筑', hint: '极其稀有：唯一、造价高、要稀有材料' },
   { id: 'housing', title: '仆役居所', hint: '只住凡人仆役 —— 与弟子居所完全分开' },
   { id: 'discipleHousing', title: '弟子居所', hint: '开宗立派之后才能建，只住弟子（需求 2）' },
   { id: 'workshop', title: '丹器工坊', hint: '决定炼丹炼器的品阶上限，需先钻研' },
@@ -1095,6 +1098,37 @@ export const STORAGE_BUILDINGS: StructureDef[] = STORAGE_TIERS.map((tier) => ({
 }));
 
 STRUCTURES.push(...STORAGE_BUILDINGS);
+
+/* ------------------------------------------------------------------ */
+/* 幸福度建筑（需求 5）                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 需求原文：「增加宗门获取幸福度的建筑，这些建筑一定得**非常稀有**，
+ * 需求的资源多，且**需要稀有材料**」。
+ *
+ * 三座建筑共同的口径：
+ *   - **唯一**（max: 1）—— 不是"多盖几座"，而是"建得起就有一座"；
+ *   - 造价里带**进阶与稀有材料**（星砂 / 月华晶 / 仙人玉 / 鸿蒙灵果）；
+ *   - 门槛压在元婴之后，所以它们永远不是开局就能堆的东西。
+ */
+export const HAPPINESS_STRUCTURES: StructureDef[] = HAPPINESS_BUILDINGS.map((def) => ({
+  id: def.id,
+  kind: 'structure' as const,
+  group: 'happiness' as const,
+  name: def.name,
+  icon: def.icon,
+  desc: def.desc,
+  baseCost: def.cost,
+  // 稀有建筑的成长系数也高：万一将来放开唯一限制，第二座就该很贵
+  costGrowth: 1.6,
+  unlock: {},
+  requiresRealm: def.requiresRealm,
+  requiresTech: def.requiresTech,
+  max: 1,
+}));
+
+STRUCTURES.push(...HAPPINESS_STRUCTURES);
 
 /* ------------------------------------------------------------------ */
 /* 建造队列（需求 2）                                                   */

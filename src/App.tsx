@@ -34,6 +34,7 @@ import PlantationPanel from './components/PlantationPanel';
 import ShopPanel from './components/ShopPanel';
 import SavePanel from './components/SavePanel';
 import JournalPanel from './components/JournalPanel';
+import HappinessPanel from './components/HappinessPanel';
 import OfflineModal from './components/OfflineModal';
 
 /*
@@ -218,6 +219,8 @@ function SectTab() {
           另外「弟子派遣」已经分化到炼丹 / 炼器 / 符箓 / 灵植四页，
           这一页不再挂派遣面板（总览在修行页）。
         */}
+        {/* 需求 4 / 5 / 6：幸福度、稀有幸福建筑、空间禁制 */}
+        <HappinessPanel collapsible />
         <SectPanel />
         <FamePanel collapsible />
         <SectHallPanel />
