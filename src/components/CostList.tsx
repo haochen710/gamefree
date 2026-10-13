@@ -3,7 +3,8 @@
  * 不够的材料标红。
  */
 import Decimal, { fmt } from '../game/decimal';
-import { ITEM_MAP, type ItemId } from '../game/content';
+// ⚠️ 成本里现在可能是符箓（本轮需求 3），所以统一走 itemView
+import { itemView, type ItemId } from '../game/content';
 import { getAmount, type CostMap } from '../game/engine';
 import type { GameState } from '../game/state';
 
@@ -24,10 +25,10 @@ export function CostList({ cost, state, multiplier = 1 }: Props) {
       {entries.map(([id, amount]) => {
         const total = amount.mul(multiplier);
         const enough = getAmount(state, id).gte(total);
-        const def = ITEM_MAP[id];
+        const view = itemView(id);
         return (
           <span key={id} className={enough ? 'cost' : 'cost cost--short'}>
-            <span className="cost__icon">{def?.icon ?? '?'}</span>
+            <span className="cost__icon">{view.icon}</span>
             {fmt(total)}
           </span>
         );

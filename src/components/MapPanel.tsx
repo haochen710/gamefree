@@ -24,6 +24,8 @@ import {
   MAP_REGIONS,
   MAP_REGION_MAP,
   MATERIAL_MAP,
+  itemIcon,
+  itemName,
   REALMS,
   SECRET_REALMS,
   SECRET_REALM_MAP,
@@ -300,7 +302,7 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
             <span className="panel__hint">
               资源富集区的秘境要先立起阵眼：
               {Object.entries(openCost)
-                .map(([id, amount]) => `${ITEM_MAP[id as ItemId]?.icon ?? ''}${ITEM_MAP[id as ItemId]?.name ?? id} ${fmt(amount, 0)}`)
+                .map(([id, amount]) => `${itemIcon(id)}${itemName(id)} ${fmt(amount, 0)}`)
                 .join(' · ')}
             </span>
           </div>

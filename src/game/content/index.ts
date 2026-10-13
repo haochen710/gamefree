@@ -45,5 +45,6 @@ export * from './furnace';
 export * from './skills';
 export * from './talismans';
 export * from './happiness';
+export * from './itemView';
 export * from './servants';
 export * from './enlightenment';

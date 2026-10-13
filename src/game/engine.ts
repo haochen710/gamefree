@@ -72,6 +72,7 @@ import {
   PILL_MAP,
   REALMS,
   SPATIAL_WARD_CAPACITY_BONUS,
+  TALISMAN_MAP,
   PROGRESS_QI_SCALE,
   scaledBreakthroughQi,
   REFINING_SLOT_REQUIREMENT,
@@ -118,13 +119,33 @@ export type CostMap = Partial<Record<ItemId, Decimal>>;
 /* 物品读写                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 符箓也是合法的“物品”（本轮需求 3：符箓可以作为建筑材料）。
+ *
+ * ⚠️ 符箓存在 `state.talismans` 里，而资源与材料各有一张表 ——
+ * 所以下面三个读写点（getAmount / addItem / payCost）都要认得它，
+ * 否则“拿符箓当材料”会在 getAmount 上返回 undefined 然后炸掉。
+ */
+export function isTalismanId(id: string): boolean {
+  return TALISMAN_MAP[id] !== undefined;
+}
+
 export function getAmount(state: GameState, id: ItemId): Decimal {
+  if (isTalismanId(id)) return D(state.talismans[id] ?? 0);
   return isResourceId(id) ? state.resources[id] : state.materials[id];
 }
 
 /** 增加资源或材料，返回新 state */
 export function addItem(state: GameState, id: ItemId, amount: Decimal): GameState {
   if (amount.lte(0)) return state;
+  if (isTalismanId(id)) {
+    // 符箓库存是**整数张数**（材料那边是 Decimal 连续量），所以这里要取整
+    const next = { ...state.talismans };
+    const total = (next[id] ?? 0) + Math.max(0, Math.floor(amount.toNumber()));
+    if (total > 0) next[id] = total;
+    else delete next[id];
+    return { ...state, talismans: next };
+  }
   if (isResourceId(id)) {
     return { ...state, resources: { ...state.resources, [id]: state.resources[id].add(amount) } };
   }
@@ -135,12 +156,24 @@ export function addItem(state: GameState, id: ItemId, amount: Decimal): GameStat
 export function payCost(state: GameState, cost: CostMap): GameState {
   const resources = { ...state.resources };
   const materials = { ...state.materials };
+  let talismans = state.talismans;
+  let talismanTouched = false;
   for (const [id, amount] of Object.entries(cost) as [ItemId, Decimal][]) {
     if (!amount) continue;
+    if (isTalismanId(id)) {
+      // 符箓按"张"扣，所以向上取整（宁可多扣一张，也不能扣出小数张）
+      const next = { ...(talismanTouched ? talismans : state.talismans) };
+      const left = (next[id] ?? 0) - Math.max(0, Math.ceil(amount.toNumber()));
+      if (left > 0) next[id] = left;
+      else delete next[id];
+      talismans = next;
+      talismanTouched = true;
+      continue;
+    }
     if (isResourceId(id)) resources[id] = resources[id].sub(amount);
     else materials[id] = materials[id].sub(amount);
   }
-  return { ...state, resources, materials };
+  return talismanTouched ? { ...state, resources, materials, talismans } : { ...state, resources, materials };
 }
 
 export function canAfford(state: GameState, cost: CostMap): boolean {

@@ -11,12 +11,12 @@
 import { useState } from 'react';
 import {
   GEARS,
-  ITEM_MAP,
+  itemIcon,
+  itemName,
   GEAR_GRADE_NAMES,
   GEAR_SLOT_NAMES,
   REALMS,
   type GearDef,
-  type ItemId,
 } from '../game/content';
 import {
   canEquipGear,
@@ -68,7 +68,7 @@ function GearRow({ def }: { def: GearDef }) {
       <div className="recipe__desc">
         成本：
         {Object.entries(def.cost)
-          .map(([id, amount]) => `${ITEM_MAP[id as ItemId]?.icon ?? ''}${ITEM_MAP[id as ItemId]?.name ?? id}×${amount}`)
+.map(([id, amount]) => `${itemIcon(id)}${itemName(id)}×${amount}`)
           .join(' ')}
       </div>
 

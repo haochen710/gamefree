@@ -123,6 +123,7 @@ import {
   // 第 18 轮批 C：卖出比例、商队参数、稀有货品
   CARAVAN_INTERVAL_SECONDS,
   RARE_GOODS,
+  itemView,
   RARE_GOOD_MAP,
   SELL_RATIO,
   rareGoodsForSectLevel,
@@ -8039,6 +8040,47 @@ section('[52] 商行卖出 · 商队 · 稀有货品（第 18 轮 需求 7）');
       `${disciples.getDiscipleSpeed(sad, d).toFixed(3)} → ${disciples.getDiscipleSpeed(happy, d).toFixed(3)}`,
     );
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 53. 第 19 轮批 1：符箓成为合法的建筑材料（需求 3）                     */
+/* ------------------------------------------------------------------ */
+section('[53] 符箓作为建筑材料（第 19 轮 需求 3）');
+{
+  const s: GameState = {
+    ...createInitialState(0),
+    talismans: { spiritBasic: 5, breakSilver: 2 },
+  };
+
+  check('getAmount 认得符箓', engine.getAmount(s, 'spiritBasic' as never).eq(5));
+  check('getAmount 对没有的符箓返回 0', engine.getAmount(s, 'breakGold' as never).eq(0));
+  check('isTalismanId 判定正确', engine.isTalismanId('spiritBasic') && !engine.isTalismanId('herb'));
+
+  // 支付：按"张"扣
+  const paid = engine.payCost(s, { spiritBasic: D(3) } as never);
+  check('payCost 会扣符箓', (paid.talismans.spiritBasic ?? 0) === 2);
+  check('扣符箓不会动材料表', (paid.materials as Record<string, unknown>).spiritBasic === undefined);
+
+  // 扣到 0 要把键删掉（与其它库存表一致）
+  const emptied = engine.payCost(s, { breakSilver: D(2) } as never);
+  check('扣光之后把键删掉', emptied.talismans.breakSilver === undefined);
+
+  // 小数张要向上取整（宁可多扣一张，也不能扣出小数张）
+  const rounded = engine.payCost(s, { spiritBasic: D(1.2) } as never);
+  check('支付小数张时向上取整', (rounded.talismans.spiritBasic ?? 0) === 3, String(rounded.talismans.spiritBasic));
+
+  // 增加：整数张
+  const added = engine.addItem(s, 'spiritBasic' as never, D(7));
+  check('addItem 会进符箓库存', (added.talismans.spiritBasic ?? 0) === 12);
+
+  // 够不够：符箓也走 canAfford
+  check('canAfford 认符箓', engine.canAfford(s, { spiritBasic: D(5) } as never));
+  check('符箓不够时 canAfford 为假', !engine.canAfford(s, { spiritBasic: D(6) } as never));
+
+  // 界面：成本里显示中文名而不是英文 id
+  const view = itemView('spiritBasic');
+  check('符箓在成本里有中文名', view.name !== 'spiritBasic' && view.name.length > 0, view.name);
+  check('符箓在成本里有图标', view.icon !== '📦', view.icon);
 }
 
 /* ------------------------------------------------------------------ */
