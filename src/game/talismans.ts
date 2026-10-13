@@ -15,7 +15,7 @@ import {
   TALISMAN_TIER_COST,
   type TalismanDef,
 } from './content';
-import { getAmount, payCost, toCostMap } from './engine';
+import { getAmount, getFarmTalentBonus, payCost, toCostMap } from './engine';
 import { pushJournal } from './disciples';
 import type { GameState } from './state';
 
@@ -137,7 +137,18 @@ export function craftTalisman(
   }
 
   if (made > 0) {
-    working = { ...working, talismans: { ...working.talismans, [id]: (working.talismans[id] ?? 0) + made } };
+    /*
+     * 第 21/22 轮收尾：接上「笔走龙蛇」这类**产出**天赋（`talismanYield`）。
+     * ⚠️ 它以前是**死配置**（全仓库 0 处读取），现在让每画成一张都有机会多出一张。
+     */
+    const yieldBonus = getFarmTalentBonus(working, 'talismanYield');
+    let extra = 0;
+    if (yieldBonus > 0) {
+      for (let i = 0; i < made; i += 1) if (random() < Math.min(0.6, yieldBonus)) extra += 1;
+    }
+    const produced = made + extra;
+    working = { ...working, talismans: { ...working.talismans, [id]: (working.talismans[id] ?? 0) + produced } };
+    made = produced;
   }
   if (made > 0 || failed > 0) {
     working = {

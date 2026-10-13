@@ -465,7 +465,17 @@ export function craftArtifact(
 
   let next: GameState = paid;
   if (made > 0) {
-    next = { ...next, artifacts: { ...next.artifacts, [artifactId]: (next.artifacts[artifactId] ?? 0) + made } };
+    /*
+     * 第 21/22 轮收尾：接上「火候精准」这类**批量**天赋（`refiningBatch`）。
+     * ⚠️ 它以前是**死配置** —— 类型里声明了、描述也写了，但全仓库 0 处读取，
+     * 也就是说那项天赋实际什么也没干。这里让它做"每一炉都有机会多出一件"。
+     */
+    const batchChance = Math.min(0.6, getFarmTalentBonus(state, 'refiningBatch'));
+    let extra = 0;
+    if (batchChance > 0) {
+      for (let i = 0; i < made; i += 1) if (random() < batchChance) extra += 1;
+    }
+    next = { ...next, artifacts: { ...next.artifacts, [artifactId]: (next.artifacts[artifactId] ?? 0) + made + extra } };
     if (def.carry) {
       // 新炼出来的按满次数记（覆盖旧残件）
       next = { ...next, gearCharges: { ...next.gearCharges, [artifactId]: def.carry.charges } };
