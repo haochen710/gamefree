@@ -422,7 +422,7 @@ section('[1] 界面渲染');
    * 所以首屏断言里不再有「灵石合成」—— 换成新模块的名字。
    * （合成栏本身仍然存在，见 §44 对工坊页的断言。）
    */
-  const expected = ['仙途', '打坐', '境界', '修行', '洞府', '宗门', '探索', '丹器', '灵植', '工坊', '建筑', '商行'];
+  const expected = ['仙途', '打坐', '境界', '修行', '洞府', '宗门', '探索', '炼丹', '炼器', '灵植', '工坊', '建筑', '商行'];
   for (const text of expected) {
     check(`包含「${text}」`, html.includes(text));
   }
@@ -5445,9 +5445,10 @@ section('[44] 弟子人数 · 居所拆分 · 新模块 · 突破丹药 · 派�
     // 页签本身与状态无关，直接渲染默认存档即可
     const out = renderToString(<App />);
 
-    const order = ['修行', '探索', '宗门', '建筑', '工坊', '丹器', '商行', '灵植', '感悟', '洞府'];
+    // 需求 5：丹器已拆成「炼丹」与「炼器」两页，所以是 11 个页签
+const order = ['修行', '探索', '宗门', '建筑', '工坊', '炼丹', '炼器', '商行', '灵植', '感悟', '洞府'];
     const positions = order.map((label) => out.indexOf(`>${label}<`));
-    check('十个页签都在界面上', positions.every((p) => p >= 0), order.join(' · '));
+    check('十一个页签都在界面上', positions.every((p) => p >= 0), order.join(' · '));
     check(
       '页签顺序符合本轮需求 8',
       positions.every((p, i) => i === 0 || p > positions[i - 1]),
@@ -7064,8 +7065,14 @@ section('[48] 丹炉九件 · 弟子五装备栏 · 炼器');
     check('丹器阁面板渲染出来了', html.includes('丹器阁'));
     check('渲染出当前炉鼎', html.includes(gear.getFurnace(rich).name));
     check('渲染出九件炉鼎的按钮', FURNACES.every((f) => html.includes(f.name)));
-    check('渲染出装备分组', html.includes('凡品 / 良品装备'));
-    check('渲染出炼制按钮', html.includes('炼制（'));
+    /*
+     * ⚠️ 装备列表已经抽成 `GearForgeSection`（炼器页与丹器阁共用），
+     * 所以「凡品 / 良品装备」那种分组标题没有了 —— 现在直接平铺全部装备。
+     * 断言改成看"五栏小标题 + 具体装备名 + 炼制按钮"，这才是它要守的东西。
+     */
+    check('渲染出弟子装备那一段', html.includes('弟子装备（五栏）'), '（共享组件）');
+    check('渲染出具体装备名', html.includes(GEARS[0].name), GEARS[0].name);
+    check('渲染出炼制按钮', html.includes('炼制'));
     Object.assign(initial, { game: backup.game });
   }
 }

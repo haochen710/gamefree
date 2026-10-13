@@ -28,6 +28,7 @@ import {
   aptitudeRank,
   getDiscipleCapReason,
   getDiscipleEffectiveSpeed,
+  getDiscipleRealmNeed,
   getDiscipleSpeed,
   isRefusingTask,
   refusesHighRisk,
@@ -45,9 +46,21 @@ import type { Disciple } from '../game/state';
 type SortKey = 'aptitude' | 'realm' | 'age' | 'loyalty' | 'demon';
 /** 弟子列表的"状态"筛选（忠诚 / 心魔 / 卡瓶颈） */
 type StatusFilter = 'all' | 'refusing' | 'demon' | 'lowLoyalty' | 'stalled';
+/** 需求 4：按境界筛选（原来只能按资质看） */
+type RealmFilter = 'all' | 'low' | 'mid' | 'high' | 'top';
+/** 需求 3：按天赋类别筛选（战斗 / 生产） */
+type TalentFilter = 'all' | 'combat' | 'farm';
 
-/** 一次最多渲染多少行；点「显示更多」再放一批 */
-const PAGE_SIZE = 50;
+/**
+ * 一次最多渲染多少行；点「显示更多」再放一批。
+ *
+ * 需求 4 报的是"弟子显示不全，只会显示一些" —— 千人宗门里每页 50 条，
+ * 确实像是"只显示了一部分"。现在每页 120 条，并且：
+ *   - 顶上写清"当前显示 X / 共 Y"；
+ *   - 列表末尾同时给「显示更多」与「收起名单」；
+ *   - 筛选条件（境界/资质/天赋/状态）比翻页更能直接找到人。
+ */
+const PAGE_SIZE = 120;
 
 /** 游戏年 → 还要多少真实时间 */
 function yearsToReal(years: number): string {
@@ -146,9 +159,15 @@ function DiscipleRow({ disciple }: { disciple: Disciple }) {
       </div>
 
       <div className="disciple__foot">
-        <span>
-          {disciple.age.toFixed(0)} 岁 · 忠诚 {Math.round(disciple.loyalty)}（{loyaltyTier.name}）· 心魔{' '}
-          {Math.round(disciple.demon)}
+        {/*
+          需求 14「弟子寿命没有显示出来」：原来只画了一条寿元进度条，
+          文字里只有"多少岁"。现在把**寿元上限**与**余寿**都写出来 ——
+          "还能活几年"才是玩家真正在判断的事（决定派不派他去探索）。
+        */}
+        <span title={Number.isFinite(lifespan) ? `寿元上限 ${Math.round(lifespan)} 岁` : '寿元无尽'}>
+          {disciple.age.toFixed(0)} 岁 / {Number.isFinite(lifespan) ? `${Math.round(lifespan)} 岁` : '无尽'} · 余寿{' '}
+          {Number.isFinite(lifespan) ? `${Math.max(0, Math.round(lifespan - disciple.age))} 年` : '—'} · 忠诚{' '}
+          {Math.round(disciple.loyalty)}（{loyaltyTier.name}）· 心魔 {Math.round(disciple.demon)}
         </span>
         {disciple.insight > 0 && (
           <span title={`心得：每点 +0.5% 修行速度，上限随掌门境界增长（当前 ${Math.round(disciple.insight)}/${getInsightMax(game)}）`}>
@@ -202,6 +221,8 @@ export function DisciplePanel() {
   const [sortKey, setSortKey] = useState<SortKey>('aptitude');
   const [minRank, setMinRank] = useState(0);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [realmFilter, setRealmFilter] = useState<RealmFilter>('all');
+  const [talentFilter, setTalentFilter] = useState<TalentFilter>('all');
   // 需求 1：上限 2048 人，列表必须分批渲染
   const [shown, setShown] = useState(PAGE_SIZE);
 
@@ -211,12 +232,33 @@ export function DisciplePanel() {
   const list = useMemo(() => {
     const filtered = game.sect.disciples
       .filter((d) => aptitudeRank(d.aptitude) >= minRank)
+      /*
+       * 需求 4：按**境界**筛选。
+       * 分档而不是逐个境界列出来：选项一多，下拉框本身就变成了迷宫。
+       *   低 = 炼气~筑基（0~1）· 中 = 金丹~元婴（2~3）
+       *   高 = 化神~炼虚（4~5）· 顶尖 = 合体以上（6+）
+       */
+      .filter((d) => {
+        if (realmFilter === 'low') return d.realmIndex <= 1;
+        if (realmFilter === 'mid') return d.realmIndex === 2 || d.realmIndex === 3;
+        if (realmFilter === 'high') return d.realmIndex === 4 || d.realmIndex === 5;
+        if (realmFilter === 'top') return d.realmIndex >= 6;
+        return true;
+      })
+      /* 需求 3 / 4：按**天赋类别**筛选（战斗类 / 生产类） */
+      .filter((d) => {
+        if (talentFilter === 'all') return true;
+        const combat = COMBAT_TALENT_MAP[d.combatTalent];
+        if (talentFilter === 'combat') return Boolean(combat);
+        // 生产类即"种田天赋"那一栏（炼丹/炼器/制符/种田都在这一栏里）
+        return FARM_TALENT_MAP[d.farmTalent] !== undefined;
+      })
       .filter((d) => {
         if (statusFilter === 'refusing') return isRefusingTask(d);
         if (statusFilter === 'demon') return d.demon >= 31;
         if (statusFilter === 'lowLoyalty') return d.loyalty < 40;
         if (statusFilter === 'stalled') {
-          const need = REALMS[d.realmIndex]?.cultivationYears ?? 0;
+          const need = getDiscipleRealmNeed(d, d.realmIndex);
           return need > 0 && d.progress >= need;
         }
         return true;
@@ -230,7 +272,7 @@ export function DisciplePanel() {
       return a.age - b.age;
     });
     return sorted;
-  }, [game.sect.disciples, sortKey, minRank, statusFilter]);
+  }, [game.sect.disciples, sortKey, minRank, statusFilter, realmFilter, talentFilter]);
 
   if (!game.sect.founded) return null;
 
@@ -279,6 +321,28 @@ export function DisciplePanel() {
             <option value="demon">心魔 ≥ 31</option>
             <option value="lowLoyalty">忠诚 &lt; 40（离心）</option>
             <option value="stalled">卡在瓶颈（缺丹）</option>
+          </select>
+        </label>
+
+        {/* 需求 4：按境界筛选 */}
+        <label>
+          境界
+          <select value={realmFilter} onChange={(e) => setRealmFilter(e.target.value as RealmFilter)}>
+            <option value="all">全部</option>
+            <option value="low">炼气 ~ 筑基</option>
+            <option value="mid">金丹 ~ 元婴</option>
+            <option value="high">化神 ~ 炼虚</option>
+            <option value="top">合体以上</option>
+          </select>
+        </label>
+
+        {/* 需求 3 / 4：按天赋类别筛选 */}
+        <label>
+          天赋
+          <select value={talentFilter} onChange={(e) => setTalentFilter(e.target.value as TalentFilter)}>
+            <option value="all">全部</option>
+            <option value="combat">战斗类</option>
+            <option value="farm">生产类</option>
           </select>
         </label>
 
@@ -355,13 +419,21 @@ export function DisciplePanel() {
         ))}
       </div>
 
-      {list.length > shown && (
-        <div className="btn-row">
-          <button type="button" className="btn btn--wide" onClick={() => setShown((v) => v + PAGE_SIZE)}>
+      <div className="btn-row">
+        {list.length > shown && (
+          <button type="button" className="btn" onClick={() => setShown((v) => v + PAGE_SIZE)}>
             显示更多（还有 {list.length - shown} 人）
           </button>
-        </div>
-      )}
+        )}
+        {shown > PAGE_SIZE && (
+          <button type="button" className="btn btn--tiny" onClick={() => setShown(PAGE_SIZE)}>
+            收起名单
+          </button>
+        )}
+        <span className="panel__hint">
+          已显示 {Math.min(shown, list.length)} / {list.length} 人（共 {game.sect.disciples.length} 名弟子）
+        </span>
+      </div>
     </section>
   );
 }

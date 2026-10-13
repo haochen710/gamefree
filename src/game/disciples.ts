@@ -548,6 +548,125 @@ export function recruitDisciple(state: GameState, random: RandomSource = gameRan
 }
 
 /** 逐出弟子（需求 7：后期清理低资质弟子） */
+/**
+ * 批量招收（需求 10）。
+ *
+ * 一次招到"招不动"为止（灵石不够、床位不够、人数到顶），
+ * 并在记事里只写一条汇总 —— 连点十次会刷十条"某某拜入宗门"，
+ * 记事栏会被这种流水账填满。
+ */
+export interface BatchRecruitResult {
+  state: GameState;
+  /** 实际招到的人数 */
+  hired: number;
+  /** 名字（给提示用，最多留前几个） */
+  names: string[];
+  /** 为什么停下 */
+  stoppedBy: string;
+}
+
+export function recruitDisciplesBatch(
+  state: GameState,
+  want: number,
+  random: RandomSource = gameRandom,
+): BatchRecruitResult {
+  let working = state;
+  const names: string[] = [];
+  let stoppedBy = '已达到要求的数量';
+  const limit = Math.max(0, Math.floor(want));
+
+  for (let i = 0; i < limit; i += 1) {
+    const check = canRecruit(working);
+    if (!check.ok) {
+      stoppedBy = check.reason ?? '无法再招收';
+      break;
+    }
+    const result = recruitDisciple(working, random);
+    if (!result.disciple) {
+      stoppedBy = result.reason ?? '无法再招收';
+      break;
+    }
+    working = result.state;
+    names.push(result.disciple.name);
+  }
+
+  if (names.length > 0) {
+    working = {
+      ...working,
+      journal: pushJournal(working.journal, {
+        time: working.playTime,
+        kind: 'good',
+        text: `招收门徒 ${names.length} 人（${names.slice(0, 3).join('、')}${names.length > 3 ? ' 等' : ''}）`,
+      }),
+    };
+  }
+  return { state: working, hired: names.length, names, stoppedBy };
+}
+
+/**
+ * 缺丹告示（需求 6）。
+ *
+ * 「丹房模块增加告示栏，弟子缺少丹药时显示，例如：筑基丹缺少 x12」——
+ * 那个 12 指的不是"要 12 颗"，而是**有 12 个人正卡在这一味丹上**。
+ * 所以这里的口径是：
+ *   waiting —— 修为已满、只差这颗丹就能破境的弟子数
+ *   stock   —— 仓库里现有几颗
+ *   missing —— 还差几颗（max(0, waiting − stock)）
+ *
+ * 只统计"修为已满"的人：还没修满的弟子不算"缺丹"，
+ * 否则界面永远挂着一大片红字，玩家会以为哪里坏了。
+ */
+export interface PillDemand {
+  pillId: string;
+  name: string;
+  icon: string;
+  /** 卡在这一味丹上的弟子数（含掌门自己那一颗在内的话由 needsMaster 标出） */
+  waiting: number;
+  stock: number;
+  missing: number;
+  /** 掌门自己也缺这一味 */
+  needsMaster: boolean;
+}
+
+export function getPillDemand(state: GameState): PillDemand[] {
+  const waitingByPill = new Map<string, number>();
+
+  for (const d of state.sect.disciples) {
+    const def = REALMS[d.realmIndex];
+    if (!def || !def.breakthroughPill) continue;
+    // 修为没满的不算缺丹（他们还在修）
+    if (d.progress < getDiscipleRealmNeed(d, d.realmIndex)) continue;
+    // 已经是资质上限 / 掌门境界上限的，也不再需要丹
+    if (getDiscipleCapReason(state, d) !== null) continue;
+    waitingByPill.set(def.breakthroughPill, (waitingByPill.get(def.breakthroughPill) ?? 0) + 1);
+  }
+
+  // 掌门自己：小境界已参悟满、修为与灵气都够、只差丹
+  const masterRealm = REALMS[state.realmIndex];
+  const masterPill = masterRealm?.breakthroughPill;
+  if (masterPill && state.layer >= masterRealm.layerCount && state.resources.qi.gte(masterRealm.breakthroughQi)) {
+    waitingByPill.set(masterPill, (waitingByPill.get(masterPill) ?? 0) + 1);
+  }
+
+  const out: PillDemand[] = [];
+  for (const [pillId, waiting] of waitingByPill.entries()) {
+    const pill = PILL_MAP[pillId];
+    if (!pill) continue;
+    const stock = state.pills[pillId] ?? 0;
+    out.push({
+      pillId,
+      name: pill.name,
+      icon: pill.icon,
+      waiting,
+      stock,
+      missing: Math.max(0, waiting - stock),
+      needsMaster: masterPill === pillId,
+    });
+  }
+  // 缺得最多的排前面
+  return out.sort((a, b) => b.missing - a.missing || a.pillId.localeCompare(b.pillId));
+}
+
 export function dismissDisciple(state: GameState, id: string): GameState {
   const disciple = state.sect.disciples.find((d) => d.id === id);
   if (!disciple || disciple.status === 'exploring') return state;

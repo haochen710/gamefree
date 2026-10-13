@@ -17,6 +17,7 @@ import {
 } from '../game/crafting';
 import { getGearCharges } from '../game/engine';
 import { FoldSection } from './fold';
+import GearForgeSection from './GearForgeSection';
 import { useGame } from '../game/store';
 import CostList from './CostList';
 
@@ -165,6 +166,13 @@ export function RefiningPanel() {
             })}
           </FoldSection>
         ))}
+
+        {/*
+          需求 15：**弟子装备也要出现在炼器界面里**。
+          这些装备原先只在「丹器阁」（宗门页）能看到，而玩家炼器时是在这一页 ——
+          于是"我在炼器页找不到刚解锁的那件甲"。现在两块共用同一个列表组件。
+        */}
+        <GearForgeSection />
       </div>
     </section>
   );

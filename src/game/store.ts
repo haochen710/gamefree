@@ -105,6 +105,8 @@ export interface GameStore {
 
   /* 商行（需求 3） */
   buyShopOffer(offerId: string): void;
+  /** 一键打包：买下当前所有买得起的货（需求 2） */
+  buyAllShopOffers(): void;
 
   /* 藏经阁 / 功法（设定集第 7 章） */
   /** 用灵气参悟某一品阶的碎片（凡品~极品） */
@@ -151,6 +153,14 @@ export interface GameStore {
   unequipGear(discipleId: string, slot: string): void;
   /** 一键申领：把仓库里的装备按境界发给合适的弟子 */
   autoEquipGears(): void;
+  /** 一键把某件装备从所有弟子身上卸下（需求 1） */
+  unequipGearEverywhere(gearId: string): void;
+  /** 一键卸下所有弟子身上的功法（需求 7） */
+  unequipAllManuals(): void;
+  /** 批量参悟：一次用灵气换多份碎片（需求 7） */
+  contemplateManualBatch(grade: number, times: number): void;
+  /** 批量招收弟子（需求 10） */
+  recruitDiscipleBatch(count: number): void;
 
   /* 仆人 */
   recruitServant(job: string): void;
@@ -700,6 +710,69 @@ export const useGame = create<GameStore>()((set, get) => ({
       const result = gear.autoEquipGears(s.game);
       if (result.state === s.game) return { notice: '没有可发出去的装备（弟子境界不够或栏位已满）' };
       return { ...nextGame(s.game, result.state), notice: `已发出 ${result.handed} 件装备` };
+    });
+  },
+
+  unequipGearEverywhere: (gearId) => {
+    set((s) => {
+      const result = gear.unequipGearEverywhere(s.game, gearId);
+      if (result.removed === 0) return { notice: '没有弟子穿着这件装备' };
+      return {
+        ...nextGame(s.game, result.state),
+        notice: `已从 ${result.removed} 名弟子身上卸下 ${GEAR_MAP[gearId]?.name ?? gearId}`,
+      };
+    });
+  },
+
+  unequipAllManuals: () => {
+    set((s) => {
+      const result = manuals.unequipAllManuals(s.game);
+      if (result.removed === 0) return { notice: '没有弟子带着功法' };
+      return { ...nextGame(s.game, result.state), notice: `已卸下 ${result.removed} 本功法，全部回到藏经阁` };
+    });
+  },
+
+  contemplateManualBatch: (grade, times) => {
+    set((s) => {
+      let working = s.game;
+      let got = 0;
+      let last = '';
+      for (let i = 0; i < Math.max(0, Math.floor(times)); i += 1) {
+        const check = manuals.canContemplate(working, grade as ManualGrade);
+        if (!check.ok) {
+          last = check.reason ?? '';
+          break;
+        }
+        const result = manuals.contemplate(working, grade as ManualGrade);
+        if (!result.gained) break;
+        working = result.state;
+        got += 1;
+        last = result.message;
+      }
+      if (got === 0) return { notice: last || '无法参悟' };
+      return { ...nextGame(s.game, working), notice: `参悟 ${got} 次：${last}` };
+    });
+  },
+
+  recruitDiscipleBatch: (count) => {
+    set((s) => {
+      const result = disciples.recruitDisciplesBatch(s.game, count);
+      if (result.hired === 0) return { notice: result.stoppedBy };
+      return {
+        ...nextGame(s.game, result.state),
+        notice: `招收 ${result.hired} 名弟子（${result.stoppedBy}）`,
+      };
+    });
+  },
+
+  buyAllShopOffers: () => {
+    set((s) => {
+      const result = shop.buyAllShopOffers(s.game);
+      if (result.bought === 0) return { notice: '现在没有买得起的货' };
+      return {
+        ...nextGame(s.game, result.state),
+        notice: `一键打包：买下 ${result.bought} 件，共 ${fmt(result.spent)} 灵石`,
+      };
     });
   },
 

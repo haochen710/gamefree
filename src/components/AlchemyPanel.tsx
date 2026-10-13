@@ -8,6 +8,7 @@ import { fmt } from '../game/decimal';
 import { PILLS, TIER_NAMES, tierName, type PillDef } from '../game/content';
 import { canAfford, toCostMap } from '../game/engine';
 import { canCraftPill, describeCraftRate, getAlchemyUpgradeStatus, getCraftSuccessRate, maxCraftable } from '../game/crafting';
+import { getPillDemand } from '../game/disciples';
 import { useGame } from '../game/store';
 import { FoldSection } from './fold';
 import CostList from './CostList';
@@ -17,6 +18,56 @@ const CATEGORY_LABEL: Record<PillDef['category'], string> = {
   support: '辅助',
   combat: '战斗',
 };
+
+/**
+ * 丹房告示栏（需求 6）
+ *
+ * 「弟子缺少丹药时显示，例如：筑基丹缺少 x12」。
+ * 那个 12 是**卡在这一味丹上的弟子数**，不是"要 12 颗" ——
+ * 所以每一行都写清"等丹 N 人 / 库存 M / 还差 K"，
+ * 玩家一眼就知道该先炼哪一味（缺得最多的排最前）。
+ *
+ * 只在**真的有缺口**时才显示：修为没满的弟子不算缺丹，
+ * 否则这块告示永远挂着一大片红字，反而没人看。
+ */
+function PillNoticeBoard() {
+  const game = useGame((s) => s.game);
+  const demand = getPillDemand(game).filter((entry) => entry.missing > 0);
+
+  if (demand.length === 0) {
+    return (
+      <p className="panel__note">
+        告示栏：暂无弟子因缺丹卡关。修为修满却差一颗丹时，这里会写明"哪一味、缺几颗"。
+      </p>
+    );
+  }
+
+  const total = demand.reduce((sum, entry) => sum + entry.missing, 0);
+  return (
+    <div className="notice-board">
+      <div className="notice-board__head">
+        <span>📌 丹房告示栏</span>
+        <span className="notice-board__sum">共缺 {total} 颗</span>
+      </div>
+      {demand.map((entry) => (
+        <div key={entry.pillId} className="notice-board__row">
+          <span className="notice-board__name">
+            {entry.icon}
+            {entry.name}
+          </span>
+          <span className="notice-board__detail">
+            等丹 <strong>{entry.waiting}</strong> 人 · 库存 {entry.stock}
+          </span>
+          <span className="notice-board__missing">缺少 ×{entry.missing}</span>
+          {entry.needsMaster && <span className="notice-board__tag">掌门也在等</span>}
+        </div>
+      ))}
+      <p className="panel__note">
+        提示：把丹方排进「炼器 / 炼丹」的批量炼制，或去「工坊」把合成线开起来，都能补上这些缺口。
+      </p>
+    </div>
+  );
+}
 
 function TierUpgrade() {
   const game = useGame((s) => s.game);
@@ -79,6 +130,9 @@ export function AlchemyPanel() {
       </div>
 
       <TierUpgrade />
+
+      {/* 需求 6：丹房告示栏 —— 谁在等哪一味丹 */}
+      <PillNoticeBoard />
 
       <div className="recipe-list">
         {tiers.map((tier) => (

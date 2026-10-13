@@ -10,11 +10,13 @@ import { fmt, fmtDuration } from '../game/decimal';
 import { BLUEPRINT_MAP, SHOP_OFFER_COUNT, SHOP_REFRESH_SECONDS } from '../game/content';
 import { getShopOfferCapacity, hasShop } from '../game/engine';
 import { canBuyOffer, describeOffer } from '../game/shop';
+import { getOfferPrice } from '../game/shop';
 import { useGame } from '../game/store';
 
 export function ShopPanel() {
   const game = useGame((s) => s.game);
   const buy = useGame((s) => s.buyShopOffer);
+  const buyAll = useGame((s) => s.buyAllShopOffers);
 
   if (!hasShop(game)) {
     return (
@@ -33,6 +35,14 @@ export function ShopPanel() {
 
   const offers = game.shop.offers;
   const capacity = getShopOfferCapacity(game);
+  /*
+   * 一键打包要先算清"买得起几件、一共多少钱"：
+   * 价格必须走 getOfferPrice（段位与「商道通达」的折扣都在那里），
+   * 若在这里直接用 offer.price 标价，界面与扣款就会差一个折扣。
+   */
+  const buyableOffers = offers.filter((o) => canBuyOffer(game, o.id).ok);
+  const buyable = buyableOffers.length;
+  const totalPrice = buyableOffers.reduce((sum, o) => sum + getOfferPrice(game, o.id), 0);
 
   return (
     <section className="panel">
@@ -49,36 +59,53 @@ export function ShopPanel() {
         稀有材料的种子与材料<strong>不会</strong>出现在这里 —— 那些只能靠探索。
       </p>
 
+      {/* 需求 2：一键打包 —— 把当前买得起的货一次全买下 */}
+      <div className="btn-row">
+        <button
+          type="button"
+          className="btn btn--primary"
+          disabled={buyable === 0}
+          title={buyable === 0 ? '现在没有买得起的货' : `一次买下 ${buyable} 件（合计 ${fmt(totalPrice)} 灵石）`}
+          onClick={buyAll}
+        >
+          一键打包（{buyable} 件 · 💎{fmt(totalPrice)}）
+        </button>
+      </div>
+
       {offers.length === 0 && <p className="panel__note">货架空空如也，下一轮马上补货。</p>}
 
-      {offers.map((offer) => {
+      <div className="shop-grid">
+        {offers.map((offer) => {
         const described = describeOffer(offer);
         const check = canBuyOffer(game, offer.id);
         const isBlueprint = offer.kind === 'blueprint';
 
+        /*
+         * 需求 2：每种商品改成一个个**方块**（原来是整行铺开的长条）。
+         * 方块化之后一屏能放下的货更多，而且"已售罄"能一眼看出来。
+         */
         return (
-          <div key={offer.id} className={offer.sold ? 'inv-row inv-row--wrap inv-row--sold' : 'inv-row inv-row--wrap'}>
-            <span className="inv-row__icon">{described.icon}</span>
-            <span className="inv-row__name">
-              {described.name}
+          <article key={offer.id} className={offer.sold ? 'shop-card shop-card--sold' : 'shop-card'}>
+            <div className="shop-card__head">
+              <span className="shop-card__icon">{described.icon}</span>
+              <span className="shop-card__name">{described.name}</span>
               {isBlueprint && <span className="tier-badge">图纸</span>}
-            </span>
-            <span className="inv-row__count">×{offer.amount}</span>
-            <span className="inv-row__effect">
-              {described.note} · 💎{fmt(offer.price)}
-              {isBlueprint && BLUEPRINT_MAP[offer.item] ? ` · ${BLUEPRINT_MAP[offer.item].source}` : ''}
-            </span>
-            <button
-              type="button"
-              className="btn btn--tiny"
-              disabled={!check.ok}
-              onClick={() => buy(offer.id)}
-            >
-              {offer.sold ? '已售罄' : '买入'}
-            </button>
-          </div>
+            </div>
+            <div className="shop-card__amount">×{offer.amount}</div>
+            <div className="shop-card__note">{described.note}</div>
+            <div className="shop-card__foot">
+              <span className="shop-card__price">💎{fmt(getOfferPrice(game, offer.id))}</span>
+              <button type="button" className="btn btn--tiny" disabled={!check.ok} onClick={() => buy(offer.id)}>
+                {offer.sold ? '已售罄' : '买入'}
+              </button>
+            </div>
+            {isBlueprint && BLUEPRINT_MAP[offer.item] && (
+              <div className="shop-card__note">{BLUEPRINT_MAP[offer.item].source}</div>
+            )}
+          </article>
         );
-      })}
+        })}
+      </div>
     </section>
   );
 }

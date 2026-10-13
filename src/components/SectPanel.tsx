@@ -22,6 +22,7 @@ export function SectPanel() {
   const foundSect = useGame((s) => s.foundSect);
   const upgradeSect = useGame((s) => s.upgradeSect);
   const recruitDisciple = useGame((s) => s.recruitDisciple);
+  const recruitBatch = useGame((s) => s.recruitDiscipleBatch);
 
   /* ---------------- 尚未开宗 ---------------- */
   if (!game.sect.founded) {
@@ -114,6 +115,34 @@ export function SectPanel() {
               💎 {fmt(recruitCost)} {recruit.ok ? '' : `· ${recruit.reason}`}
             </span>
           </button>
+          {/*
+            需求 10：支持批量招收。
+            十次十次地点在千人宗门里是纯折磨 —— 三个档位覆盖"补几个人"到"住满为止"。
+            招到招不动（灵石/床位/品阶上限）就自己停，并把原因写在提示里。
+          */}
+          <div className="btn-row btn-row--wrap">
+            {[10, 50, 200].map((count) => (
+              <button
+                key={count}
+                type="button"
+                className="btn btn--tiny"
+                disabled={!recruit.ok}
+                title={recruit.ok ? `连续招 ${count} 人（招不动就停）` : (recruit.reason ?? '')}
+                onClick={() => recruitBatch(count)}
+              >
+                一次招 {count}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="btn btn--tiny"
+              disabled={!recruit.ok}
+              title="一直招到灵石、床位或品阶上限为止"
+              onClick={() => recruitBatch(2048)}
+            >
+              招到住满
+            </button>
+          </div>
           <p className="panel__note">
             招收价格只看宗门品阶（同一个品阶里招第一个和招最后一个一个价）。
             宗门品阶越高，招到高资质弟子的概率越大 ——

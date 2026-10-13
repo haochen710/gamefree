@@ -161,6 +161,31 @@ export function getOfferPrice(state: GameState, offerId: string): number {
   return Math.max(1, Math.round(offer.price * discount));
 }
 
+/**
+ * 一键打包（需求 2）：把当前**买得起**的货一次全买下。
+ *
+ * 逐件走同一条 buyShopOffer —— 折扣、售罄、图纸去重这些规则
+ * 与单件购买完全一致，不可能出现"打包价不一样"这种事。
+ * 卖完一件就可能买不起下一件了，所以循环里要重新判一次。
+ */
+export function buyAllShopOffers(state: GameState): { state: GameState; bought: number; spent: number } {
+  let working = state;
+  let bought = 0;
+  let spent = 0;
+  // 货架最多十几件，遍历一遍就够；每件只买一次
+  for (const offer of state.shop.offers) {
+    const check = canBuyOffer(working, offer.id);
+    if (!check.ok) continue;
+    const price = getOfferPrice(working, offer.id);
+    const result = buyShopOffer(working, offer.id);
+    if (result.state === working) continue;
+    working = result.state;
+    bought += 1;
+    spent += price;
+  }
+  return { state: working, bought, spent };
+}
+
 export function canBuyOffer(state: GameState, offerId: string): { ok: boolean; reason: string | null } {
   const offer = state.shop.offers.find((o) => o.id === offerId);
   if (!offer) return { ok: false, reason: '货品不存在' };

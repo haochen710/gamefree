@@ -39,6 +39,7 @@ import {
   REALMS,
   SECRET_REALMS,
   SECRET_REALM_MAP,
+  UNDERPOWERED_MAX_PENALTY,
   SEED_MAP,
   SEED_ROLLS,
   SURVEY_BASE_KINDS_MAX,
@@ -510,11 +511,24 @@ export function resolveExpedition(
    * 多死几个 → 队伍凑不满 → 战力比下降 → 伤亡更高 → 弟子全灭。
    * 随机天象不该有能力掀翻宗门，所以那两条天象改用别的方式做代价。
    */
-  // 铁血军魂（先天特质）：弟子伤亡率 ×0.98
+  /*
+   * 需求 13：「当队伍战力不满足秘境要求时，极大增加伤亡率」。
+   *
+   * 原来只有 `baseCasualty / powerRatio` 这一层反比关系 —— 战力差一半，
+   * 伤亡翻一倍，仅此而已；差得再多也只是线性变差。现在加一层**硬惩罚**：
+   * 战力不足时按缺口大小额外乘一个系数，缺口越大越接近"送死"。
+   *
+   * 战力**只算一次**（powerRatio < 1 才触发），所以它不会与下面的
+   * 逐人减伤叠成"越弱越免伤"那种怪东西。
+   */
+  const shortfall = def.requiredPower > 0 ? Math.max(0, 1 - partyPower / def.requiredPower) : 0;
+  const underpoweredMult = 1 + shortfall * shortfall * UNDERPOWERED_MAX_PENALTY;
+
   const casualtyRate =
     Math.min(Math.max(baseRate, 0), MAX_CASUALTY_RATE) *
     (1 - safety) *
-    getTraitEffect(state, 'casualtyMult', 1);
+    getTraitEffect(state, 'casualtyMult', 1) *
+    underpoweredMult;
 
   /*
    * 逐人掷骰（设定集第 8.3 / 8.5 / 8.6 章）。
@@ -523,12 +537,27 @@ export function resolveExpedition(
    * 战斗天赋、性格与忠诚档 —— 铁甲体魄的弟子就是比别人扛得住。
    * 这也是为什么天赋的减伤可以放心给"每人一份"：伤亡本来就是逐人判的，
    * 带 50 个人不会因此变成全员免伤。
+   *
+   * 需求 13 还加了一条**免死判定**：个人减伤 ≥ 本次伤亡率时直接不死。
+   * 理由是玩家会算这笔账 —— "我给他穿了星穹法衣、又喂了保命丹，
+   * 为什么他还是有 2% 会没" 这种问题没有答案，不如把规则说死：
+   * *减伤够高就不会死*。界面上也因此能把"这个人这趟必不死"显示出来。
    */
   const casualties: { id: string; name: string }[] = [];
   const survivors: string[] = [];
   for (const d of party) {
     const personal = getDiscipleCasualtyReduction(d);
+    if (personal >= 1) {
+      // 减伤堆到 100%（极难，但要给条明路）
+      survivors.push(d.id);
+      continue;
+    }
     const personalRate = casualtyRate * (1 - personal);
+    // 免死：减伤 ≥ 本次伤亡率 —— 逐人比较，而不是队伍级一刀切
+    if (personal >= casualtyRate || personalRate <= 0) {
+      survivors.push(d.id);
+      continue;
+    }
     if (random() < personalRate) {
       casualties.push({ id: d.id, name: d.name });
     } else {

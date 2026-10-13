@@ -53,7 +53,9 @@ type TabId =
   | 'sect'
   | 'build'
   | 'workshop'
-  | 'craft'
+  /* 需求 5：丹器拆成「炼丹」与「炼器」两页 —— 混在一起界面太长 */
+  | 'alchemy'
+  | 'refining'
   | 'shop'
   | 'farm'
   | 'enlighten'
@@ -65,7 +67,8 @@ const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: 'sect', label: '宗门', icon: '🏯' },
   { id: 'build', label: '建筑', icon: '🏗' },
   { id: 'workshop', label: '工坊', icon: '⚒' },
-  { id: 'craft', label: '丹器', icon: '⚗' },
+  { id: 'alchemy', label: '炼丹', icon: '⚗' },
+  { id: 'refining', label: '炼器', icon: '🔨' },
   { id: 'shop', label: '商行', icon: '🏪' },
   { id: 'farm', label: '灵植', icon: '🌱' },
   { id: 'enlighten', label: '感悟', icon: '🧘' },
@@ -221,11 +224,25 @@ function ExpeditionTab() {
   );
 }
 
-function CraftTab() {
+/** 炼丹（需求 5：从「丹器」里拆出来） */
+function AlchemyTab() {
   return (
     <main className="layout">
       <div className="layout__left">
         <AlchemyPanel />
+      </div>
+      <div className="layout__right">
+        <InventoryPanel />
+      </div>
+    </main>
+  );
+}
+
+/** 炼器（需求 5：器物与弟子装备都归这里） */
+function RefiningTab() {
+  return (
+    <main className="layout">
+      <div className="layout__left">
         <RefiningPanel />
       </div>
       <div className="layout__right">
@@ -289,7 +306,8 @@ export default function App() {
           {tab === 'sect' && <SectTab />}
           {tab === 'build' && <BuildTab />}
           {tab === 'workshop' && <WorkshopTab />}
-          {tab === 'craft' && <CraftTab />}
+          {tab === 'alchemy' && <AlchemyTab />}
+          {tab === 'refining' && <RefiningTab />}
           {tab === 'shop' && <ShopTab />}
           {tab === 'farm' && <FarmTab />}
           {tab === 'enlighten' && <EnlightenmentTab />}

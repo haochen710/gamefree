@@ -653,6 +653,15 @@ export const DISCOVERY_MAX_CHANCE = 0.75;
 
 /** 伤亡率上限，避免高难度直接把队伍全灭 */
 export const MAX_CASUALTY_RATE = 0.6;
+
+/**
+ * 需求 13：战力不足时伤亡率的额外惩罚上限。
+ *
+ * 缺口越大越接近这个倍数（缺口 100% 时就是这么多倍）。取 2 而不是更高，
+ * 是因为队伍级伤亡已经被 `MAX_CASUALTY_RATE` 封顶 —— 再高也只是更快撞上天花板，
+ * 而"派弱队去硬闯"的代价本来就够明显了。
+ */
+export const UNDERPOWERED_MAX_PENALTY = 2;
 /** 单次探索的产量浮动范围 */
 export const YIELD_VARIANCE_MIN = 0.8;
 export const YIELD_VARIANCE_MAX = 1.2;

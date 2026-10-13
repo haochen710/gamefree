@@ -1596,6 +1596,136 @@ a {
   background: rgba(255, 255, 255, 0.5);
 }
 
+/*
+ * 商行的方块货架（需求 2：每种商品改为一个个方块）。
+ *
+ * 用 grid + minmax 而不是 flex：方块要**等宽对齐**，
+ * flex 会让"灵草×390000"这种长名字把格子撑开，一整排看着就歪了。
+ */
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.shop-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.shop-card--sold {
+  opacity: 0.45;
+}
+
+.shop-card__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.shop-card__icon {
+  font-size: 17px;
+}
+
+.shop-card__name {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.shop-card__amount {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.shop-card__note {
+  font-size: 11px;
+  color: var(--ink-faint);
+  line-height: 1.4;
+}
+
+.shop-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.shop-card__price {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--jade);
+}
+
+/*
+ * 丹房告示栏（需求 6）
+ *
+ * 用**虚线与浅底**而不是红框：它是"通知"，不是"报错"。
+ * 真正需要抢眼的是每一行末尾的「缺少 ×N」—— 所以只有那一处用警示色。
+ */
+.notice-board {
+  margin: 8px 0;
+  padding: 9px 11px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.notice-board__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.notice-board__sum {
+  font-size: 12px;
+  color: var(--warn);
+}
+
+.notice-board__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 3px 0;
+  font-size: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.notice-board__name {
+  font-weight: 700;
+  min-width: 84px;
+}
+
+.notice-board__detail {
+  color: var(--ink-soft);
+}
+
+.notice-board__missing {
+  margin-left: auto;
+  font-weight: 700;
+  color: var(--warn);
+}
+
+.notice-board__tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+}
+
 .recipe--locked {
   opacity: 0.5;
 }

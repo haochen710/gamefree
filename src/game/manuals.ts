@@ -462,6 +462,24 @@ export function salvageManualsOnDeath(
   return { state: working, salvaged, lost };
 }
 
+/**
+ * 一键卸下**所有**弟子身上的功法（需求 7）。
+ *
+ * 每一本都回到藏经阁，不损耗 —— 与单本卸下同一条规则。
+ */
+export function unequipAllManuals(state: GameState): { state: GameState; removed: number } {
+  let working = state;
+  let removed = 0;
+  for (const d of state.sect.disciples) {
+    for (const slot of ['cultivationManual', 'combatManual'] as const) {
+      if (!working.sect.disciples.find((x) => x.id === d.id)?.[slot]) continue;
+      working = unequipManual(working, d.id, slot);
+      removed += 1;
+    }
+  }
+  return { state: working, removed };
+}
+
 /** 界面用：某名弟子当前两本功法（含空位） */
 export function getEquippedManuals(
   disciple: Disciple,

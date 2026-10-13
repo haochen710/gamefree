@@ -14,6 +14,7 @@ import {
   FAME_MAX,
   FAME_TIERS,
   GIFT_OPTIONS,
+  ITEM_MAP,
   NPC_SECTS,
   TRAITS,
   ALLIANCE_RELATION,
@@ -150,7 +151,10 @@ function SectRow({ sectId }: { sectId: string }) {
         {view.atWar && <span className="recipe__owned recipe__owned--warn">交战中</span>}
       </div>
       <div className="recipe__desc">
-        {def.desc} · 心头好：{def.favorite === 'herb' ? '灵草' : def.favorite}
+        {def.desc} · 心头好：
+        {/* 需求 11：材料名要走 ITEM_MAP —— 原来直接印 id（blackIron / netherFlame） */}
+        {ITEM_MAP[def.favorite]?.icon ?? ''}
+        {ITEM_MAP[def.favorite]?.name ?? def.favorite}
       </div>
       <div className="recipe__foot">
         <div className="btn-row">

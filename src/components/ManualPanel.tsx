@@ -17,6 +17,7 @@ import {
   FRAGMENTS_PER_MANUAL,
   MANUAL_GRADE_NAMES,
   MANUAL_GRADE_MIN_REALM,
+  REALMS,
   type ManualDef,
   type ManualGrade,
 } from '../game/content';
@@ -34,7 +35,12 @@ import { useGame } from '../game/store';
 import Panel from './Panel';
 import { FoldSection } from './fold';
 
-const REALM_NAMES = ['炼气', '筑基', '金丹', '元婴', '化神'];
+/*
+ * 境界名一律从 content 的 REALMS 里取。
+ * 原本这里自抄了一张只有 5 项的小表（与 GearPanel 同一份错），
+ * 合体期以上的弟子会渲染成空白 —— 需求 1 的「境界显示不全」。
+ */
+const realmName = (index: number): string => REALMS[Math.min(index, REALMS.length - 1)]?.name ?? '';
 
 /** 单个功法条目：碎片数、合成按钮、发放入口 */
 function ManualRow({ def }: { def: ManualDef }) {
@@ -71,7 +77,7 @@ function ManualRow({ def }: { def: ManualDef }) {
 
       <div className="recipe__desc">{def.desc}</div>
       <div className="recipe__desc">
-        来源：{def.source} · 需 {REALM_NAMES[MANUAL_GRADE_MIN_REALM[def.grade]]}期以上方可修习
+        来源：{def.source} · 需 {realmName(MANUAL_GRADE_MIN_REALM[def.grade])}以上方可修习
       </div>
 
       {equippedBy.length > 0 && (
@@ -123,7 +129,7 @@ function ManualRow({ def }: { def: ManualDef }) {
                 }}
               >
                 <span className="picker__name">{d.name}</span>
-                <span className="picker__realm">{REALM_NAMES[d.realmIndex] ?? ''}期</span>
+                <span className="picker__realm">{realmName(d.realmIndex)}</span>
                 <span className="picker__power">
                   忠诚 {Math.round(d.loyalty)} · 心魔 {Math.round(d.demon)}
                 </span>
@@ -139,13 +145,20 @@ function ManualRow({ def }: { def: ManualDef }) {
 export function ManualPanel({ collapsible }: { collapsible?: boolean }) {
   const game = useGame((s) => s.game);
   const contemplateManual = useGame((s) => s.contemplateManual);
+  const contemplateBatch = useGame((s) => s.contemplateManualBatch);
   const unequipManual = useGame((s) => s.unequipManual);
+  const unequipAllManuals = useGame((s) => s.unequipAllManuals);
   const autoEquipManuals = useGame((s) => s.autoEquipManuals);
 
   const libraries = getBuildingCount(game, 'library');
   const all = getAllManuals(game);
   const totalFragments = all.reduce((sum, entry) => sum + entry.fragments, 0);
   const totalOwned = all.reduce((sum, entry) => sum + entry.count, 0);
+  // 身上带着功法的人数（一键卸载按钮上要显示"卸几本"）
+  const equippedCount = game.sect.disciples.reduce(
+    (sum, d) => sum + (d.cultivationManual ? 1 : 0) + (d.combatManual ? 1 : 0),
+    0,
+  );
 
   // 已装备的功法（按弟子境界降序取前 12 条展示，避免千人宗门把面板撑爆）
   const equipped = game.sect.disciples
@@ -183,17 +196,41 @@ export function ManualPanel({ collapsible }: { collapsible?: boolean }) {
           {grades.map((grade) => {
             const check = canContemplate(game, grade);
             const cost = CONTEMPLATE_QI_COST[grade];
+            if (cost <= 0) {
+              return (
+                <button
+                  key={grade}
+                  type="button"
+                  className="btn btn--tiny"
+                  disabled
+                  title={check.reason ?? ''}
+                >
+                  {MANUAL_GRADE_NAMES[grade]}不可参悟
+                </button>
+              );
+            }
             return (
-              <button
-                key={grade}
-                type="button"
-                className="btn btn--tiny"
-                disabled={!check.ok}
-                title={check.reason ?? `消耗 ☯${fmt(cost)} 换 1 份碎片`}
-                onClick={() => contemplateManual(grade)}
-              >
-                参悟{MANUAL_GRADE_NAMES[grade]} ☯{fmt(cost)}
-              </button>
+              <span key={grade} className="btn-row">
+                <button
+                  type="button"
+                  className="btn btn--tiny"
+                  disabled={!check.ok}
+                  title={check.reason ?? `消耗 ☯${fmt(cost)} 换 1 份碎片`}
+                  onClick={() => contemplateManual(grade)}
+                >
+                  参悟{MANUAL_GRADE_NAMES[grade]} ☯{fmt(cost)}
+                </button>
+                {/* 需求 7：批量参悟（一次点十下太累） */}
+                <button
+                  type="button"
+                  className="btn btn--tiny"
+                  disabled={!check.ok}
+                  title={check.reason ?? `连参悟 10 次，共 ☯${fmt(cost * 10)}（灵气不够就做几次算几次）`}
+                  onClick={() => contemplateBatch(grade, 10)}
+                >
+                  ×10
+                </button>
+              </span>
             );
           })}
         </div>
@@ -213,6 +250,16 @@ export function ManualPanel({ collapsible }: { collapsible?: boolean }) {
           >
             一键发书（把仓库里的功法发给最合适的弟子）
           </button>
+          {/* 需求 7：一键卸载（全部回到藏经阁，不损耗） */}
+          <button
+            type="button"
+            className="btn"
+            disabled={equippedCount === 0}
+            title="把所有弟子身上的功法都卸下来，回到藏经阁"
+            onClick={unequipAllManuals}
+          >
+            一键卸载（{equippedCount} 本）
+          </button>
         </div>
       )}
 
@@ -222,7 +269,7 @@ export function ManualPanel({ collapsible }: { collapsible?: boolean }) {
           {equipped.map((d) => (
             <div key={d.id} className="inv-row">
               <span className="inv-row__name">{d.name}</span>
-              <span className="inv-row__count">{REALM_NAMES[d.realmIndex] ?? ''}期</span>
+              <span className="inv-row__count">{realmName(d.realmIndex)}</span>
               <span className="inv-row__effect">
                 {getEquippedManuals(d)
                   .map((entry) => (entry.def ? entry.def.name : '—'))
@@ -245,7 +292,7 @@ export function ManualPanel({ collapsible }: { collapsible?: boolean }) {
         <FoldSection
           key={grade}
           title={`${MANUAL_GRADE_NAMES[grade]}功法`}
-          hint={`需 ${REALM_NAMES[MANUAL_GRADE_MIN_REALM[grade]]}期`}
+          hint={`需 ${realmName(MANUAL_GRADE_MIN_REALM[grade])}`}
           count={all.filter((entry) => entry.def.grade === grade).length}
           storageKey={`manual.grade.${grade}`}
           defaultOpen={grade <= 2}

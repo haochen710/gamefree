@@ -428,6 +428,39 @@ export function salvageGearsOnDeath(
   return { state: working, salvaged, lost };
 }
 
+/**
+ * 找出**所有穿着这件装备的弟子**（需求 1：「区分已装备弟子和未装备弟子」）。
+ *
+ * 丹药栏有两格，所以要逐格比对 —— 一个弟子可能同时占着 pill1 与 pill2。
+ */
+export function findGearWearers(
+  state: GameState,
+  gearId: string,
+): { disciple: Disciple; slot: GearSlot }[] {
+  const out: { disciple: Disciple; slot: GearSlot }[] = [];
+  for (const d of state.sect.disciples) {
+    for (const slot of GEAR_SLOTS) {
+      if (d.gear[slot] === gearId) out.push({ disciple: d, slot });
+    }
+  }
+  return out;
+}
+
+/**
+ * 一键把某件装备从**所有**弟子身上卸下（需求 1）。
+ *
+ * 与单件卸下同一条规则：卸下的东西回到仓库，不损耗。
+ */
+export function unequipGearEverywhere(state: GameState, gearId: string): { state: GameState; removed: number } {
+  const wearers = findGearWearers(state, gearId);
+  if (wearers.length === 0) return { state, removed: 0 };
+  let working = state;
+  for (const entry of wearers) {
+    working = unequipGear(working, entry.disciple.id, entry.slot);
+  }
+  return { state: working, removed: wearers.length };
+}
+
 /** 界面用：装备在某名弟子身上的展示串 */
 export function describeDiscipleGear(disciple: Disciple): string {
   const parts = getDiscipleGear(disciple)
