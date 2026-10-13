@@ -41,7 +41,7 @@ import JournalPanel from '../src/components/JournalPanel';
 import ManualPanel from '../src/components/ManualPanel';
 import FamePanel from '../src/components/FamePanel';
 import GearPanel from '../src/components/GearPanel';
-import PostPanel from '../src/components/PostPanel';
+import { PostOverview, PostSection } from '../src/components/PostPanel';
 import TalismanPanel from '../src/components/TalismanPanel';
 import * as manuals from '../src/game/manuals';
 import * as posting from '../src/game/posting';
@@ -7467,9 +7467,17 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
     let rich = forceBuild(base(), 'alchemyRoom', 2);
     rich = forceBuild(rich, 'talismanRoom', 1);
     Object.assign(initial, { game: engine.refreshUnlocks(rich) });
-    const postHtml = renderToString(<PostPanel />);
-    check('派遣面板渲染出来了', postHtml.includes('派遣与技艺'));
-    check('列出四类技艺面', ['炼丹', '炼器', '制符', '种田'].every((n) => postHtml.includes(n)));
+    /*
+     * 需求 2 之后派遣被拆开了：总览在修行页，四个岗位小节分别在
+     * 炼丹 / 炼器 / 符箓 / 灵植 四页 —— 所以两处都要能渲染出来。
+     */
+    const postHtml = renderToString(<PostOverview />);
+    check('派遣总览渲染出来了', postHtml.includes('派遣与技艺'));
+    check('总览列出四类技艺面', ['炼丹', '炼器', '制符', '种田'].every((n) => postHtml.includes(n)));
+    const alchemyPost = renderToString(<PostSection kind="alchemy" />);
+    check('炼丹页能安排丹房岗位', alchemyPost.includes('丹房'));
+    const talismanPost = renderToString(<PostSection kind="talisman" />);
+    check('符箓页能安排符房岗位', talismanPost.includes('符房'));
 
     const talismanHtml = renderToString(<TalismanPanel />);
     check('符箓面板渲染出来了', talismanHtml.includes('符箓'));

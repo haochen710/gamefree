@@ -23,7 +23,7 @@ import SectHallPanel from './components/SectHallPanel';
 import DisciplePanel from './components/DisciplePanel';
 import ManualPanel from './components/ManualPanel';
 import FamePanel from './components/FamePanel';
-import PostPanel from './components/PostPanel';
+import { PostOverview, PostSection } from './components/PostPanel';
 import GearPanel from './components/GearPanel';
 import TalismanPanel from './components/TalismanPanel';
 import MapPanel from './components/MapPanel';
@@ -127,6 +127,12 @@ function CultivationTab() {
         {/* 开宗前的随机遭遇与善恶值，放在修行页最上面 */}
         <EncounterPanel />
         <RealmPanel />
+        {/*
+          需求 2：派遣的四个岗位小节已经分化到炼丹 / 炼器 / 符箓 / 灵植四页，
+          这里只留「四类技艺的横向比较 + 一键填岗」—— 弟子修炼的主场，
+          放在弟子面板旁边最顺手。
+        */}
+        <PostOverview collapsible />
         <SeasonPanel />
         <AscendPanel />
       </div>
@@ -204,19 +210,25 @@ function SectTab() {
   return (
     <main className="layout">
       <div className="layout__left">
+        {/*
+          需求 2：「宗门界面右边挂的东西很多，左边却只有几个，不合理，重新布置一下」。
+          分栏口径改成**按使用频率**：
+            左 = 低频只读（宗门概况、名望、记事）
+            右 = 要频繁操作（弟子、藏经阁、丹器阁）
+          另外「弟子派遣」已经分化到炼丹 / 炼器 / 符箓 / 灵植四页，
+          这一页不再挂派遣面板（总览在修行页）。
+        */}
+        <SectPanel />
+        <FamePanel collapsible />
         <SectHallPanel />
+        <JournalPanel />
       </div>
       <div className="layout__right">
-        <FamePanel collapsible />
-        {/* 需求 3 / 12：派遣与技艺 */}
-        <PostPanel collapsible />
-        <SectPanel />
         <DisciplePanel collapsible />
         {/* 设定集第 7 章：藏经阁（功法碎片、合成、发书） */}
         <ManualPanel collapsible />
         {/* 设定集第 8.7 / 11 章：丹器阁（丹炉九件 + 弟子五装备栏） */}
         <GearPanel collapsible />
-        <JournalPanel />
       </div>
     </main>
   );
@@ -230,7 +242,7 @@ function ExpeditionTab() {
   );
 }
 
-/** 炼丹（需求 5：从「丹器」里拆出来） */
+/** 炼丹（需求 5：从「丹器」里拆出来；需求 2：丹房岗位也归这一页） */
 function AlchemyTab() {
   return (
     <main className="layout">
@@ -238,13 +250,15 @@ function AlchemyTab() {
         <AlchemyPanel />
       </div>
       <div className="layout__right">
-        <InventoryPanel />
+        {/* 需求 2：派遣分化到功能页 —— 丹房岗位在这一页安排 */}
+        <PostSection kind="alchemy" />
+        <InventoryPanel mode="pills" />
       </div>
     </main>
   );
 }
 
-/** 炼器（需求 5：器物与弟子装备都归这里） */
+/** 炼器（需求 5：器物与弟子装备都归这里；需求 2：炼器房岗位也归这一页） */
 function RefiningTab() {
   return (
     <main className="layout">
@@ -252,25 +266,40 @@ function RefiningTab() {
         <RefiningPanel />
       </div>
       <div className="layout__right">
-        <InventoryPanel />
+        <PostSection kind="refining" />
+        {/* 需求 3：这里看的是器物，不是丹药 —— 标题必须跟着变 */}
+        <InventoryPanel mode="artifacts" />
       </div>
     </main>
   );
 }
 
-/** 符箓（需求 8） */
+/** 符箓（需求 8；需求 2：符房岗位；需求 3：符箓库） */
 function TalismanTab() {
   return (
-    <main className="layout layout--single">
-      <TalismanPanel />
+    <main className="layout">
+      <div className="layout__left">
+        <TalismanPanel />
+      </div>
+      <div className="layout__right">
+        <PostSection kind="talisman" />
+        <InventoryPanel mode="talismans" />
+      </div>
     </main>
   );
 }
 
+/** 灵植（需求 2：灵田岗位归这一页） */
 function FarmTab() {
   return (
-    <main className="layout layout--single">
-      <PlantationPanel />
+    <main className="layout">
+      <div className="layout__left">
+        <PlantationPanel />
+      </div>
+      <div className="layout__right">
+        <PostSection kind="farm" />
+        <InventoryPanel mode="pills" />
+      </div>
     </main>
   );
 }

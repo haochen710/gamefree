@@ -11,6 +11,8 @@ import { BLUEPRINT_MAP, SHOP_OFFER_COUNT, SHOP_REFRESH_SECONDS } from '../game/c
 import { getShopOfferCapacity, hasShop } from '../game/engine';
 import { canBuyOffer, describeOffer } from '../game/shop';
 import { getOfferPrice } from '../game/shop';
+// 需求 12：声望商店并到商行之后，这两个也跟着过来
+import { famGoodView, getFame } from '../game/fame';
 import { useGame } from '../game/store';
 
 export function ShopPanel() {
@@ -106,7 +108,62 @@ export function ShopPanel() {
         );
         })}
       </div>
+
+      {/*
+        需求 12：声望商店合并到商行。
+        灵石货架（上面）与声望货架（下面）现在同页 ——
+        「我要买东西」不再需要判断"那个东西是用什么买的"。
+      */}
+      <h3 className="panel__subtitle">声望货架</h3>
+      <p className="panel__note">
+        声望来自秘境探索、普通探索、论道大比与善行。这里能用它直接换功法碎片、稀有材料。
+        货每 10 分钟重摇一次，段位越高能看到的货越好。
+        当前声望：<strong>{Math.round(game.fame)}</strong>。
+      </p>
+      <FameShelf />
     </section>
+  );
+}
+
+/** 声望商店 */
+function FameShelf() {
+  const game = useGame((s) => s.game);
+  const buy = useGame((s) => s.buyFameOffer);
+
+  if (game.fameShop.offers.length === 0) {
+    return <p className="panel__note">声望货架暂无货品（开宗立派后每 10 分钟补一次货）。</p>;
+  }
+
+  return (
+    <div className="shop-grid">
+      {game.fameShop.offers.map((offer) => {
+        const good = famGoodView(offer.goodId);
+        if (!good) return null;
+        const affordable = getFame(game) >= good.price;
+        return (
+          <article key={offer.goodId} className={good.price > 500 ? 'recipe recipe--rare' : 'recipe'}>
+            <div className="recipe__head">
+              <span className="recipe__icon">{good.icon}</span>
+              <span className="recipe__name">{good.name}</span>
+              <span className="recipe__owned">×{good.amount}</span>
+            </div>
+            <div className="recipe__desc">{good.desc}</div>
+            <div className="recipe__foot">
+              <span className="recipe__cost">声望 {good.price}</span>
+              <button
+                type="button"
+                className="btn btn--tiny"
+                disabled={!affordable}
+                title={affordable ? '' : '声望不足'}
+                onClick={() => buy(offer.goodId)}
+              >
+                兑换
+              </button>
+            </div>
+          </article>
+        );
+      })}
+    </div>
   );
 }
 

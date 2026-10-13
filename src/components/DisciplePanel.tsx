@@ -40,11 +40,14 @@ import {
   getFarmTalentBonus,
   getInsightMax,
 } from '../game/engine';
+// 心得每点给多少修行加成（需求 1：这一块从 SectHallPanel 并过来了）
+import { INSIGHT_SPEED_PER_POINT } from '../game/content';
 import { useGame } from '../game/store';
 import Panel from './Panel';
 import type { Disciple } from '../game/state';
 
-type SortKey = 'aptitude' | 'realm' | 'age' | 'loyalty' | 'demon';
+// 需求 1：心得并入弟子管理之后，它也必须是一个可排序的维度
+ type SortKey = 'aptitude' | 'realm' | 'age' | 'loyalty' | 'demon' | 'insight';
 /** 弟子列表的"状态"筛选（忠诚 / 心魔 / 卡瓶颈） */
 type StatusFilter = 'all' | 'refusing' | 'demon' | 'lowLoyalty' | 'stalled';
 /** 需求 4：按境界筛选（原来只能按资质看） */
@@ -279,6 +282,8 @@ export function DisciplePanel({ collapsible }: { collapsible?: boolean } = {}) {
       if (sortKey === 'realm') return b.realmIndex - a.realmIndex;
       if (sortKey === 'loyalty') return a.loyalty - b.loyalty;
       if (sortKey === 'demon') return b.demon - a.demon;
+      // 需求 1：心得也成为一个排序维度（它原来只在那块单独的面板里）
+      if (sortKey === 'insight') return b.insight - a.insight;
       return a.age - b.age;
     });
     return sorted;
@@ -297,6 +302,42 @@ export function DisciplePanel({ collapsible }: { collapsible?: boolean } = {}) {
       collapsible={collapsible}
       storageKey="disciples"
     >
+      {/*
+       * 需求 1：「弟子心得界面和弟子管理合并起来」。
+       * 原先心得是宗门左栏里独立的一节（SectHallPanel），现在并到这里 ——
+       * 因为"看谁心得高"和"决定派谁去探索"本来就是同一件事的两面。
+       */}
+      <div className="notice-board">
+        <div className="notice-board__head">
+          <span>📖 弟子心得</span>
+          <span className="notice-board__sum">上限 {getInsightMax(game)} 点 / 人</span>
+        </div>
+        <p className="panel__note">
+          弟子探索秘境归来积累心得，每点使该弟子的修行速度 +
+          {(INSIGHT_SPEED_PER_POINT * 100).toFixed(1)}%。心得与宗门建筑、大比处在
+          <strong>同一个加算池</strong>里，不会互相翻倍。
+        </p>
+        {game.sect.disciples.length === 0 ? (
+          <p className="panel__note">尚无弟子。</p>
+        ) : (
+          [...game.sect.disciples]
+            .sort((a, b) => b.insight - a.insight)
+            .slice(0, 5)
+            .map((d) => (
+              <div key={d.id} className="notice-board__row">
+                <span className="notice-board__name">{d.name}</span>
+                <span className="notice-board__detail">
+                  心得 {Math.round(d.insight)} / {getInsightMax(game)}
+                </span>
+                <span className="notice-board__missing">
+                  修行 +{(Math.min(d.insight, getInsightMax(game)) * INSIGHT_SPEED_PER_POINT * 100).toFixed(1)}%
+                </span>
+              </div>
+            ))
+        )}
+        <p className="panel__note">这里只列心得最高的 5 人；完整名单用下面的筛选与排序看。</p>
+      </div>
+
       <div className="disciple-toolbar">
         <label>
           排序
@@ -306,6 +347,7 @@ export function DisciplePanel({ collapsible }: { collapsible?: boolean } = {}) {
             <option value="age">按年龄</option>
             <option value="loyalty">按忠诚（低的在前）</option>
             <option value="demon">按心魔（高的在前）</option>
+            <option value="insight">按心得（高的在前）</option>
           </select>
         </label>
 

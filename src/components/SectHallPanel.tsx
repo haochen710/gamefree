@@ -14,7 +14,6 @@
  * 建筑的建造仍然在「洞府」页的宗门建筑分组里，这里只做控制与说明。
  */
 import { fmtDuration } from '../game/decimal';
-import { INSIGHT_SPEED_PER_POINT, REALMS } from '../game/content';
 import { getBuildingCount, getCultivationSpeedMultiplier, getInsightMax } from '../game/engine';
 import {
   ARENA_BUFF_SECONDS,
@@ -150,30 +149,6 @@ export function SectHallPanel() {
         ))}
       </section>
 
-      <section className="panel">
-        <div className="panel__head">
-          <h2>弟子心得</h2>
-          <span className="panel__hint">修行加速来源</span>
-        </div>
-        {game.sect.disciples.length === 0 ? (
-          <p className="panel__note">尚无弟子。</p>
-        ) : (
-          [...game.sect.disciples]
-            .sort((a, b) => b.insight - a.insight)
-            .slice(0, 12)
-            .map((d) => (
-              <div key={d.id} className="inv-row inv-row--wrap">
-                <span className="inv-row__icon">📖</span>
-                <span className="inv-row__name">{d.name}</span>
-                <span className="inv-row__count">心得 {Math.round(d.insight)}/{getInsightMax(game)}</span>
-                <span className="inv-row__effect">
-                  {REALMS[d.realmIndex].name} · 修行 +
-                  {(Math.min(d.insight, getInsightMax(game)) * INSIGHT_SPEED_PER_POINT * 100).toFixed(1)}%
-                </span>
-              </div>
-            ))
-        )}
-      </section>
     </>
   );
 }

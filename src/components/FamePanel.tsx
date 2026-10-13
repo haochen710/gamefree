@@ -28,7 +28,6 @@ import {
   getFameToNextTier,
   getNextFameTier,
   traitView,
-  famGoodView,
   endingDaoYunBonus,
   type EndingCheck,
 } from '../game/fame';
@@ -73,48 +72,6 @@ function FameBar() {
           </span>
         ))}
       </div>
-    </div>
-  );
-}
-
-/** 声望商店 */
-function FameShop() {
-  const game = useGame((s) => s.game);
-  const buy = useGame((s) => s.buyFameOffer);
-
-  if (game.fameShop.offers.length === 0) {
-    return <p className="panel__note">声望商店暂无货品（开宗立派后每 10 分钟补一次货）。</p>;
-  }
-
-  return (
-    <div className="shop-grid">
-      {game.fameShop.offers.map((offer) => {
-        const good = famGoodView(offer.goodId);
-        if (!good) return null;
-        const affordable = getFame(game) >= good.price;
-        return (
-          <article key={offer.goodId} className={good.price > 500 ? 'recipe recipe--rare' : 'recipe'}>
-            <div className="recipe__head">
-              <span className="recipe__icon">{good.icon}</span>
-              <span className="recipe__name">{good.name}</span>
-              <span className="recipe__owned">×{good.amount}</span>
-            </div>
-            <div className="recipe__desc">{good.desc}</div>
-            <div className="recipe__foot">
-              <span className="recipe__cost">声望 {good.price}</span>
-              <button
-                type="button"
-                className="btn btn--tiny"
-                disabled={!affordable}
-                title={affordable ? '' : '声望不足'}
-                onClick={() => buy(offer.goodId)}
-              >
-                兑换
-              </button>
-            </div>
-          </article>
-        );
-      })}
     </div>
   );
 }
@@ -330,12 +287,11 @@ export function FamePanel({ collapsible }: { collapsible?: boolean }) {
       <FameBar />
       <TraitSection />
 
-      <h3 className="panel__subtitle">声望商店</h3>
+
       <p className="panel__note">
-        声望来自秘境探索、普通探索、论道大比与善行；这里能用它直接换功法碎片、稀有材料。
-        供奉的货每 10 分钟重摇一次，段位越高能看到的货越好。
+        ⚠️ 需求 12：原先挂在这里的<strong>声望商店</strong>已经并到「商行」页 ——
+        灵石货架与声望货架现在在同一页，买东西不用来回切。
       </p>
-      <FameShop />
 
       <h3 className="panel__subtitle">六大宗门</h3>
       <p className="panel__note">
