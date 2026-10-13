@@ -33,6 +33,7 @@ import {
   HAPPINESS_MODIFIERS,
 } from './content';
 import { getBuildingCount, getDiscipleCapacity } from './engine';
+import { getSectArrayHappiness } from './sectArray';
 import { getFameTier } from './fame';
 import { FAME_TIERS } from './content';
 import type { GameState } from './state';
@@ -64,6 +65,18 @@ export function getHappinessFactors(state: GameState): HappinessFactor[] {
   const disciples = state.sect.disciples;
 
   if (disciples.length === 0) {
+    /*
+     * ⚠️ 空宗门也要把大阵算上：护山大阵是**建筑**给的效果，
+     * 与有没有弟子无关（第一次把这段插错了分支，实测才发现）。
+     */
+    if (state.sectArrayOn) {
+      out.push({
+        id: 'sectArray',
+        label: '宗门大阵',
+        value: getSectArrayHappiness(state),
+        detail: '大阵运转中',
+      });
+    }
     return out;
   }
 
@@ -148,6 +161,16 @@ export function getHappinessFactors(state: GameState): HappinessFactor[] {
     value: tierFactor,
     detail: `${fameTier.name}（第 ${Math.max(0, tierIndex) + 1} 段）`,
   });
+
+  /* 8. 宗门大阵（需求 9）—— 护山大阵转着，人心就定 */
+  if (state.sectArrayOn) {
+    out.push({
+      id: 'sectArray',
+      label: '宗门大阵',
+      value: getSectArrayHappiness(state),
+      detail: '大阵运转中',
+    });
+  }
 
   return out;
 }

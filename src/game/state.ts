@@ -376,6 +376,13 @@ export interface GameState {
   caravan: Caravan | null;
   /** 下一支商队还有多久到（秒） */
   caravanTimer: number;
+  /**
+   * 宗门大阵是否在运转（需求 9）。
+   *
+   * 开着就按秒烧符（game/sectArray.ts），烧完自动置 false ——
+   * 所以它永远不需要玩家"记得关"，只是会自己灭。
+   */
+  sectArrayOn: boolean;
   /** 已铸成的丹炉（设定集第 11 章）：炉鼎 id 列表；开局那口默认炉不在这里 */
   furnaces: string[];
   /** 当前在用的炉鼎 */
@@ -619,6 +626,7 @@ export function createInitialState(now = Date.now()): GameState {
     spatialWards: {},
     caravan: null,
     caravanTimer: 0,
+    sectArrayOn: false,
     furnaces: [],
     furnaceId: DEFAULT_FURNACE_ID,
     fame: 0,

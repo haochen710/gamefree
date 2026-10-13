@@ -242,6 +242,8 @@ export interface SerializedGame {
   cv?: unknown;
   /** 下一支商队的倒计时（需求 7） */
   cvt?: unknown;
+  /** 宗门大阵是否在运转（需求 9） */
+  sa?: unknown;
   /** 秘境探索次数（需求 9 的危险度进度） */
   rr?: unknown;
   /** 各条配方的自动合成目标存量（本轮需求 2） */
@@ -343,6 +345,7 @@ export function serialize(state: GameState): SerializedGame {
     sw: { ...state.spatialWards },
     cv: state.caravan ?? undefined,
     cvt: state.caravanTimer,
+    sa: state.sectArrayOn,
     gc: { ...state.gearCharges },
     ri: state.realmIndex,
     li: state.layer,
@@ -1171,6 +1174,7 @@ export function deserialize(raw: unknown): GameState | null {
     // 商队（需求 7）：到访中的那一支要连清单一起恢复
     caravan: sanitizeCaravan(data.cv),
     caravanTimer: toInt(data.cvt, 0, 0, CARAVAN_INTERVAL_SECONDS),
+    sectArrayOn: data.sa === true,
     realmIndex,
     layer,
     globalBreakthroughBonus: toFloat(data.gb, 0, 0, 10),

@@ -18,6 +18,8 @@
  * 弟子居所整组加上的那一道门，写漏了会让读者以为"没开宗也能盖弟子舍"。
  */
 import { HAPPINESS_BUILDINGS } from './happiness';
+import { SECT_ARRAY_BUILDING_ID } from './talismans';
+import { RESOURCE_MAP } from './resources';
 import type { ItemId, ResourceId } from './resources';
 
 /** 建筑分组，用于界面归类 */
@@ -808,6 +810,26 @@ export const STRUCTURES: StructureDef[] = [
        *   - 制符产线的地方（符箓在这里造出来）；
        *   - 制符岗位的来源（每座 2 人，见 game/posting.ts）。
        */
+      /**
+       * 宗门大阵（需求 9）：以符箓为薪的护山大阵。
+       *
+       * 它是**唯一**建筑，建成后可以开启/关闭；开启时持续烧符，
+       * 提供宗门防御 + 弟子修炼加成 + 幸福度（见 game/sectArray.ts）。
+       * 需求 9 把"减伤"从护身符搬到了这里：同样的强度要长期供养。
+       */
+      id: SECT_ARRAY_BUILDING_ID,
+      kind: 'structure' as const,
+      group: 'sect' as const,
+      name: '宗门大阵',
+      icon: '🔯',
+      desc: '以符箓为薪的护山大阵。开启后持续消耗符箓，提供宗门防御、弟子修炼加成与幸福度。',
+      baseCost: { qi: 2e6, wood: 1e5, stone: 6e4, ore: 4e4, herb: 3e4, spiritSilk: 2000, starSand: 200, lunarCrystal: 40 },
+      costGrowth: 1.7,
+      unlock: { spiritSilk: 200 },
+      requiresRealm: 4,
+      max: 1,
+    },
+    {
       id: 'talismanRoom',
       kind: 'structure',
       group: 'hall',
@@ -1028,20 +1050,6 @@ export const STORAGE_RATIOS: Record<Exclude<ResourceId, 'qi'>, number> = {
   stone: 0.06,
 };
 
-interface StorageTier {
-  id: string;
-  name: string;
-  icon: string;
-  desc: string;
-  /** 灵气容量（其余资源按 STORAGE_RATIOS 折算） */
-  power: number;
-  /** 所需境界下标 */
-  realm: number;
-  /** 造价（灵气） */
-  cost: number;
-  /** 需要钻研的技术（需求 6：高阶储物不能只靠等级） */
-  tech?: string;
-}
 
 /**
  * 九级储物建筑，每级约 20 倍容量，按境界逐级解锁。
@@ -1056,46 +1064,111 @@ interface StorageTier {
  * 第 2 级起要求「储物之术」，第 4 级起「须弥之法」，第 7 级起「混元之法」——
  * 这几步是需求 6 的体现：光有等级还不够，还得有技术。
  */
-const STORAGE_TIERS: StorageTier[] = [
-  { id: 'storagePouch', name: '储物袋', icon: '👝', desc: '最简易的储物法器，内有方寸之地。', power: 2e3, realm: 0, cost: 150 },
-  { id: 'treasurePavilion', name: '藏宝阁', icon: '🏛', desc: '专门辟出的楼阁，用来堆放灵材。', power: 3e4, realm: 1, cost: 1.2e3, tech: 'storageArt' },
-  { id: 'spiritVault', name: '灵脉库房', icon: '🏦', desc: '以地底灵脉为基，可储存大量灵气。', power: 5e5, realm: 2, cost: 1.8e4, tech: 'storageArt' },
-  { id: 'sumeruCave', name: '须弥洞府', icon: '🕳', desc: '芥子纳须弥，一间石室可容山海。', power: 1e7, realm: 3, cost: 3e5, tech: 'voidStorageArt' },
-  { id: 'cosmosRealm', name: '芥子乾坤', icon: '🌐', desc: '自成一界的储物空间，法则由你书写。', power: 2e8, realm: 4, cost: 6e6, tech: 'voidStorageArt' },
-  { id: 'voidTreasury', name: '太虚宝库', icon: '💠', desc: '开辟于虚空夹缝，无视物理之限。', power: 4e9, realm: 5, cost: 1.2e8, tech: 'voidStorageArt' },
-  { id: 'starVault', name: '周天星库', icon: '✨', desc: '引周天星力构筑，容量随星辰增辉。', power: 8e10, realm: 6, cost: 2.4e9, tech: 'cosmosStorageArt' },
-  { id: 'primordialCache', name: '混元仙藏', icon: '🔮', desc: '混元一气所化，可藏一域之资。', power: 1.6e12, realm: 7, cost: 4.8e10, tech: 'cosmosStorageArt' },
-  { id: 'daoRepository', name: '鸿蒙道藏', icon: '🌌', desc: '开天辟地前的道之容器，几无穷尽。', power: 3.2e13, realm: 8, cost: 9.6e11, tech: 'cosmosStorageArt' },
+
+/**
+ * 五种**专库**（需求 10）。
+ *
+ * ⚠️ 需求原文：「所有种类的库房都可以增加所有基础资源的上限，不合理，**拆分一下**」。
+ * 所以每一座库房只抬**一项**上限 —— 想扩灵气就得建灵池，想扩灵木就得建木料仓。
+ * 这让"我现在卡在哪一项上限上"变成一个要分别回答的问题。
+ */
+export const STORAGE_KINDS: { id: string; resource: ResourceId; name: string; icon: string; power: number; cost: number }[] = [
+  { id: 'qi', resource: 'qi', name: '灵池', icon: '💧', power: 4e3, cost: 4000 },
+  { id: 'wood', resource: 'wood', name: '木料棚', icon: '🪵', power: 3e3, cost: 3200 },
+  { id: 'ore', resource: 'ore', name: '矿料场', icon: '⛏', power: 3e3, cost: 3200 },
+  { id: 'herb', resource: 'herb', name: '药草棚', icon: '🌿', power: 3e3, cost: 3200 },
+  { id: 'stone', resource: 'stone', name: '石料场', icon: '🪨', power: 3e3, cost: 3200 },
 ];
 
-function storageOf(power: number): Partial<Record<ResourceId, number>> {
-  return {
-    qi: power,
-    wood: power * STORAGE_RATIOS.wood,
-    ore: power * STORAGE_RATIOS.ore,
-    herb: power * STORAGE_RATIOS.herb,
-    stone: power * STORAGE_RATIOS.stone,
-  };
-}
+/**
+ * 五个档位。
+ *
+ * ⚠️ **容量必须对齐"旧九档梯子在对应境界的容量"** ——
+ * 储存上限是突破丹造价、升品花费、合成产线的共同标定基准，
+ * 把它缩小会让一大片数值立刻不成立（第一版就是这么翻车的）。
+ * 所以五档的 powerMult 取 1 / 250 / 12.5万 / 5000万 / 250亿：
+ * 每类建满 6 座时，各档容量都略高于旧梯子在对应境界的水平。
+ *
+ * `qiMult` 是指数增长的：第 5 档的灵气需求约是第 1 档的 2000 倍 ——
+ * 需求 10 说「对灵气的需求也太少了，很容易建满」，所以这里刻意把它抬狠。
+ * `rare` 是这一档额外要的进阶 / 稀有材料（需求 10 的另一半）。
+ */
+const STORAGE_TIERS: {
+  name: string;
+  powerMult: number;
+  qiMult: number;
+  realm: number;
+  tech?: string;
+  rare: Record<string, number>;
+}[] = [
+  { name: '小仓', powerMult: 1, qiMult: 1, realm: 0, rare: {} },
+  {
+    name: '大仓',
+    powerMult: 250,
+    qiMult: 12,
+    realm: 1,
+    tech: 'storageArt',
+    // 需求 10：从这一档起就要灵矿（不再只是灵气）
+    rare: { ore: 900 },
+  },
+  {
+    name: '宝库',
+    powerMult: 125000,
+    qiMult: 140,
+    realm: 3,
+    tech: 'storageArt',
+    rare: { ore: 2.4e4, spiritSilk: 600, starSand: 60 },
+  },
+  {
+    name: '秘境仓',
+    powerMult: 5e7,
+    qiMult: 1600,
+    realm: 5,
+    tech: 'voidStorageArt',
+    rare: { ore: 4e5, spiritSilk: 8000, starSand: 3000, lunarCrystal: 300, moonDew: 800 },
+  },
+  {
+    name: '鸿蒙库',
+    powerMult: 2.5e10,
+    qiMult: 20000,
+    realm: 7,
+    tech: 'cosmosStorageArt',
+    rare: { ore: 8e6, spiritSilk: 2e5, starSand: 6e4, immortalJade: 200, primordialFruit: 2 },
+  },
+];
 
-export const STORAGE_BUILDINGS: StructureDef[] = STORAGE_TIERS.map((tier) => ({
-  id: tier.id,
-  kind: 'structure' as const,
-  group: 'storage' as const,
-  name: tier.name,
-  icon: tier.icon,
-  desc: tier.desc,
-  storage: storageOf(tier.power),
-  baseCost: { qi: tier.cost },
-  costGrowth: 1.25,
-  // 全部可见（靠 requiresRealm / requiresTech 逐级开放），所以不带材料解锁条件
-  unlock: {},
-  requiresRealm: tier.realm,
-  requiresTech: tier.tech,
-  // 每级最多 10 座：10 座当前等级的仓库足以覆盖该境界的全部消耗，
-  // 想再扩容就必须突破到下一个境界解锁更高级的储物建筑
-  max: 10,
-}));
+/** 二十五座专库（5 种资源 × 5 档），只抬各自那一项上限 */
+export const STORAGE_BUILDINGS: StructureDef[] = STORAGE_KINDS.flatMap((kind) =>
+  STORAGE_TIERS.map((tier, tierIndex) => {
+    const baseCost: Record<string, number> = {
+      // 灵气需求比旧版高一个数量级（旧版第 1 档只要 150）
+      qi: kind.cost * tier.qiMult,
+      ...tier.rare,
+    };
+    /*
+     * 需求 10：「灵矿和进阶或者稀有材料都可以用上」——
+     * 除灵气之外，**每一档都要灵矿**，且随档位与库房种类一起放大。
+     */
+    baseCost.ore = (baseCost.ore ?? 0) + Math.round(kind.cost * tier.qiMult * 0.22);
+    return {
+      id: `${kind.id}Vault${tierIndex + 1}`,
+      kind: 'structure' as const,
+      group: 'storage' as const,
+      name: `${kind.name}·${tier.name}`,
+      icon: kind.icon,
+      desc: `只提高【${RESOURCE_MAP[kind.resource]?.name ?? kind.resource}】的储存上限，容量随档位大幅提升。`,
+      // 只抬自己那一项 —— 这就是需求 10 说的"拆分"
+      storage: { [kind.resource]: kind.power * tier.powerMult } as Partial<Record<ResourceId, number>>,
+      baseCost,
+      // 需求 11：每多建一个的涨幅也抬一档（原来 1.25，太便宜了）
+      costGrowth: 1.38,
+      unlock: {},
+      requiresRealm: tier.realm,
+      requiresTech: tier.tech,
+      max: 6,
+    };
+  }),
+);
 
 STRUCTURES.push(...STORAGE_BUILDINGS);
 
@@ -1268,6 +1341,65 @@ export const SECT_FORMATIONS: StructureDef[] = [
 STRUCTURES.push(...SECT_FORMATIONS);
 
 export const BUILDABLES: BuildableDef[] = [...GENERATORS, ...STRUCTURES];
+
+/* ------------------------------------------------------------------ */
+/* 需求 11：增益类建筑要基础与进阶资源                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 需求原文：「建筑也可以增加设定，**增益类建筑需要消耗基础资源和进阶资源**」。
+ *
+ * 做法是**一处后处理**，而不是给 76 座建筑挨个补字段：
+ *   - 认哪些是"增益类"：带任何一条加成字段的建筑（产量 / 成功率 / 修行 / 士气…）；
+ *   - 给它们补上**灵矿**（基础）与一样**进阶材料**（按境界挑）；
+ *   - 数量按它的灵气造价折算，所以贵建筑的进阶材料也按比例更多。
+ *
+ * ⚠️ 只处理"还没有那项材料"的建筑：已经在造价里写了稀有材料的那几座
+ * （幸福建筑、宗门大阵、藏经阁…）不会被覆盖两次。
+ */
+const BUFF_FIELDS = [
+  'insightBonus',
+  'alchemySuccessBonus',
+  'refiningSuccessBonus',
+  'casualtyReduction',
+  'queueSlots',
+  'mindDrain',
+  'sectDefense',
+] as const;
+
+/** 按境界挑一样"进阶材料"，让高阶建筑的造价里出现高阶材料 */
+const ADVANCED_BY_REALM: { realm: number; item: string; ratio: number }[] = [
+  { realm: 0, item: 'herb', ratio: 0.06 },
+  { realm: 2, item: 'spiritSilk', ratio: 0.012 },
+  { realm: 3, item: 'demonCore', ratio: 0.01 },
+  { realm: 5, item: 'starSand', ratio: 0.0012 },
+  { realm: 7, item: 'lunarCrystal', ratio: 0.00012 },
+];
+
+function injectAdvancedCosts(): void {
+  for (const def of BUILDABLES) {
+    if (def.kind !== 'structure') continue;
+    const source = def as unknown as Record<string, unknown>;
+    const isBuff = BUFF_FIELDS.some((field) => typeof source[field] === 'number' && (source[field] as number) > 0);
+    if (!isBuff) continue;
+    const qi = def.baseCost.qi ?? 0;
+    if (qi <= 0) continue;
+    const cost = def.baseCost as Record<string, number>;
+    // 基础：灵矿（按灵气造价的 3%）
+    if (cost.ore === undefined) cost.ore = Math.max(1, Math.round(qi * 0.03));
+    // 进阶：按境界挑一样，造价按比例
+    const realm = def.requiresRealm ?? 0;
+    let pick = ADVANCED_BY_REALM[0];
+    for (const entry of ADVANCED_BY_REALM) {
+      if (realm >= entry.realm) pick = entry;
+    }
+    if (cost[pick.item] === undefined) {
+      cost[pick.item] = Math.max(1, Math.round(qi * pick.ratio));
+    }
+  }
+}
+
+injectAdvancedCosts();
 
 export const BUILDABLE_MAP: Record<string, BuildableDef> = BUILDABLES.reduce(
   (acc, b) => {

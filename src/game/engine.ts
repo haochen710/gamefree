@@ -9,6 +9,7 @@
  */
 import Decimal, { D } from './decimal';
 import { getHappinessCultivationMultiplier } from './happiness';
+import { getSectArrayCultivationBonus } from './sectArray';
 import {
   ALCHEMY_SLOT_REQUIREMENT,
   ALLIANCE_PRODUCTION_BONUS,
@@ -525,7 +526,7 @@ export function getCultivationSpeedMultiplier(state: GameState): number {
   // 天象（灵雨 / 极寒之潮）临时改变修行速度（需求 1）。
   // 它是独立的一项，所以不会永久抬高前面算出来的那个天花板。
   const weather = getWeatherEffects(state).cultivation ?? 0;
-  return (Math.max(0, 1 + buildings + spiritArray + arena + weather)) * getHappinessCultivationMultiplier(state);
+  return ((Math.max(0, 1 + buildings + spiritArray + arena + weather)) * getHappinessCultivationMultiplier(state)) * (1 + getSectArrayCultivationBonus(state));
 }
 
 /**
@@ -955,6 +956,25 @@ export function getGeneratorOutput(state: GameState, def: GeneratorDef): Decimal
  * 买 count 个的总价。
  * 价格是等比数列，用求和公式一次算完，不用循环。
  */
+/**
+ * 需求 11 的成长加成。
+ *
+ * 原文：「每多建一个消耗的资源也**多增加一些**」。
+ * 做法不是去改 76 座建筑各自的 costGrowth（那会散成 76 个数字、
+ * 以后没人敢动），而是**在这里统一把涨幅抬陡**：
+ *   growth = 1 + (costGrowth − 1) × 1.45
+ * 于是"每多一座的涨幅"整体 +45%，而每座建筑之间的相对关系不变。
+ *
+ * 另外给一个下限 1.3：原本 1.25 那种"越建越便宜"的老建筑也一并收紧。
+ */
+export const BUILD_COST_GROWTH_BOOST = 1.45;
+export const BUILD_COST_GROWTH_FLOOR = 1.3;
+
+function steepenedGrowth(costGrowth: number): number {
+  if (costGrowth <= 1) return 1;
+  return Math.max(BUILD_COST_GROWTH_FLOOR, 1 + (costGrowth - 1) * BUILD_COST_GROWTH_BOOST);
+}
+
 export function getCost(def: BuildableDef, owned: number, count: number): CostMap {
   const out: CostMap = {};
   for (const [id, base] of Object.entries(def.baseCost) as [ItemId, number][]) {
@@ -964,7 +984,7 @@ export function getCost(def: BuildableDef, owned: number, count: number): CostMa
     out[id] =
       def.costGrowth === 1
         ? D(base * count)
-        : Decimal.sumGeometricSeries(count, base, def.costGrowth, owned);
+        : Decimal.sumGeometricSeries(count, base, steepenedGrowth(def.costGrowth), owned);
   }
   return out;
 }

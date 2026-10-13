@@ -47,6 +47,7 @@ import * as posting from './posting';
 import * as talismans from './talismans';
 import * as spatial from './spatial';
 import * as caravan from './caravan';
+import * as sectArray from './sectArray';
 import * as travel from './travel';
 import * as encounter from './encounter';
 import * as enlightenment from './enlightenment';
@@ -199,6 +200,12 @@ export interface GameStore {
   barterCaravan(): void;
   /** 把商队打发走 */
   dismissCaravan(): void;
+
+  /* 宗门大阵（需求 9） */
+  /** 启动大阵（开始烧符） */
+  activateSectArray(): void;
+  /** 停下大阵 */
+  deactivateSectArray(): void;
 
   /* 仆人 */
   recruitServant(job: string): void;
@@ -923,6 +930,21 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       if (!s.game.caravan) return { notice: '现在没有商队' };
       return { ...nextGame(s.game, caravan.dismissCaravan(s.game)), notice: '商队已经离开' };
+    });
+  },
+
+  activateSectArray: () => {
+    set((s) => {
+      const check = sectArray.canActivateArray(s.game);
+      if (!check.ok) return { notice: check.reason ?? '无法启动' };
+      return { ...nextGame(s.game, sectArray.activateArray(s.game)), notice: '宗门大阵已启动，以符箓为薪' };
+    });
+  },
+
+  deactivateSectArray: () => {
+    set((s) => {
+      if (!s.game.sectArrayOn) return { notice: '大阵本来就没开' };
+      return { ...nextGame(s.game, sectArray.deactivateArray(s.game)), notice: '宗门大阵已停' };
     });
   },
 

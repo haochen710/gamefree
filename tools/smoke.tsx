@@ -47,6 +47,7 @@ import TalismanPanel from '../src/components/TalismanPanel';
 import * as manuals from '../src/game/manuals';
 import * as happiness from '../src/game/happiness';
 import * as spatial from '../src/game/spatial';
+import * as sectArray from '../src/game/sectArray';
 import * as posting from '../src/game/posting';
 import * as talismans from '../src/game/talismans';
 import * as fame from '../src/game/fame';
@@ -111,6 +112,8 @@ import {
   FURNACES,
   PARTY_SIZE_MAX,
   SKILL_MAX_LEVEL,
+  STORAGE_KINDS,
+  TALISMAN_FUEL_VALUE,
   // 第 18 轮：幸福度与空间禁制
   HAPPINESS_BUILDINGS,
   HAPPINESS_NEUTRAL,
@@ -345,6 +348,18 @@ function grant(state: GameState, updates: Partial<Record<string, string>>): Game
 }
 
 /** 直接买一座建筑（绕过资源检查，用于搭场景） */
+/**
+ * 需求 10 之后，"撑起五项上限"要**五种专库一起建** ——
+ * 单座库房只抬自己那一项。这个 helper 给需要大上限的测试用。
+ */
+function withBigStorage(state: GameState, count = 6): GameState {
+  let next = state;
+  for (const id of ['qiVault5', 'woodVault5', 'oreVault5', 'herbVault5', 'stoneVault5']) {
+    next = forceBuild(next, id, count);
+  }
+  return next;
+}
+
 function forceBuild(state: GameState, id: string, count: number): GameState {
   return { ...state, buildings: { ...state.buildings, [id]: count } };
 }
@@ -794,8 +809,8 @@ section('[3] 建筑与价格');
 /* ------------------------------------------------------------------ */
 section('[4] 储存上限与储物建筑');
 {
-  const pouch = BUILDABLE_MAP.storagePouch;
-  const cave = BUILDABLE_MAP.sumeruCave;
+  const pouch = BUILDABLE_MAP.qiVault1;
+  const cave = BUILDABLE_MAP.qiVault4;
 
   /* ---- 基础上限 ---- */
   const base = createInitialState(0);
@@ -810,21 +825,64 @@ section('[4] 储存上限与储物建筑');
   check('产量被储存上限截断', capped.resources.qi.eq(qiCap), `${fmt(capped.resources.qi)}/${fmt(qiCap)}`);
   check('溢出部分不计入累计灵气', capped.totalQi.lt(600), `累计仅 ${fmt(capped.totalQi)}（应远小于 600）`);
 
-  /* ---- 储物建筑提高上限 ---- */
-  const twoPouches = forceBuild(createInitialState(0), 'storagePouch', 2);
+  /* ---- 储物建筑提高上限（需求 10：拆成五种专库，各自只抬一项） ---- */
+  const twoVaults = forceBuild(createInitialState(0), 'qiVault1', 2);
   check(
-    '储物袋提高灵气上限',
-    engine.getStorageCap(twoPouches, 'qi').eq(BASE_STORAGE.qi + 2 * 2000),
-    fmt(engine.getStorageCap(twoPouches, 'qi')),
+    '灵池提高灵气上限',
+    engine.getStorageCap(twoVaults, 'qi').gt(BASE_STORAGE.qi),
+    fmt(engine.getStorageCap(twoVaults, 'qi')),
   );
-  check('储物袋同时提高灵木上限', engine.getStorageCap(twoPouches, 'wood').gt(BASE_STORAGE.wood));
+  /*
+   * 需求 10 的核心正是这一条：**专库只抬自己那一项**。
+   * 原来九档通用库房会把五项一起抬上去，那正是玩家抱怨的"不合理"。
+   */
+  check('灵池不抬灵木上限', engine.getStorageCap(twoVaults, 'wood').eq(BASE_STORAGE.wood));
+  check('灵池不抬灵矿上限', engine.getStorageCap(twoVaults, 'ore').eq(BASE_STORAGE.ore));
+  const woodVault = forceBuild(createInitialState(0), 'woodVault1', 1);
+  check('木料棚抬的是灵木', engine.getStorageCap(woodVault, 'wood').gt(BASE_STORAGE.wood));
+  check('木料棚不抬灵气', engine.getStorageCap(woodVault, 'qi').eq(BASE_STORAGE.qi));
 
-  const oneCave = forceBuild(createInitialState(0), 'sumeruCave', 1);
+  const bigQiVault = forceBuild(createInitialState(0), 'qiVault3', 1);
   check(
-    '越往后的储物建筑单座容量越大',
-    engine.getStorageCap(oneCave, 'qi').gt(engine.getStorageCap(twoPouches, 'qi')),
-    `${fmt(engine.getStorageCap(oneCave, 'qi'))} > ${fmt(engine.getStorageCap(twoPouches, 'qi'))}`,
+    '越往后的档位单座容量越大',
+    engine.getStorageCap(bigQiVault, 'qi').gt(engine.getStorageCap(twoVaults, 'qi')),
+    `${fmt(engine.getStorageCap(bigQiVault, 'qi'))} > ${fmt(engine.getStorageCap(twoVaults, 'qi'))}`,
   );
+  /* ---- 需求 10：库房造价里除了灵气还要灵矿与稀有材料 ---- */
+  {
+    const map = BUILDABLE_MAP;
+    const first = map.qiVault1;
+    const top = map.qiVault5;
+    check('第一档库房造价里就有灵矿（不再只花灵气）', (first.baseCost.ore ?? 0) > 0, String(first.baseCost.ore ?? 0));
+    check('第一档的灵气需求比旧版高一个数量级', (first.baseCost.qi ?? 0) >= 3000, String(first.baseCost.qi));
+    check(
+      '高阶档位的造价里有进阶 / 稀有材料',
+      ['starSand', 'lunarCrystal', 'immortalJade', 'primordialFruit', 'moonDew'].some(
+        (k) => ((top.baseCost as Record<string, number>)[k] ?? 0) > 0,
+      ),
+    );
+    check('五类专库都有五个档位', STORAGE_KINDS.length === 5 && STORAGE_KINDS.every((k) => map[`${k.id}Vault5`] !== undefined));
+  }
+
+  /* ---- 需求 11：建筑造价与成长都被抬高 ---- */
+  {
+    const arr = BUILDABLE_MAP.qiVault1;
+    const one = engine.getCost(arr, 0, 1).qi ?? D(0);
+    const second = engine.getCost(arr, 1, 1).qi ?? D(0);
+    check('多建一座就更贵（成长曲线生效）', second.gt(one), `${fmt(one)} → ${fmt(second)}`);
+    check('成长系数被抬陡（≥1.3）', engine.BUILD_COST_GROWTH_FLOOR >= 1.3, String(engine.BUILD_COST_GROWTH_FLOOR));
+
+    // 增益类建筑：自动补上灵矿与进阶材料
+    const buffBuildings = BUILDABLES.filter(
+      (b) => b.kind === 'structure' && typeof (b as unknown as Record<string, unknown>).insightBonus === 'number',
+    );
+    check('存在增益类建筑可检', buffBuildings.length > 0, String(buffBuildings.length));
+    check(
+      '增益类建筑的造价里有灵矿',
+      buffBuildings.every((b) => (b.baseCost.ore ?? 0) > 0),
+      buffBuildings.filter((b) => (b.baseCost.ore ?? 0) <= 0).map((b) => b.name).join('、') || '全部合格',
+    );
+  }
 
   /* ---- 境界门槛：提前一级可见，但不能提前建造 ---- */
   check('低境界无法建造须弥洞府', engine.getBuildGate(cave, base) !== null, engine.getBuildGate(cave, base) ?? '');
@@ -838,11 +896,13 @@ section('[4] 储存上限与储物建筑');
   check('境界与技术都具备后可以建造', engine.getBuildGate(cave, reached) === null);
 
   /* ---- 数量上限（防止价格涨过上限导致永久卡死） ---- */
-  const bigCap = forceBuild(createInitialState(0), 'daoRepository', 10); // 先撑大上限，方便构造场景
-  const rich = grant(bigCap, { qi: '1e12' });
-  check('储物建筑有数量上限', engine.getMaxCount(pouch) === 10);
-  check('数量上限约束了 maxAffordable', engine.maxAffordable(pouch, 0, rich) === 10, `${engine.maxAffordable(pouch, 0, rich)}`);
-  check('已建满时 maxAffordable 为 0', engine.maxAffordable(pouch, 10, rich) === 0);
+  // 需求 10：上限要五种专库一起撑（单座库房只抬一项）
+  const bigCap = withBigStorage(createInitialState(0));
+  // 需求 10 之后库房造价里有灵矿，所以这个富裕宗门也要发矿
+  const rich = grant(bigCap, { qi: '1e12', ore: '1e12', wood: '1e12', stone: '1e12', herb: '1e12' });
+  check('储物建筑有数量上限', engine.getMaxCount(pouch) === 6, String(engine.getMaxCount(pouch)));
+  check('数量上限约束了 maxAffordable', engine.maxAffordable(pouch, 0, rich) === 6, `${engine.maxAffordable(pouch, 0, rich)}`);
+  check('已建满时 maxAffordable 为 0', engine.maxAffordable(pouch, 6, rich) === 0);
 
   /* ---- costGrowth === 1 的建筑（只可能建一座）----
      等比求和公式要除以 (r - 1)，r = 1 时会算出 NaN，
@@ -873,7 +933,7 @@ section('[4] 储存上限与储物建筑');
 
   let built = rich;
   for (let i = 0; i < 20; i += 1) built = engine.buyBuilding(built, pouch, 1);
-  check('连续建造不会突破数量上限', engine.getBuildingCount(built, 'storagePouch') === 10, `${engine.getBuildingCount(built, 'storagePouch')}`);
+  check('连续建造不会突破数量上限', engine.getBuildingCount(built, 'qiVault1') === 6, `${engine.getBuildingCount(built, 'qiVault1')}`);
 
   /* ---- clampResources 兜底 ---- */
   const overflowing = grant(createInitialState(0), { qi: '1e9', wood: '1e9' });
@@ -889,27 +949,37 @@ section('[4] 储存上限与储物建筑');
     `${fmt(usedPill.resources.qi)}/${fmt(engine.getStorageCap(pillState, 'qi'))}`,
   );
 
-  const packed = grant(forceBuild(createInitialState(0), 'spiritVault', 10), { qi: '1e5', ore: '1e5' });
+  // 需求 10：灵石的上限归**石料专库**管（灵池只管灵气），所以这里建石料库
+  const packed = grant(forceBuild(createInitialState(0), 'stoneVault2', 6), { qi: '1e5', ore: '1e5' });
   const refined = engine.refineStone(packed, 10);
   check('灵石合成结果同样受上限约束', refined.resources.stone.lte(engine.getStorageCap(packed, 'stone')));
 
   /* ---- 上限是从建筑派生的，因此存档往返后依然正确 ---- */
-  const saved = deserialize(JSON.parse(JSON.stringify(serialize(twoPouches))));
+  const saved = deserialize(JSON.parse(JSON.stringify(serialize(twoVaults))));
   check(
     '存档还原后储物上限一致',
-    saved !== null && engine.getStorageCap(saved, 'qi').eq(engine.getStorageCap(twoPouches, 'qi')),
+    saved !== null && engine.getStorageCap(saved, 'qi').eq(engine.getStorageCap(twoVaults, 'qi')),
   );
 
   /* ---- 内容完整性 ---- */
   const tiers = STRUCTURES.filter((d) => d.storage);
-  check('储物建筑覆盖了九个境界', new Set(tiers.map((d) => d.requiresRealm)).size === 9, `${tiers.length} 种`);
+  /*
+   * 需求 10 之后库房不再"每个境界一座"，而是**五种专库 × 五个档位**：
+   * 所以要守的是"覆盖了五种资源、每档只抬一项"。
+   */
+  check('库房共 25 座（五种专库 × 五档）', tiers.length === 25, `${tiers.length} 座`);
+  check('每座库房只抬一项资源', tiers.every((d) => Object.keys(d.storage ?? {}).length === 1));
+  check('五种资源各有专库', ['qi', 'wood', 'ore', 'herb', 'stone'].every((r) => tiers.some((d) => Object.keys(d.storage ?? {})[0] === r)));
+  /*
+   * 需求 10 之后没有"每境界一座"这回事了，改成守"同一类专库的档位越高容量越大"。
+   */
   check(
-    '储物建筑容量随境界递增',
-    tiers
-      .sort((a, b) => (a.requiresRealm ?? 0) - (b.requiresRealm ?? 0))
-      .every((d, i, arr) => i === 0 || (d.storage?.qi ?? 0) > (arr[i - 1].storage?.qi ?? 0)),
+    '同一类专库档位越高容量越大',
+    ((BUILDABLE_MAP.qiVault5 as { storage?: Record<string, number> }).storage?.qi ?? 0) >
+      ((BUILDABLE_MAP.qiVault1 as { storage?: Record<string, number> }).storage?.qi ?? 0),
+    `${(BUILDABLE_MAP.qiVault1 as { storage?: Record<string, number> }).storage?.qi} → ${(BUILDABLE_MAP.qiVault5 as { storage?: Record<string, number> }).storage?.qi}`,
   );
-  check('每个储物建筑都设了数量上限', tiers.every((d) => d.max === 10));
+  check('每个储物建筑都设了数量上限', tiers.every((d) => d.max === 6));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1049,7 +1119,8 @@ section('[6] 灵石合成（需求 6）');
   const poor = createInitialState(0);
   check('资源不足时无法合成', engine.maxStoneRefine(poor) === 0);
 
-  const rich = grant(createInitialState(0), { qi: '1e6', ore: '1e5' });
+  // 需求 10：合成产线要装得下，所以先把五种专库撑起来
+  const rich = grant(withBigStorage(createInitialState(0)), { qi: '1e6', ore: '1e5' });
   const max = engine.maxStoneRefine(rich);
   check('资源充足时可以多次合成', max > 0, `最多 ${max} 次`);
 
@@ -1137,7 +1208,7 @@ section('[8] 离线收益');
   // 注意：离线收益同样受储存上限约束，所以场景里要先给足仓库容量
   let state = createInitialState(0);
   state = forceBuild(state, 'spiritArray', 10); // 6 灵气/秒
-  state = forceBuild(state, 'spiritVault', 10); // 把灵气上限撑到 500 万
+  state = forceBuild(state, 'qiVault2', 10); // 把灵气上限撑到 500 万
 
   const oneHour = applyOffline(state, 3600 * 1000, makeRandom(1));
   const qiGain = oneHour.report?.gains.find((g) => g.id === 'qi')?.amount.toNumber() ?? 0;
@@ -1161,7 +1232,7 @@ section('[8] 离线收益');
   {
     let away = grant(createInitialState(0), { stone: '1e5', wood: '1e5', qi: '1e5' });
     away = { ...away, realmIndex: 2 };
-    away = forceBuild(away, 'spiritVault', 10);
+    away = forceBuild(away, 'qiVault2', 10);
     away = forceBuild(away, 'plantation', 1);
     away = forceBuild(away, 'tradeHouse', 1);
     away = withTech(away, 'plantingArt', 'tradeArt', 'alchemyArt');
@@ -1997,7 +2068,8 @@ section('[18] 灵石自动合成（需求 4）');
   check('有多个可选档位', AUTO_REFINE_LEVEL_MAX >= 2, `${AUTO_REFINE_LEVEL_MAX + 1} 档`);
 
   // 储物袋 ×10：灵气上限 20250 / 灵矿 8100 / 灵石 1250
-  const storage = forceBuild(createInitialState(0), 'storagePouch', 10);
+  // 需求 10：上限要五种专库一起撑（单座库房只抬一项）
+  const storage = withBigStorage(createInitialState(0));
   const stocked = grant(storage, { qi: '20000', ore: '8000' });
   const qiCap = engine.getStorageCap(stocked, 'qi');
   const oreCap = engine.getStorageCap(stocked, 'ore');
@@ -2034,7 +2106,7 @@ section('[18] 灵石自动合成（需求 4）');
 
   /* ---- 灵气耗尽时不会凭空造灵石 ---- */
   const noQi: GameState = {
-    ...grant(forceBuild(createInitialState(0), 'storagePouch', 10), { ore: '8000' }),
+    ...grant(forceBuild(createInitialState(0), 'qiVault1', 10), { ore: '8000' }),
     autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
     autoRefineTargets: { stoneRefine: 100000 },
   };
@@ -2190,7 +2262,7 @@ section('[20] 钻研与图纸（需求 6）');
   // 例外只有两样：茅屋（开局唯一的居所）与储物袋
   // —— 它们是"能攒下灵气去突破"的前提，卡住它们会直接把游戏锁死
   // 静室是本轮需求 6 明确要的「初期就能建」，所以它刻意不带任何门槛
-  const UNGATED_OK = new Set(['thatchHut', 'storagePouch', 'quietRoom']);
+  const UNGATED_OK = new Set(['thatchHut', 'qiVault1', 'quietRoom']);
   const needTech = STRUCTURES.filter(
     (s) =>
       s.group !== 'resource' &&
@@ -2220,7 +2292,7 @@ section('[20] 钻研与图纸（需求 6）');
   check(
     '开局必需的居所与储物袋不加技术门槛（否则会锁死）',
     BUILDABLE_MAP.thatchHut.requiresTech === undefined &&
-      BUILDABLE_MAP.storagePouch.requiresTech === undefined,
+      BUILDABLE_MAP.qiVault1.requiresTech === undefined,
   );
 
   /* ---- 技术表自身要自洽 ---- */
@@ -2444,7 +2516,7 @@ section('[22] 界面：非空状态渲染');
     herb: '1e7',
   });
   rich = forceBuild(rich, 'thatchHut', 4);
-  rich = forceBuild(rich, 'storagePouch', 5);
+  rich = withBigStorage(rich, 4);
   rich = forceBuild(rich, 'spiritArray', 30);
   rich = forceBuild(rich, 'woodGrove', 20);
   rich = forceBuild(rich, 'oreVein', 20);
@@ -2575,8 +2647,11 @@ section('[23] store 动作闭环');
       ore: '1e7',
       herb: '1e7',
     });
-    // 商行价格随境界倍率放大，所以仓库也得跟上，否则灵石会被上限夹住
-    next = forceBuild(next, 'spiritVault', 10);
+    /*
+     * 商行价格随境界倍率放大，所以仓库也得跟上，否则灵石会被上限夹住。
+     * 需求 10 之后单座库房只抬一项，所以这里五种专库一起建。
+     */
+    next = withBigStorage(next);
     next = forceBuild(next, 'thatchHut', 5);
     next = forceBuild(next, 'plantation', 1);
     next = forceBuild(next, 'tradeHouse', 1);
@@ -3731,7 +3806,19 @@ section('[30] 建造队列：3 个起步，天工院特殊升级到 7 个（需�
     check('建好之后该项出队', rich.buildQueue.length === 0);
 
     // 门槛没到的一律不盖（拿天工院试：筑基期还建不了）
-    let gated = grant(createInitialState(0), { qi: '1e13', wood: '1e11', stone: '1e11', blackIron: '1e7' });
+    /*
+     * 需求 10 / 11：灵气上限归灵池管，而且增益类建筑（天工院带队列名额）
+     * 现在还要灵矿与进阶材料 —— 所以这个场景要"专库撑上限 + 材料给足"。
+     */
+    let gated = grant(withBigStorage(createInitialState(0)), {
+      qi: '1e13',
+      wood: '1e11',
+      stone: '1e11',
+      blackIron: '1e7',
+      ore: '1e11',
+      spiritSilk: '1e7',
+      herb: '1e11',
+    });
     gated = engine.enqueueBuild(gated, 'tiangongYuan');
     const stillGated = engine.tickBuildQueue(gated);
     check('门槛没到时不会硬盖', stillGated.buildQueue.length === 1 && (stillGated.buildings.tiangongYuan ?? 0) === 0);
@@ -7307,13 +7394,18 @@ section('[49] 回归：随机事件的节奏 · 道伤只来自玩家自己的�
     );
   }
 
-  /* ---- 节奏：平均间隔落在"几分钟一次"这个量级 ---- */
+  /* ---- 节奏：平均间隔落在"十几分钟一次"这个量级 ---- */
   {
+    /*
+     * 需求 8：「所有事件的刷新率都设定为很低」——
+     * 随机遭遇现在是 150 秒判定一次、命中 20%，期望约 12.5 分钟。
+     * 上一轮是 7.1 分钟，这一轮刻意再放慢。
+     */
     check(
-      '判定间隔与命中率算出来的平均间隔在 5~10 分钟之间',
+      '判定间隔与命中率算出来的平均间隔在 10~16 分钟之间',
       (() => {
         const avg = ENCOUNTER_INTERVAL / ENCOUNTER_CHANCE;
-        return avg >= 300 && avg <= 600;
+        return avg >= 600 && avg <= 960;
       })(),
       `平均 ${Math.round(ENCOUNTER_INTERVAL / ENCOUNTER_CHANCE)} 秒一次`,
     );
@@ -7395,23 +7487,34 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
 
   /* ---- 符箓 ---- */
   {
-    check('符箓三类各三品共九张', TALISMANS.length === 9 && new Set(TALISMANS.map((t) => t.kind)).size === 3);
+    /*
+     * 需求 9 删掉了护身符三类（"对秘境减伤的增益太大"），所以现在是
+     * 两类各三品共六张 —— 减伤那一份效果改由**宗门大阵**承担（要持续烧符）。
+     */
+    check('符箓两类各三品共六张', TALISMANS.length === 6 && new Set(TALISMANS.map((t) => t.kind)).size === 2, String(TALISMANS.length));
+    // kind 联合里已经没有 'ward' 了，所以断言要绕一下类型（这正是它被删掉的证据）
+    check('护身符这一类已经删掉', !TALISMANS.some((t) => (t.kind as string) === 'ward'));
+    check('聚灵符与破境符都还在', TALISMANS.some((t) => t.kind === 'spirit') && TALISMANS.some((t) => t.kind === 'break'));
     const s = { ...base(), talismanTier: 3 };
     check('品阶不够就画不了一品以上的符', !talismans.canCraftTalisman({ ...s, talismanTier: 1 }, 'breakGold').ok);
     check('品阶够就能画', talismans.canCraftTalisman(s, 'breakGold').ok, talismans.canCraftTalisman(s, 'breakGold').reason ?? '');
 
     const rate = crafting.getCraftSuccessRate(s, 'talisman', 1);
     check('制符走与炼丹同一条成功率公式', rate > 0 && rate <= 1, String(rate));
-    const made = talismans.craftTalisman(s, 'wardBasic', 5, 1, () => 0);
-    check('画符成功会进仓库', made.made === 5 && talismans.getTalismanCount(made.state, 'wardBasic') === 5, String(made.made));
-    const failed = talismans.craftTalisman(s, 'wardBasic', 3, 0.5, () => 0.99);
+    const made = talismans.craftTalisman(s, 'spiritBasic', 5, 1, () => 0);
+    check('画符成功会进仓库', made.made === 5 && talismans.getTalismanCount(made.state, 'spiritBasic') === 5, String(made.made));
+    const failed = talismans.craftTalisman(s, 'spiritBasic', 3, 0.5, () => 0.99);
     check('画符会失败且失败照样耗材料', failed.made === 0 && failed.state.resources.herb.lt(s.resources.herb));
 
-    // 三种符的效果各自落到 buff / 突破加成上
-    const withWard = talismans.craftTalisman(s, 'wardBasic', 1, 1, () => 0).state;
-    const usedWard = talismans.useTalisman(withWard, 'wardBasic');
-    check('护身符给的是「下一次探索免伤」', usedWard.ok && usedWard.state.buffs.safetyOnce === true && usedWard.state.buffs.safetyReduction > 0);
-    check('用掉后库存减一', talismans.getTalismanCount(usedWard.state, 'wardBasic') === 0);
+    /*
+     * 需求 9 之后只剩两种"用掉即毁"的语义：
+     *   聚灵符 → buffs.productionMultiplier + 倒计时
+     *   破境符 → globalBreakthroughBonus（可累积）
+     * 减伤那一份归宗门大阵（下面的需求 9 断言里测）。
+     */
+    const withSpirit0 = talismans.craftTalisman(s, 'spiritBasic', 1, 1, () => 0).state;
+    const usedOnce = talismans.useTalisman(withSpirit0, 'spiritBasic');
+    check('用掉后库存减一', talismans.getTalismanCount(usedOnce.state, 'spiritBasic') === 0);
 
     const withSpirit = talismans.craftTalisman(s, 'spiritBasic', 1, 1, () => 0).state;
     const usedSpirit = talismans.useTalisman(withSpirit, 'spiritBasic');
@@ -7422,7 +7525,45 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
     const usedBreak = talismans.useTalisman(withBreak, 'breakBasic');
     const afterRate = engine.getSuccessRate(engine.refreshUnlocks({ ...usedBreak.state, realmIndex: 3 }));
     check('破境符提高突破成功率', afterRate > beforeRate, `${beforeRate.toFixed(3)} → ${afterRate.toFixed(3)}`);
-    check('没存货就用不了', !talismans.useTalisman(s, 'wardBasic').ok);
+    check('没存货就用不了', !talismans.useTalisman(s, 'spiritBasic').ok);
+  }
+
+  /* ---- 需求 9：宗门大阵（减伤从护身符搬过来了） ---- */
+  {
+    const noArray = base();
+    check('没建大阵时启动不了', !sectArray.canActivateArray(noArray).ok, sectArray.canActivateArray(noArray).reason ?? '');
+
+    let withArray = forceBuild(noArray, 'sectArray', 1);
+    withArray = { ...withArray, talismans: { spiritBasic: 4, breakBasic: 2 } };
+    const fuel = sectArray.getArrayFuel(withArray);
+    check('符箓能折算成阵法燃料', fuel > 0, `${fuel} 点`);
+    check('一品符值 1 点', TALISMAN_FUEL_VALUE[1] === 1);
+
+    const on = sectArray.activateArray(withArray);
+    check('启动后大阵在运转', on.sectArrayOn === true);
+    check('运转时给修炼加成', sectArray.getSectArrayCultivationBonus(on) > 0);
+    check('运转时给宗门防御', sectArray.getSectArrayDefense(on) > 0);
+    check(
+      '运转时会抬高幸福度目标',
+      happiness.getHappinessTarget({ ...on, sect: { ...on.sect, disciples: [makeDisciple({ id: 'a1' })] } }) >
+        happiness.getHappinessTarget({ ...withArray, sect: { ...withArray.sect, disciples: [makeDisciple({ id: 'a1' })] } }),
+    );
+
+    // 烧符：烧够时间会把符烧掉，烧完自己灭
+    const burned = sectArray.tickSectArray(on, 60);
+    check('运转会烧掉符箓', sectArray.getArrayFuel(burned) < fuel, `${fuel} → ${sectArray.getArrayFuel(burned)}`);
+    const longRun = sectArray.tickSectArray(on, 100000);
+    check('符烧完了大阵会自己灭', longRun.sectArrayOn === false && sectArray.getArrayFuel(longRun) === 0);
+    check('熄灭之后不再给加成', sectArray.getSectArrayCultivationBonus(longRun) === 0);
+
+    const off = sectArray.deactivateArray(on);
+    check('可以手动停下', off.sectArrayOn === false);
+
+    // 修行速度真的被抬高
+    check(
+      '大阵开着时弟子修行更快',
+      engine.getCultivationSpeedMultiplier(on) > engine.getCultivationSpeedMultiplier(withArray),
+    );
   }
 
   /* ---- 秘境大改（需求 9） ---- */
@@ -7489,7 +7630,8 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
 
     const talismanHtml = renderToString(<TalismanPanel />);
     check('符箓面板渲染出来了', talismanHtml.includes('符箓'));
-    check('列出三类符', ['护身符', '聚灵符', '破境符'].every((n) => talismanHtml.includes(n)));
+    check('列出剩下的两类符', ['聚灵符', '破境符'].every((n) => talismanHtml.includes(n)));
+    check('符箓页有大阵入口（需求 9）', talismanHtml.includes('宗门大阵'));
     check('有画符按钮', talismanHtml.includes('画一张'));
     Object.assign(initial, { game: backup.game });
   }
@@ -7658,37 +7800,37 @@ section('[51] 界面重排 · 幸福度 · 空间禁制（第 18 轮 需求 1~6 
 
   /* ---- 需求 6：空间禁制 ---- */
   {
-    const withVault = forceBuild(base(), 'storagePouch', 2);
+    const withVault = forceBuild(base(), 'qiVault1', 2);
     const noDao = { ...withVault, enlightenment: {} };
-    const check0 = spatial.canApplyWard(noDao, 'storagePouch');
+    const check0 = spatial.canApplyWard(noDao, 'qiVault1');
     check('没感悟空间大道时不能施加禁制', !check0.ok, check0.reason ?? '');
     check('拒绝的理由说得清', (check0.reason ?? '').includes('空间大道'));
 
     const withDao = { ...withVault, enlightenment: { spatial: 20 } };
-    const okCheck = spatial.canApplyWard(withDao, 'storagePouch');
+    const okCheck = spatial.canApplyWard(withDao, 'qiVault1');
     check('感悟空间大道之后可以施加', okCheck.ok, okCheck.reason ?? '');
 
-    const once = spatial.applyWard(withDao, 'storagePouch');
-    check('施加后层数 +1', (once.spatialWards.storagePouch ?? 0) === 1);
+    const once = spatial.applyWard(withDao, 'qiVault1');
+    check('施加后层数 +1', (once.spatialWards.qiVault1 ?? 0) === 1);
     check('容量确实变大了', engine.getStorageCaps(once).qi.gt(engine.getStorageCaps(withDao).qi), `${engine.getStorageCaps(withDao).qi.toString()} → ${engine.getStorageCaps(once).qi.toString()}`);
-    check('加成是每层 25%', Math.abs(engine.getSpatialWardBonus(once, 'storagePouch') - SPATIAL_WARD_CAPACITY_BONUS) < 1e-9);
+    check('加成是每层 25%', Math.abs(engine.getSpatialWardBonus(once, 'qiVault1') - SPATIAL_WARD_CAPACITY_BONUS) < 1e-9);
 
-    const twice = spatial.applyWard(once, 'storagePouch');
-    check('可以叠加', (twice.spatialWards.storagePouch ?? 0) === 2);
+    const twice = spatial.applyWard(once, 'qiVault1');
+    check('可以叠加', (twice.spatialWards.qiVault1 ?? 0) === 2);
     check(
       '第二次比第一次贵（逐次变贵）',
-      (spatial.getWardCost(twice, 'storagePouch').qi ?? 0) > (spatial.getWardCost(once, 'storagePouch').qi ?? 0),
+      (spatial.getWardCost(twice, 'qiVault1').qi ?? 0) > (spatial.getWardCost(once, 'qiVault1').qi ?? 0),
     );
     check('不能对非库房施加', !spatial.canApplyWard(withDao, 'thatchHut').ok);
 
     // 上限
-    const maxed = { ...withDao, spatialWards: { storagePouch: SPATIAL_WARD_MAX_STACKS } };
-    check('叠到上限后拒绝', !spatial.canApplyWard(maxed, 'storagePouch').ok);
+    const maxed = { ...withDao, spatialWards: { qiVault1: SPATIAL_WARD_MAX_STACKS } };
+    check('叠到上限后拒绝', !spatial.canApplyWard(maxed, 'qiVault1').ok);
 
     // 存档往返（用仓库里的 serialize / deserialize）
     const round = serialize(twice);
     const back = deserialize(round);
-    check('空间禁制能存能读', back !== null && (back.spatialWards.storagePouch ?? 0) === 2);
+    check('空间禁制能存能读', back !== null && (back.spatialWards.qiVault1 ?? 0) === 2);
     check('幸福度能存能读', back !== null && Math.abs(back.happiness - twice.happiness) < 0.001);
   }
 
@@ -7696,7 +7838,7 @@ section('[51] 界面重排 · 幸福度 · 空间禁制（第 18 轮 需求 1~6 
   {
     const initial = useGame.getInitialState();
     const backup = { ...initial };
-    let rich = forceBuild(base(), 'storagePouch', 1);
+    let rich = forceBuild(base(), 'qiVault1', 1);
     rich = forceBuild(rich, 'spiritSpring', 1);
     rich = { ...rich, enlightenment: { spatial: 20 } };
     Object.assign(initial, { game: engine.refreshUnlocks(rich) });

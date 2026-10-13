@@ -18,6 +18,77 @@ import {
 import { useGame } from '../game/store';
 import CostList from './CostList';
 import { toCostMap } from '../game/engine';
+import {
+  SECT_ARRAY_CULTIVATION,
+  SECT_ARRAY_DEFENSE,
+  SECT_ARRAY_HAPPINESS,
+  TALISMAN_FUEL_VALUE,
+} from '../game/content';
+import { canActivateArray, getArrayFuel, getArraySecondsLeft, hasSectArray } from '../game/sectArray';
+
+/**
+ * 宗门大阵（需求 9）
+ *
+ * 需求把"秘境减伤"从护身符搬到了这里：同样是护住全宗，
+ * 但代价从"一张纸"变成"**一直烧符**"—— 烧得起就转着，烧不起就自己灭。
+ */
+function SectArraySection() {
+  const game = useGame((s) => s.game);
+  const activate = useGame((s) => s.activateSectArray);
+  const deactivate = useGame((s) => s.deactivateSectArray);
+
+  if (!hasSectArray(game)) {
+    return (
+      <>
+        <h3 className="panel__subtitle">宗门大阵</h3>
+        <p className="panel__note">
+          还没有护山大阵。先去「建筑」页建一座<strong>宗门大阵</strong>（唯一建筑，
+          需要符房与不少稀有材料）。建成后可以烧符维持，换来宗门防御、
+          全宗弟子修炼 +{Math.round(SECT_ARRAY_CULTIVATION * 100)}% 与幸福度 +{SECT_ARRAY_HAPPINESS}。
+        </p>
+      </>
+    );
+  }
+
+  const fuel = getArrayFuel(game);
+  const check = canActivateArray(game);
+  const seconds = getArraySecondsLeft(game);
+
+  return (
+    <>
+      <h3 className="panel__subtitle">宗门大阵</h3>
+      <p className="panel__note">
+        大阵以<strong>符箓为薪</strong>：一品符值 {TALISMAN_FUEL_VALUE[1]} 点、
+        二品 {TALISMAN_FUEL_VALUE[2]} 点、三品 {TALISMAN_FUEL_VALUE[3]} 点。
+        开启期间每秒烧掉一点多，烧完自动熄灭 —— 所以它不需要你记得关，
+        只需要你记得补。效果：宗门防御 +{Math.round(SECT_ARRAY_DEFENSE * 100)}% ·
+        全宗弟子修炼 +{Math.round(SECT_ARRAY_CULTIVATION * 100)}% · 幸福度 +{SECT_ARRAY_HAPPINESS}。
+      </p>
+      <div className="notice-board">
+        <div className="notice-board__head">
+          <span>{game.sectArrayOn ? '🔯 大阵运转中' : '🔯 大阵未启动'}</span>
+          <span className="notice-board__sum">
+            阵法燃料 {Math.round(fuel)} 点
+            {game.sectArrayOn && seconds > 0 ? ` · 还能烧 ${Math.floor(seconds / 60)} 分钟` : ''}
+          </span>
+        </div>
+        <div className="btn-row">
+          <button type="button" className="btn btn--primary" disabled={!check.ok} title={check.reason ?? ''} onClick={activate}>
+            启动大阵
+          </button>
+          <button type="button" className="btn btn--tiny" disabled={!game.sectArrayOn} onClick={deactivate}>
+            停下
+          </button>
+        </div>
+        {!game.sectArrayOn && !check.ok && <p className="panel__note">{check.reason}</p>}
+        <p className="panel__note">
+          大阵从<strong>最低品阶</strong>的符开始烧 —— 破境符这类好东西会留到最后，
+          所以"要不要囤几张"这个问题有明确答案。
+        </p>
+      </div>
+    </>
+  );
+}
 
 function TalismanUpgrade() {
   const game = useGame((s) => s.game);
@@ -113,6 +184,9 @@ export function TalismanPanel() {
       </p>
 
       <TalismanUpgrade />
+
+      {/* 需求 9：宗门大阵（减伤从护身符搬到了这里） */}
+      <SectArraySection />
 
       {stock.length > 0 && (
         <div className="inv-list">

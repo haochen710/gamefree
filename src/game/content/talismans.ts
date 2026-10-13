@@ -8,17 +8,19 @@
  * 所以每一张用掉就没了，而"用哪种、什么时候用"是它真正的玩法。
  *
  * 三种效果各自咬住一条已有的线，不新开系统：
- *   1. **护身符** → `buffs.safetyReduction + safetyOnce`：
- *      下一次探索结算时全额减免伤亡（"免死一次"）；
- *   2. **聚灵符** → `buffs.productionMultiplier + productionSeconds`：限时产量加成；
- *   3. **破境符** → `globalBreakthroughBonus`：提高掌门突破成功率（可叠加，但很贵）。
+ *   1. **聚灵符** → `buffs.productionMultiplier + productionSeconds`：限时产量加成；
+ *   2. **破境符** → `globalBreakthroughBonus`：提高掌门突破成功率（可叠加，但很贵）。
+ *
+ * ⚠️ **护身符（三类减伤符）在第 18 轮被删掉了** ——
+ * 需求原文：「符箓对秘境减伤的增益太大了，删除这类符箓」。
+ * 减伤那一份效果现在归**宗门大阵**（见文件末尾）：大阵要**持续烧符**维持，
+ * 于是"减伤"从一张纸变成了一件要长期投入的事。
  */
 import type { ItemId } from './resources';
 
-export type TalismanKind = 'ward' | 'spirit' | 'break';
+export type TalismanKind = 'spirit' | 'break';
 
 export const TALISMAN_KIND_NAMES: Record<TalismanKind, string> = {
-  ward: '护身符',
   spirit: '聚灵符',
   break: '破境符',
 };
@@ -34,8 +36,6 @@ export interface TalismanDef {
   /** 制符花费 */
   cost: Partial<Record<ItemId, number>>;
   /* ---- 效果（按 kind 取其中一项） ---- */
-  /** 护身符：减伤比例 0~1（配 safetyOnce，一趟用掉） */
-  safety?: number;
   /** 聚灵符：产量倍率与持续秒数 */
   productionMult?: number;
   productionSeconds?: number;
@@ -44,38 +44,6 @@ export interface TalismanDef {
 }
 
 export const TALISMANS: TalismanDef[] = [
-  /* ---------------- 护身符：一趟免伤 ---------------- */
-  {
-    id: 'wardBasic',
-    name: '护身黄符',
-    icon: '🟡',
-    kind: 'ward',
-    grade: 1,
-    desc: '贴在胸口的一张黄符。下一次探索结算时全队伤亡 −12%（用掉即毁）。',
-    cost: { herb: 400, spiritSilk: 40, demonCore: 30, qi: 1.2e4 },
-    safety: 0.12,
-  },
-  {
-    id: 'wardSilver',
-    name: '银纹护符',
-    icon: '⚪',
-    kind: 'ward',
-    grade: 2,
-    desc: '银纹走笔，能挡一次大劫。下一次探索全队伤亡 −20%。',
-    cost: { herb: 3000, spiritSilk: 300, demonCore: 200, starSand: 40, qi: 2e5 },
-    safety: 0.2,
-  },
-  {
-    id: 'wardGold',
-    name: '金篆保命符',
-    icon: '🟠',
-    kind: 'ward',
-    grade: 3,
-    desc: '金篆天成，抵得上一条命。下一次探索全队伤亡 −30%。',
-    cost: { herb: 2e4, spiritSilk: 2000, demonCore: 1200, starSand: 300, lunarCrystal: 60, qi: 4e6 },
-    safety: 0.3,
-  },
-
   /* ---------------- 聚灵符：限时产量 ---------------- */
   {
     id: 'spiritBasic',
@@ -172,3 +140,42 @@ export const TALISMAN_TIER_COST: Record<number, Partial<Record<ItemId, number>>>
 
 /** 制符品阶所需的符房座数（沿用"建筑数量决定品阶"的老规矩） */
 export const TALISMAN_SLOT_REQUIREMENT = [0, 0, 1, 2, 3, 4, 5, 6, 7, 8];
+
+/* ------------------------------------------------------------------ */
+/* 宗门大阵（需求 9）                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 需求原文：
+ *   「符箓还可以增加设定，**宗门大阵需要消耗符箓**等等」。
+ *
+ * 口径：大阵是**一座建筑**（sectArray），建成后可以开启/关闭；
+ * 开启期间**每秒烧掉一定量的符箓**，烧不起就自动停。
+ * 它给的是三样东西：
+ *   - 宗门防御（抵御宗门被袭类事件）；
+ *   - **全宗弟子修炼加成**；
+ *   - 幸福度（士气）。
+ *
+ * 为什么把减伤从护身符搬到大阵：
+ *   一张符就能免掉一趟伤亡，是"一次性、零维护"的收益 —— 太便宜了
+ *   （需求 9 的原话就是"增益太大"）。改成持续烧符之后，
+ *   同样的效果需要**长期供养**，这才配得上它的强度。
+ */
+export const SECT_ARRAY_BUILDING_ID = 'sectArray';
+
+/** 大阵每秒消耗的符箓"灵气量"（按符的品阶折算） */
+export const SECT_ARRAY_DRAIN_PER_SECOND = 0.05;
+
+/** 符箓的"阵法燃料值"：品阶越高越耐烧 */
+export const TALISMAN_FUEL_VALUE: Record<number, number> = {
+  1: 1,
+  2: 6,
+  3: 30,
+};
+
+/** 大阵开启时的宗门防御加成 */
+export const SECT_ARRAY_DEFENSE = 0.25;
+/** 大阵开启时的全宗弟子修炼加成 */
+export const SECT_ARRAY_CULTIVATION = 0.15;
+/** 大阵开启时的幸福度加成 */
+export const SECT_ARRAY_HAPPINESS = 6;

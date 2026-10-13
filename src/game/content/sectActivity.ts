@@ -53,9 +53,15 @@ export const INSIGHT_PER_TRAVEL = 1;
 /* ------------------------------------------------------------------ */
 
 /** 每隔多少秒判定一次随机事件 */
-export const SECT_EVENT_INTERVAL = 45;
+/**
+ * 宗门事件的判定间隔（需求 8：「所有事件的刷新率都设定为很低」）。
+ *
+ * 从 45 秒 → **300 秒**，概率 0.5 → 0.25：
+ * 期望间隔由 1.5 分钟变成 20 分钟。
+ */
+export const SECT_EVENT_INTERVAL = 300;
 /** 每次判定的触发概率 */
-export const SECT_EVENT_CHANCE = 0.5;
+export const SECT_EVENT_CHANCE = 0.25;
 
 /** 功法殿事件：弟子顿悟，直接推进多少「年」的修为（占本境界的比例） */
 export const EVENT_CULTIVATE_RATIO = 0.05;

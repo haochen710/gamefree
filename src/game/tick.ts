@@ -36,6 +36,7 @@ import { tickSeason } from './season';
 import { tickArena, tickSectEvents } from './sectActivity';
 import { tickShop } from './shop';
 import { tickCaravan } from './caravan';
+import { tickSectArray } from './sectArray';
 import { tickPosts } from './posting';
 import { tickHappiness } from './happiness';
 import { tickFameShop } from './fame';
@@ -95,6 +96,8 @@ export function applyTick(state: GameState, dt: number, random: RandomSource = g
   next = tickShop(next, dt, random);
   // 商队（需求 7）：来了一支就等在门口；同时需求 8 要求刷新率很低
   next = tickCaravan(next, dt, random);
+  // 宗门大阵（需求 9）：开着就烧符，烧完自己灭
+  next = tickSectArray(next, dt);
   // 声望商店（设定集第 9 章）：与灵石商行同一套刷新节奏
   next = tickFameShop(next, dt, random);
   // 外交：论道冷却与宗门大战（处于战争状态时按周期开打，敌对宗门也可能主动来犯）

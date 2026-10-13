@@ -76,7 +76,13 @@ export const KARMA_LAYER_FAIL_INJURY = 120;
  */
 export const ENCOUNTER_INTERVAL = 150;
 /** 判定时的命中概率 */
-export const ENCOUNTER_CHANCE = 0.35;
+/**
+ * 随机遭遇的概率（需求 8：所有事件刷新率都要很低）。
+ *
+ * 0.35 → **0.2**：配合 150 秒的间隔，期望约 12.5 分钟一次
+ * （上一轮是 7.1 分钟，这一轮再放慢）。
+ */
+export const ENCOUNTER_CHANCE = 0.2;
 
 /**
  * 遭遇在屏幕上停留多久（需求 1：「针对玩家的随机事件持续30秒」）。

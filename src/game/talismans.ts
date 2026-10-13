@@ -179,21 +179,7 @@ export function useTalisman(state: GameState, id: string): { state: GameState; o
   }
 
   let message = `已用 ${def.name}`;
-  if (def.kind === 'ward' && def.safety) {
-    /*
-     * 护身符用 `safetyOnce`：它**不受倒计时管**，会在下一次探索结算时
-     * 被用掉并清零 —— 正是"下一次探索免一次大劫"的意思。
-     */
-    working = {
-      ...working,
-      buffs: {
-        ...working.buffs,
-        safetyReduction: Math.max(working.buffs.safetyReduction, def.safety),
-        safetyOnce: true,
-      },
-    };
-    message = `${def.name}已贴在身前：下一次探索全队伤亡 −${Math.round(def.safety * 100)}%`;
-  } else if (def.kind === 'spirit' && def.productionMult && def.productionSeconds) {
+  if (def.kind === 'spirit' && def.productionMult && def.productionSeconds) {
     // 同类增益取最强的一条（与丹药同一条规则，避免囤符叠加）
     working = {
       ...working,
