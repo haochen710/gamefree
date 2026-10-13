@@ -219,6 +219,8 @@ import {
   type StructureDef,
   RICH_SUB_INDEX,
   CRAFT_BASE_SUCCESS,
+  CRAFT_FAILURE_BASE_REFUND,
+  CRAFT_SUCCESS_FLOOR,
   PILL_MAP,
   recruitCost,
   SHOP_GOODS,
@@ -4721,9 +4723,22 @@ section('[39] 炼制成功率 / 可携带器物（需求 2）');
     crafting.getAlchemyUpgradeStatus(grant(createInitialState(0), { qi: '1e15', herb: '1e9' })).slotsNeeded === 0,
   );
 
-  /* ---- 成功率：越高品越低，差三品必成 ---- */
+  /* ---- 成功率：越低越高阶越低，差三品必成 ---- */
   {
-    check('一品基础 100%', CRAFT_BASE_SUCCESS[1] === 1);
+    /*
+     * 第 22 轮重做：玩家原话「炼丹、炼器、制符的初始成功率一定要低，这样弟子的
+     * 加成才有意义，并且越是高阶的成功率一定越低，后期才能更加依靠弟子」。
+     * 旧表是一品 100%、九品 28% —— 现在是一品 45%、九品 3%。
+     */
+    check('一品基础成功率已经压到 45%（不再是 100%）', CRAFT_BASE_SUCCESS[1] === 0.45, String(CRAFT_BASE_SUCCESS[1]));
+    check('一品成功率明显低于 1（弟子加成才有意义）', CRAFT_BASE_SUCCESS[1] < 0.6);
+    check('九品基础成功率只有 3%', CRAFT_BASE_SUCCESS[9] === 0.03, String(CRAFT_BASE_SUCCESS[9]));
+    check(
+      '成功率的下限已经降到 2%（否则九品的 3% 会被夹住）',
+      CRAFT_SUCCESS_FLOOR <= 0.02,
+      String(CRAFT_SUCCESS_FLOOR),
+    );
+    check('失败有基础回收（减少失败损耗）', CRAFT_FAILURE_BASE_REFUND > 0, String(CRAFT_FAILURE_BASE_REFUND));
     check(
       '品阶越高基础成功率越低',
       CRAFT_BASE_SUCCESS.slice(1).every((v, i, a) => i === 0 || v <= a[i - 1]),

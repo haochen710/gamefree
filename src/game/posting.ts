@@ -18,6 +18,8 @@ import {
   POST_COST_CAP,
   POST_EFFECT_PER_LEVEL,
   POST_OUTPUT_CAP,
+  CRAFT_FAILURE_BASE_REFUND,
+  POST_SALVAGE_CAP,
   POST_TIER_FREE,
   POST_UNLOCK,
   POST_BONUS_CAP,
@@ -181,6 +183,8 @@ export interface PostEffect {
   success: number;
   /** 省料比例（0.1 = 少花 10% 材料） */
   cost: number;
+  /** 失败回收（0.1 = 把 10% 材料捞回来） */
+  salvage: number;
   /** 增产比例（0.1 = 出双份的概率 +10%） */
   output: number;
   /** 越阶减免：目标品阶高于自身时抵掉的那部分惩罚 */
@@ -204,7 +208,7 @@ export function effectiveSkillLevel(level: number, targetTier: number): number {
  * 采集类（灵田）没有品阶，传 1 即可。
  */
 export function getPostEffect(state: GameState, kind: SkillKind, targetTier = 1): PostEffect {
-  const out: PostEffect = { success: 0, cost: 0, output: 0, quality: 0, contributors: 0, posted: 0 };
+  const out: PostEffect = { success: 0, salvage: 0, cost: 0, output: 0, quality: 0, contributors: 0, posted: 0 };
 
   for (const d of state.sect.disciples) {
     if (!d.post) continue;
@@ -221,6 +225,9 @@ export function getPostEffect(state: GameState, kind: SkillKind, targetTier = 1)
     if (level >= POST_UNLOCK.success) {
       out.success += (POST_BASE_BONUS + eff * POST_EFFECT_PER_LEVEL.success) * match;
     }
+    if (level >= POST_UNLOCK.salvage) {
+      out.salvage += eff * POST_EFFECT_PER_LEVEL.salvage * match;
+    }
     if (level >= POST_UNLOCK.cost) {
       out.cost += eff * POST_EFFECT_PER_LEVEL.cost * match;
     }
@@ -233,6 +240,7 @@ export function getPostEffect(state: GameState, kind: SkillKind, targetTier = 1)
   }
 
   out.success = Math.min(POST_BONUS_CAP, out.success);
+  out.salvage = Math.min(POST_SALVAGE_CAP, out.salvage);
   out.cost = Math.min(POST_COST_CAP, out.cost);
   out.output = Math.min(POST_OUTPUT_CAP, out.output);
   out.quality = Math.min(POST_BONUS_CAP, out.quality);
@@ -254,6 +262,17 @@ export function getPostBonus(state: GameState, kind: SkillKind, targetTier = 1):
  * 越阶减免放在这里而不是成功率上，是因为"手艺好的人来炼你的丹，
  * 最直接的体现就是少浪费材料"。
  */
+/**
+ * 失败时能捞回多少材料（第 22 轮）：
+ * `基础回收 CRAFT_FAILURE_BASE_REFUND + 在岗弟子的技艺回收`，封顶 0.75。
+ *
+ * 玩家原话：「后期才能更加依靠弟子**减少失败损耗**」——
+ * 这条就是那个"损耗"的出口。
+ */
+export function getPostSalvage(state: GameState, kind: SkillKind, targetTier = 1): number {
+  return Math.min(0.75, CRAFT_FAILURE_BASE_REFUND + getPostEffect(state, kind, targetTier).salvage);
+}
+
 export function getPostCostMultiplier(state: GameState, kind: SkillKind, targetTier = 1): number {
   const effect = getPostEffect(state, kind, targetTier);
   return Math.max(0.4, 1 - effect.cost - effect.quality * 0.5);

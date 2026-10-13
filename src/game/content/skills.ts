@@ -82,6 +82,8 @@ export const POST_BONUS_CAP = 1.2;
 export const POST_COST_CAP = 0.5;
 /** 增产加成的上限 */
 export const POST_OUTPUT_CAP = 0.5;
+/** 失败回收的上限（最多把六成材料捞回来） */
+export const POST_SALVAGE_CAP = 0.6;
 
 /**
  * 技艺等级**分阶解锁**的加成类型（第 21 轮的核心改动）。
@@ -97,14 +99,17 @@ export const POST_OUTPUT_CAP = 0.5;
  */
 export const POST_UNLOCK = {
   success: 1,
+  /** 2 级起：**失败回收**（玩家说的"减少失败损耗"） */
+  salvage: 2,
   cost: 3,
   output: 5,
   quality: 7,
 } as const;
 
-/** 上面四项各自的"每有效等级"系数 */
+/** 上面各项各自的"每有效等级"系数 */
 export const POST_EFFECT_PER_LEVEL = {
   success: 0.012,
+  salvage: 0.03,
   cost: 0.01,
   output: 0.008,
   quality: 0.02,

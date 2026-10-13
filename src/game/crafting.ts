@@ -17,6 +17,7 @@ import {
   ARTIFACT_MAP,
   CRAFT_BASE_SUCCESS,
   CRAFT_MASTER_GAP,
+  CRAFT_SUCCESS_FLOOR,
   CRAFT_MASTER_GAP_BONUS,
   MAX_CRAFT_TIER,
   MIND_MAX,
@@ -39,6 +40,7 @@ import {
   getFarmTalentBonus,
   getRefiningSlots,
   getStructureBonus,
+  addItem,
   getTraitEffect,
   grantQiSeconds,
   payCost,
@@ -49,7 +51,7 @@ import { aptitudeRank, pushJournal, relieveDemonAll } from './disciples';
 import { furnaceAlchemyBonus, furnaceBatchBonus, furnaceRefiningBonus } from './gear';
 import { completeAllExpeditions } from './expeditions';
 // 第 21 轮：派遣的四类加成（成功率 / 省料 / 增产 / 越阶）
-import { getPostCostMultiplier, getPostEffect } from './posting';
+import { getPostCostMultiplier, getPostEffect, getPostSalvage } from './posting';
 import type { GameState } from './state';
 
 /* ------------------------------------------------------------------ */
@@ -283,7 +285,8 @@ export function getCraftSuccessRate(
   const bonus = gap > 0 ? gap * CRAFT_MASTER_GAP_BONUS : 0;
 
   // 上限仍是 1（差两品也可能因为炉子好、弟子手巧而摸到满）
-  return Math.max(0.05, Math.min(1, base + bonus + building + talent + trait + furnace + post));
+  // 第 22 轮：下限从 5% 降到 2%（否则九品 3% 的基础成功率会被夹住）
+  return Math.max(CRAFT_SUCCESS_FLOOR, Math.min(1, base + bonus + building + talent + trait + furnace + post));
 }
 
 /** 界面用：说清楚"为什么会失败/为什么会必成" */
@@ -348,6 +351,19 @@ export function craftPill(
   let made = 0;
   for (let i = 0; i < attempts; i += 1) if (random() < rate) made += 1;
   const failed = attempts - made;
+  /*
+   * 第 22 轮：失败不是把材料全烧掉 —— 按"基础回收 + 弟子技艺回收"退回一部分。
+   * 这是玩家说的"减少失败损耗"，也是后期低成功率下玩家真正的靠山。
+   * ⚠️ 回收按**实付口径**算（乘上省料倍率），否则会"失败反而赚材料"。
+   */
+  const salvageRate = failed > 0 ? getPostSalvage(state, 'alchemy', def.tier) : 0;
+  const salvage: CostMap = {};
+  if (salvageRate > 0) {
+    const paidMult = getPostCostMultiplier(state, 'alchemy', def.tier) * (1 - talentCostReduction(state, 'alchemyCost'));
+    for (const [id, amount] of Object.entries(unit) as [ItemId, Decimal][]) {
+      salvage[id] = amount.mul(failed).mul(paidMult).mul(salvageRate);
+    }
+  }
 
   /*
    * 丹炉的批量加成（设定集第 11 章）：成功的每一炉都有机会**多出一件**。
@@ -373,13 +389,19 @@ export function craftPill(
   if (produced > 0) {
     next = { ...next, pills: { ...next.pills, [pillId]: (next.pills[pillId] ?? 0) + produced } };
   }
+  // 第 22 轮：把失败那几炉回收的材料退回去
+  if (salvageRate > 0 && failed > 0) {
+    for (const [id, amount] of Object.entries(salvage) as [ItemId, Decimal][]) {
+      next = addItem(next, id, amount);
+    }
+  }
   if (failed > 0) {
     next = {
       ...next,
       journal: pushJournal(next.journal, {
         time: next.playTime,
         kind: 'bad',
-        text: `炼制${def.name}失败 ${failed} 次（成功率 ${Math.round(rate * 100)}%），材料已耗`,
+        text: `炼制${def.name}失败 ${failed} 次（成功率 ${Math.round(rate * 100)}%），回收了 ${Math.round(salvageRate * 100)}% 材料`,
       }),
     };
   }
@@ -431,6 +453,15 @@ export function craftArtifact(
   let made = 0;
   for (let i = 0; i < attempts; i += 1) if (random() < rate) made += 1;
   const failed = attempts - made;
+  // 第 22 轮：失败回收（与炼丹同一口径 —— 按实付算，避免"失败反而赚"）
+  const salvageRate = failed > 0 ? getPostSalvage(state, 'refining', def.tier) : 0;
+  const salvage: CostMap = {};
+  if (salvageRate > 0) {
+    const paidMult = getPostCostMultiplier(state, 'refining', def.tier) * (1 - talentCostReduction(state, 'refiningCost'));
+    for (const [id, amount] of Object.entries(unit) as [ItemId, Decimal][]) {
+      salvage[id] = amount.mul(failed).mul(paidMult).mul(salvageRate);
+    }
+  }
 
   let next: GameState = paid;
   if (made > 0) {
@@ -438,6 +469,11 @@ export function craftArtifact(
     if (def.carry) {
       // 新炼出来的按满次数记（覆盖旧残件）
       next = { ...next, gearCharges: { ...next.gearCharges, [artifactId]: def.carry.charges } };
+    }
+  }
+  if (salvageRate > 0) {
+    for (const [id, amount] of Object.entries(salvage) as [ItemId, Decimal][]) {
+      next = addItem(next, id, amount);
     }
   }
   if (failed > 0) {
