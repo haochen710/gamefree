@@ -31,6 +31,7 @@ import {
   ENDING_MAP,
   FURNACES,
   GEARS,
+  TALISMAN_MAP,
   MANUALS,
   NPC_SECT_MAP,
   TRAIT_MAP,
@@ -72,6 +73,8 @@ import * as manuals from '../src/game/manuals';
 import * as fame from '../src/game/fame';
 import * as diplomacy from '../src/game/diplomacy';
 import * as gear from '../src/game/gear';
+import * as posting from '../src/game/posting';
+import * as talismans from '../src/game/talismans';
 import { applyTick } from '../src/game/tick';
 
 /* ------------------------------------------------------------------ */
@@ -394,6 +397,9 @@ function runSimulation(seed: number): SimResult {
     firstManual: false,
     firstFurnace: false,
     firstGear: false,
+    // 符箓与派遣（需求 3 / 8 / 12）
+    firstPost: false,
+    firstTalisman: false,
   };
   /** 合成好、等着发给弟子的功法（事件驱动的"发书"队列） */
   const pendingEquip: string[] = [];
@@ -402,6 +408,9 @@ function runSimulation(seed: number): SimResult {
   let contemplations = 0;
   /** 发出去的装备件数（诊断：装备那条线有没有跑起来） */
   let gearsHanded = 0;
+  // 符箓与派遣（需求 3 / 8 / 12）：没有 AI 的新系统在实测里等于不存在
+  let postedTotal = 0;
+  let talismanUsed = 0;
   /** 发书的三种结果（诊断"为什么库存发不出去"） */
   let equipOk = 0;
   let equipNoTarget = 0;
@@ -833,6 +842,64 @@ function runSimulation(seed: number): SimResult {
           if (result.state !== state) {
             state = result.state;
             gearsHanded += result.handed;
+            continue;
+          }
+        }
+      }
+
+      /*
+       * 派遣与技艺（需求 3 / 12）。
+       *
+       * 为什么必须补这段 AI：没有 AI 的新系统在实测里等于不存在 ——
+       * 上一轮"只炼炉鼎不炼装备"已经栽过一次（坑 94），这一轮的派遣
+       * 又是零命中（坑 100）。安排一岗一人就能让丹房 / 炼器房 / 符房 / 灵田
+       * 的加成真的生效，也让技艺点真的积累起来。
+       */
+      if (state.sect.founded && iterations % 500 === 0) {
+        const posted = posting.autoPostAll(state);
+        if (posted.posted > 0) {
+          state = posted.state;
+          postedTotal += posted.posted;
+          if (!sectFlags.firstPost) {
+            sectFlags.firstPost = true;
+            record('派出第一批弟子入岗（' + posted.posted + ' 人）');
+          }
+          continue;
+        }
+      }
+
+      /*
+       * 符箓（需求 8）：画得起就画，优先护身符（探索最需要），
+       * 其次破境符（推进境界），最后聚灵符。
+       */
+      if (state.sect.founded && engine.getBuildingCount(state, 'talismanRoom') > 0 && iterations % 400 === 0) {
+        const wantOrder = ['wardGold', 'wardSilver', 'wardBasic', 'breakGold', 'breakSilver', 'breakBasic', 'spiritGold', 'spiritSilver', 'spiritBasic'];
+        const target = wantOrder
+          .map((id) => TALISMAN_MAP[id])
+          .find((def) => def && talismans.canCraftTalisman(state, def.id).ok);
+        if (target) {
+          const rate = crafting.getCraftSuccessRate(state, 'talisman', target.grade);
+          const result = talismans.craftTalisman(state, target.id, 3, rate, random);
+          if (result.state !== state) {
+            state = result.state;
+            if (!sectFlags.firstTalisman && result.made > 0) {
+              sectFlags.firstTalisman = true;
+              record('画成第一张符（' + target.name + '）');
+            }
+            continue;
+          }
+        }
+      }
+
+      // 用符（需求 8）：有存货就用 —— 消耗品留着不生利息，护身符优先
+      if (state.talismans && Object.keys(state.talismans).length > 0 && iterations % 250 === 0) {
+        const useOrder = ['wardGold', 'wardSilver', 'wardBasic', 'breakGold', 'breakSilver', 'breakBasic', 'spiritGold', 'spiritSilver', 'spiritBasic'];
+        const usable = useOrder.find((id) => (state.talismans[id] ?? 0) > 0);
+        if (usable) {
+          const result = talismans.useTalisman(state, usable);
+          if (result.ok) {
+            state = result.state;
+            talismanUsed += 1;
             continue;
           }
         }

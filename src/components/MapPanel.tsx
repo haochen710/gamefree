@@ -89,7 +89,7 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
   const openRealm = useGame((s) => s.openRealm);
   const [selected, setSelected] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
-  // 本轮需求 4：循环探索次数（1~30）
+  // 本轮需求 4 / 需求 9：循环探索次数（1~10）
   const [repeat, setRepeat] = useState(1);
 
   const idle = getIdleDisciples(state).filter((d) => d.realmIndex >= def.minRealm);
@@ -230,7 +230,7 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
         </div>
       )}
 
-      {/* 本轮需求 4：可以设置循环探索（上限 30 次） */}
+      {/* 本轮需求 4：可以设置循环探索（上限 10 次） */}
       <div className="repeat-row">
         <label>
           循环
@@ -378,7 +378,7 @@ function SurveyCard({ region, state }: { region: MapRegionDef; state: GameState 
   const startSoloSurvey = useGame((s) => s.startSoloSurvey);
   const [selected, setSelected] = useState<string[]>([]);
   const [picking, setPicking] = useState(false);
-  // 本轮需求 4：循环探索次数（1~30）
+  // 本轮需求 4 / 需求 9：循环探索次数（1~10）
   const [repeat, setRepeat] = useState(1);
 
   const { min, max } = getSurveyPartyRange();

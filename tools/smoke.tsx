@@ -438,7 +438,7 @@ section('[1] 界面渲染');
    * 所以首屏断言里不再有「灵石合成」—— 换成新模块的名字。
    * （合成栏本身仍然存在，见 §44 对工坊页的断言。）
    */
-  const expected = ['仙途', '打坐', '境界', '修行', '洞府', '宗门', '探索', '炼丹', '炼器', '灵植', '工坊', '建筑', '商行'];
+const expected = ['仙途', '打坐', '境界', '修行', '洞府', '宗门', '探索', '炼丹', '炼器', '符箓', '灵植', '工坊', '建筑', '商行'];
   for (const text of expected) {
     check(`包含「${text}」`, html.includes(text));
   }
@@ -5517,9 +5517,10 @@ section('[44] 弟子人数 · 居所拆分 · 新模块 · 突破丹药 · 派�
     const out = renderToString(<App />);
 
     // 需求 5：丹器已拆成「炼丹」与「炼器」两页，所以是 11 个页签
-const order = ['修行', '探索', '宗门', '建筑', '工坊', '炼丹', '炼器', '商行', '灵植', '感悟', '洞府'];
+// 需求 5 / 8：丹器拆成「炼丹」「炼器」，符箓是第 12 个独立页签
+const order = ['修行', '探索', '宗门', '建筑', '工坊', '炼丹', '炼器', '符箓', '商行', '灵植', '感悟', '洞府'];
     const positions = order.map((label) => out.indexOf(`>${label}<`));
-    check('十一个页签都在界面上', positions.every((p) => p >= 0), order.join(' · '));
+check('十二个页签都在界面上', positions.every((p) => p >= 0), order.join(' · '));
     check(
       '页签顺序符合本轮需求 8',
       positions.every((p, i) => i === 0 || p > positions[i - 1]),
