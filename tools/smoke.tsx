@@ -158,6 +158,7 @@ import {
   MATERIAL_IDS,
   MATERIAL_MAP,
   MAJOR_REGIONS,
+  REALMS_PER_MAJOR,
   MAJOR_REGION_MAP,
   MAP_REGIONS,
   MAP_REGION_MAP,
@@ -205,6 +206,7 @@ import {
   SECRET_REALM_MAP,
   STARTER_REALM_ID,
   SURVEY_MAX_PARTY,
+  realmsOfRegion,
   specialtyRealms,
   subRegionsOf,
   SEASONS,
@@ -2447,8 +2449,8 @@ section('[21] 新字段的存档往返');
       secondsLeft: 42,
     },
     // 需求 1 / 4 的新字段
-    discoveredRealms: { [STARTER_REALM_ID]: true, eastMountains_4_r0: true },
-    realmCooldowns: { eastMountains_4_r0: 123 },
+    discoveredRealms: { [STARTER_REALM_ID]: true, eastMountains_3_r0: true },
+    realmCooldowns: { eastMountains_3_r0: 123 },
     discoveryFailures: 3,
     arenaEnabled: true,
     arenaTimer: 77,
@@ -2468,8 +2470,8 @@ section('[21] 新字段的存档往返');
     check('地块保留', round.plantings.length === 1 && round.plantings[0].material === 'demonCore');
     check('种子保留', round.seeds.starSand === 5);
     check('商行货架保留', round.shop.offers.length === 1 && round.shop.secondsLeft === 42);
-    check('已发现秘境保留', engine.isRealmDiscovered(round, SECRET_REALM_MAP.eastMountains_4_r0));
-    check('秘境冷却保留', engine.getRealmCooldown(round, 'eastMountains_4_r0') === 123);
+    check('已发现秘境保留', engine.isRealmDiscovered(round, SECRET_REALM_MAP.eastMountains_3_r0));
+    check('秘境冷却保留', engine.getRealmCooldown(round, 'eastMountains_3_r0') === 123);
     check('发现保底的失败计数保留', round.discoveryFailures === 3);
     check('大比开关保留', round.arenaEnabled === true);
     check('大比计时保留', round.arenaTimer === 77 && round.arenaBuffSeconds === 8);
@@ -2488,7 +2490,7 @@ section('[21] 新字段的存档往返');
     rs: { id: 'nope', remaining: 5 },
     sh: { offers: [{ kind: 'seed', item: 'notAGood' }], secondsLeft: 'x' },
     pv: { regionId: 'notARegion' },
-    rc: { notARealm: 500, eastMountains_4_r0: -3 },
+    rc: { notARealm: 500, eastMountains_3_r0: -3 },
     df: 99,
     ae: 'yes',
     arn: -5,
@@ -2590,8 +2592,8 @@ section('[22] 界面：非空状态渲染');
     servants: { wood: 3, ore: 2 },
     injurySeconds: 90,
     autoRefineLevel: 2,
-    discoveredRealms: { [STARTER_REALM_ID]: true, eastMountains_4_r0: true, eastMountains_1_r0: true },
-    realmCooldowns: { eastMountains_4_r0: 90 },
+    discoveredRealms: { [STARTER_REALM_ID]: true, eastMountains_3_r0: true },
+    realmCooldowns: { eastMountains_3_r0: 90 },
     discoveryFailures: 2,
     arenaEnabled: true,
     arenaTimer: 60,
@@ -2856,33 +2858,40 @@ section('[24] 地图与探索距离（需求 5）');
     region,
     realms: SECRET_REALMS.filter((r) => r.regionId === region.id),
   }));
-  const badCount = perRegion.filter((entry) =>
-    entry.region.isRich ? entry.realms.length < 3 : entry.realms.length < 1 || entry.realms.length > 2,
-  );
+  /*
+   * 第 23 轮：玩家要求「秘境数量减少一些吧，现在过于多了，重复产出的相同秘境太多，
+   * 每个大区域 5-6 个就行，不再区分小区域」——
+   * 所以现在是**每个大区域恰好 6 处**（均布在小区域下标 0/3/6/9/12/15），
+   * 其余小区域只有普通探索。总数 150 → 36。
+   */
+  const badCount = perRegion.filter((entry) => entry.realms.length > 1);
   check(
-    '每个小区域 1~2 处秘境、资源富集区 3 处',
+    '每个小区域最多 1 处秘境（不再"每个小区域都藏着秘境"）',
     badCount.length === 0,
-    badCount.length > 0
-      ? badCount.map((e) => `${e.region.name}=${e.realms.length}`).join('、')
-      : `共 ${SECRET_REALMS.length} 处`,
+    badCount.length > 0 ? badCount.map((e) => `${e.region.name}=${e.realms.length}`).join('、') : `共 ${SECRET_REALMS.length} 处`,
   );
   {
-    const counts = perRegion.map((e) => e.realms.length);
+    const withRealms = perRegion.filter((e) => e.realms.length > 0);
     check(
-      '只有资源富集区的秘境超过 2 处',
-      counts.filter((c) => c > 2).length === MAJOR_REGIONS.length,
-      `富集区 ${counts.filter((c) => c > 2).length} 个`,
+      '每个大区域恰好 6 处有秘境的小区域',
+      MAJOR_REGIONS.every(
+        (major) => withRealms.filter((e) => e.region.majorId === major.id).length === REALMS_PER_MAJOR,
+      ),
+      MAJOR_REGIONS.map(
+        (major) => `${major.name}=${withRealms.filter((e) => e.region.majorId === major.id).length}`,
+      ).join(' '),
     );
   }
-  check('秘境总数随之扩到 100 处以上', SECRET_REALMS.length >= 100, `${SECRET_REALMS.length} 处`);
+  check('秘境总数压到 36 处（每大区域 6 处）', SECRET_REALMS.length === MAJOR_REGIONS.length * REALMS_PER_MAJOR, `${SECRET_REALMS.length} 处`);
 
   /* ---- 特产秘境：每个大区域恰好一处，且真的产该区特产 ---- */
   {
     const specialties = specialtyRealms();
     check('每个大区域恰好一处特产秘境', specialties.length === MAJOR_REGIONS.length, `${specialties.length} 处`);
     check(
-      '特产秘境只出现在资源富集区',
-      specialties.every((r) => MAP_REGION_MAP[r.regionId]?.isRich === true),
+      '特产秘境落在大区域里最深的那处小区域',
+      specialties.every((r) => (MAP_REGION_MAP[r.regionId]?.index ?? -1) === 15),
+      specialties.map((r) => `${r.name}@${MAP_REGION_MAP[r.regionId]?.index}`).join('、'),
     );
     check(
       '特产秘境的必掉项就是该大区域的特产',
@@ -2899,7 +2908,8 @@ section('[24] 地图与探索距离（需求 5）');
   const travelOrphans = TRAVEL_REGIONS.filter((r) => !MAP_REGION_MAP[r.regionId]);
   check('每个游历目的地都挂在已定义区域下', travelOrphans.length === 0, travelOrphans.map((r) => r.name).join('、'));
 
-  check('没有秘境被漏在地图之外', perRegion.every((e) => e.realms.length > 0));
+  // 第 23 轮：只有部分小区域藏着秘境，其余小区域纯做普通探索（这正是需求本身）
+  check('每处秘境都落在"确实有秘境"的小区域里（没有孤儿）', SECRET_REALMS.every((r) => realmsOfRegion(r.regionId).length > 0));
   check(
     '每个区域的秘境 id 不重复',
     new Set(SECRET_REALMS.map((r) => r.id)).size === SECRET_REALMS.length,
@@ -3091,7 +3101,8 @@ section('[24] 地图与探索距离（需求 5）');
     );
     check(
       '发现新秘境时失败计数清零',
-      engine.discoverRealm({ ...armed, discoveryFailures: 7 }, 'eastMountains_1_r0').discoveryFailures === 0,
+      // 第 23 轮：eastMountains_0_r0 是**起始秘境**（开局就已发现），要换一处未发现的
+      engine.discoverRealm({ ...armed, discoveryFailures: 7 }, 'eastMountains_3_r0').discoveryFailures === 0,
     );
   }
 
@@ -3699,9 +3710,11 @@ section('[29] 普通探索：未发现秘境时唯一能做的事（需求 1）'
   check('出发的弟子进入探索状态', party.every((id) => started.sect.disciples.find((d) => d.id === id)?.status === 'exploring'));
   check(
     '普通探索时长比同档秘境短',
+    // 第 23 轮：eastMountains_1 已经没有秘境了（只有 0/3/6/9/12/15 有），
+    // 所以时长要跟**同一个大区域里真有秘境**的那处比。
     (started.expeditions[0]?.duration ?? 0) > 0 &&
-      (started.expeditions[0]?.duration ?? 0) < (SECRET_REALM_MAP[`${fresh}_r0`]?.duration ?? 0),
-    `${started.expeditions[0]?.duration} vs ${SECRET_REALM_MAP[`${fresh}_r0`]?.duration}`,
+      (started.expeditions[0]?.duration ?? 0) < (SECRET_REALM_MAP.eastMountains_0_r0?.duration ?? 0),
+    `${started.expeditions[0]?.duration} vs ${SECRET_REALM_MAP.eastMountains_0_r0?.duration}`,
   );
 
   /* ---- 结算：必定产基础材料、有概率出稀有材料、没有伤亡 ---- */
@@ -3734,11 +3747,17 @@ section('[29] 普通探索：未发现秘境时唯一能做的事（需求 1）'
   /* ---- 秘境全找到之后就不能再做普通探索 ---- */
   {
     let done = s;
-    for (const realm of SECRET_REALMS.filter((r) => r.regionId === fresh)) done = engine.discoverRealm(done, realm.id);
+    /*
+     * 第 23 轮：`fresh`（eastMountains_1）现在**没有秘境**了 ——
+     * 只有每个大区域里下标 0/3/6/9/12/15 的小区域藏着秘境。
+     * 所以要挑一个真有秘境、而且开局还没被发现的小区域来测。
+     */
+    const withRealm = 'eastMountains_3';
+    for (const realm of SECRET_REALMS.filter((r) => r.regionId === withRealm)) done = engine.discoverRealm(done, realm.id);
     check(
       '一个小区域的秘境全找到之后，普通探索自动关闭',
-      !expeditions.canSurveyRegion(done, fresh).ok,
-      expeditions.canSurveyRegion(done, fresh).reason ?? '',
+      !expeditions.canSurveyRegion(done, withRealm).ok,
+      expeditions.canSurveyRegion(done, withRealm).reason ?? '',
     );
   }
 }

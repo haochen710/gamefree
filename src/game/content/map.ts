@@ -293,9 +293,23 @@ function subRealm(major: MajorRegionDef, index: number): number {
 }
 
 /** 每个大区域有几处秘境：偶数下标 1 处、奇数 2 处，资源富集区 3 处 */
+/**
+ * 第 23 轮：每个大区域**只在最前面的 6 个小区域**各放 1 处秘境。
+ *
+ * 玩家原话：「秘境数量减少一些吧，现在过于多了，重复产出的相同秘境太多，
+ * 每个大区域 5-6 个就行，不再区分小区域」。
+ * 所以秘境总数 150 → **36**（6 大区域 × 6 处），其余小区域只有普通探索。
+ */
+export const REALMS_PER_MAJOR = 6;
+
 export function subRealmCount(index: number): number {
-  if (index >= RICH_SUB_INDEX) return 3;
-  return index % 2 === 0 ? 1 : 2;
+  /*
+   * 第 23 轮：每个大区域 6 处秘境（原来 1~3 处 × 96 小区域 = 150 处）。
+   *
+   * ⚠️ 必须**均布**（每 3 个小区域取一个：0/3/6/9/12/15），而不是取最前面 6 个 ——
+   * 只取前面的会全是低境界区，8/9 档秘境直接消失（实测踩到）。
+   */
+  return index % 3 === 0 ? 1 : 0;
 }
 
 function subDesc(major: MajorRegionDef, name: string, index: number, realmCount: number): string {

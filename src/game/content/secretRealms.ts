@@ -35,6 +35,7 @@ import {
   RICH_SUB_INDEX,
   regionIndex,
   regionTier,
+  REALMS_PER_MAJOR,
   subRealmCount,
   type MapRegionDef,
   type RealmProfile,
@@ -538,19 +539,27 @@ function buildUnlockCost(
 
 export const SECRET_REALMS: SecretRealmDef[] = MAP_REGIONS.flatMap((region) => {
   const count = subRealmCount(region.index);
+  if (count <= 0) return [];
   const major = MAJOR_REGION_MAP[region.majorId];
   const primaryFlavor: RealmProfile = major?.flavor ?? 'herb';
-  // 副路数要**避开**主路数，否则同一小区域里两处秘境会撞名（都叫「XX·药圃」）
+  /*
+   * 第 23 轮：每个大区域只有 6 处秘境，所以这 6 处必须**各不相同**。
+   *
+   * 玩家原话：「重复产出的相同秘境太多」——旧版每小区域主路数都是同一个
+   * （于是「XX·药圃」满屏）。现在把这 6 处按"主路数 + 五种副路数各一次"轮换，
+   * 并把大区域特产放在**最后那处**（它同时也是境界最高的一处）。
+   */
   const others = SECONDARY_FLAVOR.filter((f) => f !== primaryFlavor);
+  const rotation: RealmProfile[] = [primaryFlavor, ...others];
+  // 该小区域在自己大区域里排第几个（0..5）
+  const spot = Math.floor(region.index / 3);
 
   return Array.from({ length: count }, (_, rank) => {
-    // 资源富集区的第一处是特产秘境，其余按主/副路数交替
-    const specialty =
-      region.index >= RICH_SUB_INDEX && rank === 0 ? (major?.specialty ?? null) : null;
-    const profile: RealmProfile =
-      rank === 0
-        ? primaryFlavor
-        : others[((major?.index ?? 0) * 3 + region.index + rank) % others.length];
+    // 最后一处是特产秘境（专产该大区域的特产材料）
+    // 每个小区域只出 1 处，所以 rank 恒为 0 —— 用 spot 来算位置
+    const isSpecialtySpot = spot === REALMS_PER_MAJOR - 1;
+    const specialty = isSpecialtySpot ? (major?.specialty ?? null) : null;
+    const profile = rotation[spot % rotation.length] ?? primaryFlavor;
     return buildRealm(region, rank, profile, specialty);
   });
 });
