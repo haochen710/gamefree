@@ -628,7 +628,8 @@ const RARE_ITEM_SET = new Set<string>(
  * 装备「寻宝宝盘」（见 recipes.ts 的 ARTIFACTS，七品炼器 + 超稀有材料）。
  */
 // 需求 8：事件刷新率调低 —— 秘境也不是那么容易被撞见的
-export const DISCOVERY_BASE_CHANCE = 0.1;
+// 需求 8 让事件变稀；但发现率是进度主杠杆，所以只收一点（0.15 → 0.12）
+export const DISCOVERY_BASE_CHANCE = 0.12;
 
 /**
  * 连续失败多少次之后，下一次必然发现。
@@ -646,7 +647,7 @@ export const DISCOVERY_PITY_FAILURES = 10;
  * 发现概率总上限，保留 25% 的运气成分，免得"发现"退化成"按顺序解锁"。
  * 现在只有寻宝宝盘一条路能往上加，所以这个上限是给宝盘准备的终点。
  */
-export const DISCOVERY_MAX_CHANCE = 0.5;
+export const DISCOVERY_MAX_CHANCE = 0.6;
 
 /* ------------------------------------------------------------------ */
 /* 结算上下限                                                          */

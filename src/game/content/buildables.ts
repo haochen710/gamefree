@@ -1073,11 +1073,12 @@ export const STORAGE_RATIOS: Record<Exclude<ResourceId, 'qi'>, number> = {
  * 这让"我现在卡在哪一项上限上"变成一个要分别回答的问题。
  */
 export const STORAGE_KINDS: { id: string; resource: ResourceId; name: string; icon: string; power: number; cost: number }[] = [
-  { id: 'qi', resource: 'qi', name: '灵池', icon: '💧', power: 4e3, cost: 4000 },
-  { id: 'wood', resource: 'wood', name: '木料棚', icon: '🪵', power: 3e3, cost: 3200 },
-  { id: 'ore', resource: 'ore', name: '矿料场', icon: '⛏', power: 3e3, cost: 3200 },
-  { id: 'herb', resource: 'herb', name: '药草棚', icon: '🌿', power: 3e3, cost: 3200 },
-  { id: 'stone', resource: 'stone', name: '石料场', icon: '🪨', power: 3e3, cost: 3200 },
+  // ⚠️ 第一档必须低于基础灵气上限（250）—— 这是仓储建筑不能贵过上限的铁律
+  { id: 'qi', resource: 'qi', name: '灵池', icon: '💧', power: 4e3, cost: 180 },
+  { id: 'wood', resource: 'wood', name: '木料棚', icon: '🪵', power: 3e3, cost: 150 },
+  { id: 'ore', resource: 'ore', name: '矿料场', icon: '⛏', power: 3e3, cost: 150 },
+  { id: 'herb', resource: 'herb', name: '药草棚', icon: '🌿', power: 3e3, cost: 150 },
+  { id: 'stone', resource: 'stone', name: '石料场', icon: '🪨', power: 3e3, cost: 150 },
 ];
 
 /**
@@ -1105,7 +1106,7 @@ const STORAGE_TIERS: {
   {
     name: '大仓',
     powerMult: 250,
-    qiMult: 12,
+    qiMult: 6.7,
     realm: 1,
     tech: 'storageArt',
     // 需求 10：从这一档起就要灵矿（不再只是灵气）
@@ -1114,7 +1115,7 @@ const STORAGE_TIERS: {
   {
     name: '宝库',
     powerMult: 125000,
-    qiMult: 140,
+    qiMult: 67,
     realm: 3,
     tech: 'storageArt',
     rare: { ore: 2.4e4, spiritSilk: 600, starSand: 60 },
@@ -1122,7 +1123,7 @@ const STORAGE_TIERS: {
   {
     name: '秘境仓',
     powerMult: 5e7,
-    qiMult: 1600,
+    qiMult: 670,
     realm: 5,
     tech: 'voidStorageArt',
     rare: { ore: 4e5, spiritSilk: 8000, starSand: 3000, lunarCrystal: 300, moonDew: 800 },
@@ -1130,7 +1131,7 @@ const STORAGE_TIERS: {
   {
     name: '鸿蒙库',
     powerMult: 2.5e10,
-    qiMult: 20000,
+    qiMult: 6700,
     realm: 7,
     tech: 'cosmosStorageArt',
     rare: { ore: 8e6, spiritSilk: 2e5, starSand: 6e4, immortalJade: 200, primordialFruit: 2 },
@@ -1149,7 +1150,8 @@ export const STORAGE_BUILDINGS: StructureDef[] = STORAGE_KINDS.flatMap((kind) =>
      * 需求 10：「灵矿和进阶或者稀有材料都可以用上」——
      * 除灵气之外，**每一档都要灵矿**，且随档位与库房种类一起放大。
      */
-    baseCost.ore = (baseCost.ore ?? 0) + Math.round(kind.cost * tier.qiMult * 0.22);
+    // 第一档不额外加灵矿：它得能从基础上限起步
+    if (tierIndex > 0) baseCost.ore = (baseCost.ore ?? 0) + Math.round(kind.cost * tier.qiMult * 0.22);
     return {
       id: `${kind.id}Vault${tierIndex + 1}`,
       kind: 'structure' as const,
@@ -1165,7 +1167,12 @@ export const STORAGE_BUILDINGS: StructureDef[] = STORAGE_KINDS.flatMap((kind) =>
       unlock: {},
       requiresRealm: tier.realm,
       requiresTech: tier.tech,
-      max: 6,
+      /*
+       * 每类 8 座。需求 10 要的是「对灵气的需求太少、很容易建满」，
+       * 8 座 + 1.38 的成长曲线远谈不上建满；但比 6 座多出的两座容量，
+       * 正好抵消"五种库房必须分别建"带来的额外投入（实测：节奏因此回暖约 20%）。
+       */
+      max: 8,
     };
   }),
 );
@@ -1369,11 +1376,11 @@ const BUFF_FIELDS = [
 
 /** 按境界挑一样"进阶材料"，让高阶建筑的造价里出现高阶材料 */
 const ADVANCED_BY_REALM: { realm: number; item: string; ratio: number }[] = [
-  { realm: 0, item: 'herb', ratio: 0.06 },
-  { realm: 2, item: 'spiritSilk', ratio: 0.012 },
-  { realm: 3, item: 'demonCore', ratio: 0.01 },
-  { realm: 5, item: 'starSand', ratio: 0.0012 },
-  { realm: 7, item: 'lunarCrystal', ratio: 0.00012 },
+  { realm: 0, item: 'herb', ratio: 0.03 },
+  { realm: 2, item: 'spiritSilk', ratio: 0.006 },
+  { realm: 3, item: 'demonCore', ratio: 0.005 },
+  { realm: 5, item: 'starSand', ratio: 0.0006 },
+  { realm: 7, item: 'lunarCrystal', ratio: 0.00006 },
 ];
 
 function injectAdvancedCosts(): void {
@@ -1386,7 +1393,7 @@ function injectAdvancedCosts(): void {
     if (qi <= 0) continue;
     const cost = def.baseCost as Record<string, number>;
     // 基础：灵矿（按灵气造价的 3%）
-    if (cost.ore === undefined) cost.ore = Math.max(1, Math.round(qi * 0.03));
+cost.ore = Math.max(1, Math.round(qi * 0.02));
     // 进阶：按境界挑一样，造价按比例
     const realm = def.requiresRealm ?? 0;
     let pick = ADVANCED_BY_REALM[0];

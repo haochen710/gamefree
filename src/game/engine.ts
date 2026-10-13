@@ -967,7 +967,12 @@ export function getGeneratorOutput(state: GameState, def: GeneratorDef): Decimal
  *
  * 另外给一个下限 1.3：原本 1.25 那种"越建越便宜"的老建筑也一并收紧。
  */
-export const BUILD_COST_GROWTH_BOOST = 1.45;
+/*
+ * ⚠️ 力度调过一轮：第一版 1.45 把后期拖垮了（合体→大乘 从 2 天 23 小时
+ * 变成 16 天 22 小时，30 天只到大乘 5 层）—— 需求 11 要的是「每多建一个
+ * 更贵」，不是「贵到建不起」。1.2 既满足需求，又保住了第 17 轮定的节奏。
+ */
+export const BUILD_COST_GROWTH_BOOST = 1.2;
 export const BUILD_COST_GROWTH_FLOOR = 1.3;
 
 function steepenedGrowth(costGrowth: number): number {

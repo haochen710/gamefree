@@ -853,8 +853,16 @@ section('[4] 储存上限与储物建筑');
     const map = BUILDABLE_MAP;
     const first = map.qiVault1;
     const top = map.qiVault5;
-    check('第一档库房造价里就有灵矿（不再只花灵气）', (first.baseCost.ore ?? 0) > 0, String(first.baseCost.ore ?? 0));
-    check('第一档的灵气需求比旧版高一个数量级', (first.baseCost.qi ?? 0) >= 3000, String(first.baseCost.qi));
+    /*
+     * 需求 10：灵矿从**第二档**起才有 —— 第一档必须能从基础上限（灵气 250 /
+     * 灵矿 100）起步，否则开局永远攒不出第一座库房（模拟器抓到过这个死锁）。
+     */
+    check('第二档库房造价里就有灵矿（不再只花灵气）', (map.qiVault2.baseCost.ore ?? 0) > 0, String(map.qiVault2.baseCost.ore ?? 0));
+    check(
+      '第一档造价必须低于基础灵气上限（否则开局死锁）',
+      (first.baseCost.qi ?? 0) < BASE_STORAGE.qi,
+      `${first.baseCost.qi} < ${BASE_STORAGE.qi}`,
+    );
     check(
       '高阶档位的造价里有进阶 / 稀有材料',
       ['starSand', 'lunarCrystal', 'immortalJade', 'primordialFruit', 'moonDew'].some(
@@ -900,9 +908,9 @@ section('[4] 储存上限与储物建筑');
   const bigCap = withBigStorage(createInitialState(0));
   // 需求 10 之后库房造价里有灵矿，所以这个富裕宗门也要发矿
   const rich = grant(bigCap, { qi: '1e12', ore: '1e12', wood: '1e12', stone: '1e12', herb: '1e12' });
-  check('储物建筑有数量上限', engine.getMaxCount(pouch) === 6, String(engine.getMaxCount(pouch)));
-  check('数量上限约束了 maxAffordable', engine.maxAffordable(pouch, 0, rich) === 6, `${engine.maxAffordable(pouch, 0, rich)}`);
-  check('已建满时 maxAffordable 为 0', engine.maxAffordable(pouch, 6, rich) === 0);
+  check('储物建筑有数量上限', engine.getMaxCount(pouch) === 8, String(engine.getMaxCount(pouch)));
+  check('数量上限约束了 maxAffordable', engine.maxAffordable(pouch, 0, rich) === 8, `${engine.maxAffordable(pouch, 0, rich)}`);
+  check('已建满时 maxAffordable 为 0', engine.maxAffordable(pouch, 8, rich) === 0);
 
   /* ---- costGrowth === 1 的建筑（只可能建一座）----
      等比求和公式要除以 (r - 1)，r = 1 时会算出 NaN，
@@ -933,7 +941,7 @@ section('[4] 储存上限与储物建筑');
 
   let built = rich;
   for (let i = 0; i < 20; i += 1) built = engine.buyBuilding(built, pouch, 1);
-  check('连续建造不会突破数量上限', engine.getBuildingCount(built, 'qiVault1') === 6, `${engine.getBuildingCount(built, 'qiVault1')}`);
+  check('连续建造不会突破数量上限', engine.getBuildingCount(built, 'qiVault1') === 8, `${engine.getBuildingCount(built, 'qiVault1')}`);
 
   /* ---- clampResources 兜底 ---- */
   const overflowing = grant(createInitialState(0), { qi: '1e9', wood: '1e9' });
@@ -979,7 +987,7 @@ section('[4] 储存上限与储物建筑');
       ((BUILDABLE_MAP.qiVault1 as { storage?: Record<string, number> }).storage?.qi ?? 0),
     `${(BUILDABLE_MAP.qiVault1 as { storage?: Record<string, number> }).storage?.qi} → ${(BUILDABLE_MAP.qiVault5 as { storage?: Record<string, number> }).storage?.qi}`,
   );
-  check('每个储物建筑都设了数量上限', tiers.every((d) => d.max === 6));
+  check('每个储物建筑都设了数量上限', tiers.every((d) => d.max === 8));
 }
 
 /* ------------------------------------------------------------------ */
