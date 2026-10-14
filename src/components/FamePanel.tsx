@@ -31,7 +31,7 @@ import {
   endingDaoYunBonus,
   type EndingCheck,
 } from '../game/fame';
-import { canAlly, canDeclareWar, canGift, canParley, getAlliedCount, getWinChance, sectView } from '../game/diplomacy';
+import { canAlly, canDeclareWar, canGift, canMakePeace, canParley, getAlliedCount, getWinChance, sectView } from '../game/diplomacy';
 import { useGame } from '../game/store';
 import Panel from './Panel';
 
@@ -84,6 +84,8 @@ function SectRow({ sectId }: { sectId: string }) {
   const ally = useGame((s) => s.allySect);
   const breakAlliance = useGame((s) => s.breakAlliance);
   const declareWar = useGame((s) => s.declareWar);
+  // 第 24 轮（需求 2）：停战
+  const makePeaceSect = useGame((s) => s.makePeaceSect);
   const fight = useGame((s) => s.fightBattle);
   const [open, setOpen] = useState(false);
 
@@ -93,6 +95,7 @@ function SectRow({ sectId }: { sectId: string }) {
   const parleyCheck = canParley(game, sectId);
   const allyCheck = canAlly(game, sectId);
   const warCheck = canDeclareWar(game, sectId);
+  const peaceCheck = canMakePeace(game, sectId);
   const cooldown = game.parleyCooldowns[sectId] ?? 0;
 
   return (
@@ -178,6 +181,16 @@ function SectRow({ sectId }: { sectId: string }) {
             onClick={() => fight(sectId)}
           >
             开战（胜率 {Math.round(getWinChance(game, sectId) * 100)}%）
+          </button>
+          {/* 第 24 轮（需求 2）：停战 —— 打不过时唯一的止损手段 */}
+          <button
+            type="button"
+            className="btn btn--tiny"
+            disabled={!peaceCheck.ok}
+            title={peaceCheck.reason ?? '罢兵求和（要付一点声望）'}
+            onClick={() => makePeaceSect(sectId)}
+          >
+            停战
           </button>
         </div>
       )}

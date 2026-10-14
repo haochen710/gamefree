@@ -11,6 +11,8 @@ import {
   ALLIANCE_PRODUCTION_BONUS,
   ALLIANCE_RELATION,
   DECLARE_WAR_FAME_COST,
+  MAKE_PEACE_FAME_COST,
+  MAKE_PEACE_RELATION,
   DECLARE_WAR_RELATION,
   GIFT_COOLDOWN_SECONDS,
   GIFT_FAVORITE_MULTIPLIER,
@@ -178,17 +180,70 @@ export function canAlly(state: GameState, sectId: string): { ok: boolean; reason
  *
  * 盟友的被动收益是**产出加成**（每盟 +3%），并且是"称霸仙域"结局的硬条件 ——
  * 于是"打"与"谈"这两条路都能通向胜利，而不是只有打仗。
+ *
+ * 第 24 轮（需求 2）：玩家原话「与其它宗门交战增加停战选项；**不能与盟友交战**」。
+ * 所以结盟时**顺手把这一场仗停掉** —— 否则会出现"盟友还在 `atWarWith` 里被
+ * `tickWar` 反复结算"这种自相矛盾的状态（那正是"与盟友交战"的来源）。
  */
 export function allySect(state: GameState, sectId: string): GameState {
   if (!canAlly(state, sectId).ok) return state;
   const def = NPC_SECT_MAP[sectId]!;
   let working = patchSect(state, sectId, { alliance: true });
+  const wasAtWar = working.atWarWith.includes(sectId);
+  if (wasAtWar) {
+    working = { ...working, atWarWith: working.atWarWith.filter((id) => id !== sectId) };
+  }
   working = {
     ...working,
     journal: pushJournal(working.journal, {
       time: working.playTime,
       kind: 'good',
-      text: `${def.name}与我宗缔结盟约（宗门产出 +${Math.round(ALLIANCE_PRODUCTION_BONUS * 100)}%）`,
+      text:
+        `${def.name}与我宗缔结盟约（宗门产出 +${Math.round(ALLIANCE_PRODUCTION_BONUS * 100)}%）` +
+        (wasAtWar ? '，两国就此罢兵' : ''),
+    }),
+  };
+  return working;
+}
+
+/**
+ * 能不能与某个宗门**停战**（第 24 轮需求 2）。
+ *
+ * 玩家原话：「与其它宗门交战增加停战选项」。原来只有"宣战"没有"停战"，
+ * 一旦打起来就只能打到结算，这是个单向门。
+ */
+export function canMakePeace(state: GameState, sectId: string): { ok: boolean; reason: string | null } {
+  const def = NPC_SECT_MAP[sectId];
+  if (!def) return { ok: false, reason: '没有这个宗门' };
+  if (!state.atWarWith.includes(sectId)) return { ok: false, reason: '并未与该宗门交战' };
+  return { ok: true, reason: null };
+}
+
+/**
+ * 停战。
+ *
+ * 代价是**声望**（都打起来了才求和，名声上不好看）与一点关系；
+ * 换来的是立刻停止自动结算的宗门大战 —— 打不过的时候，这是唯一的止损手段。
+ */
+export function makePeace(state: GameState, sectId: string): GameState {
+  if (!canMakePeace(state, sectId).ok) return state;
+  const def = NPC_SECT_MAP[sectId]!;
+  let working: GameState = {
+    ...state,
+    atWarWith: state.atWarWith.filter((id) => id !== sectId),
+    everMadePeace: true,
+  };
+  // 求和要付名声：与宣战对称（宣战 -DECLARE_WAR_FAME_COST）
+  working = changeFame(working, -MAKE_PEACE_FAME_COST, '罢兵求和').state;
+  working = patchSect(working, sectId, {
+    relation: Math.min(100, (working.npcSects.find((s) => s.id === sectId)?.relation ?? 0) + MAKE_PEACE_RELATION),
+  });
+  working = {
+    ...working,
+    journal: pushJournal(working.journal, {
+      time: working.playTime,
+      kind: 'good',
+      text: `我宗遣使向${def.name}罢兵求和，两家暂且息戈`,
     }),
   };
   return working;
@@ -370,6 +425,20 @@ export function resolveBattle(
 export function tickWar(state: GameState, dt: number, random: RandomSource = gameRandom): GameState {
   if (dt <= 0 || !state.sect.founded) return state;
   let working = state;
+  /*
+   * 第 24 轮（需求 2）：「不能与盟友交战」。
+   *
+   * 这里做一次**兜底清理**：`atWarWith` 与"盟友"本不该同时成立（`allySect` 已经
+   * 会顺手停战、`canDeclareWar` 也拦了盟友），但旧存档里可能残留这种矛盾状态 ——
+   * 一旦残留，`tickWar` 就会**周期性地反复打自己的盟友**。
+   * 所以每帧先把"已经是盟友的"从交战名单里摘掉，再取交战对象。
+   */
+  if (working.atWarWith.some((id) => working.npcSects.find((s) => s.id === id)?.alliance)) {
+    working = {
+      ...working,
+      atWarWith: working.atWarWith.filter((id) => !working.npcSects.find((s) => s.id === id)?.alliance),
+    };
+  }
   let timer = working.warTimer - dt;
   if (timer <= 0) {
     const target = working.atWarWith[0];

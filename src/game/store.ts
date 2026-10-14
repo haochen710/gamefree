@@ -22,6 +22,7 @@ import {
   TALISMAN_MAP,
   GEAR_MAP,
   MANUAL_GRADE_MIN_REALM,
+  NPC_SECT_MAP,
   REFINE_RECIPE_MAP,
   SERVANT_JOB_MAP,
   SECRET_REALM_MAP,
@@ -142,6 +143,8 @@ export interface GameStore {
   allySect(sectId: string): void;
   /** 撕毁盟约 */
   breakAlliance(sectId: string): void;
+  /** 第 24 轮（需求 2）：罢兵求和（停战） */
+  makePeaceSect(sectId: string): void;
   /** 宣战 */
   declareWar(sectId: string): void;
   /** 立刻打一场宗门大战（调试/手动用；正常由 tick 按周期触发） */
@@ -694,6 +697,25 @@ export const useGame = create<GameStore>()((set, get) => ({
       const next = diplomacy.declareWar(s.game, sectId);
       if (next === s.game) return {};
       return { ...nextGame(s.game, next), notice: '已宣战（此局不再满足隐世传承的条件）' };
+    });
+  },
+
+  /*
+   * 第 24 轮（需求 2）：停战。
+   * 原来只有"宣战"没有"停战" —— 一旦打起来就只能打到结算，是个单向门。
+   * 现在可以花一点声望罢兵求和。
+   */
+  makePeaceSect: (sectId) => {
+    set((s) => {
+      const check = diplomacy.canMakePeace(s.game, sectId);
+      if (!check.ok) return { notice: check.reason ?? '无法停战' };
+      const next = diplomacy.makePeace(s.game, sectId);
+      if (next === s.game) return {};
+      // 宗门名用 diplomacy 的查询（store 里没有直接导入 NPC_SECTS）
+      const nDef = NPC_SECT_MAP[sectId];
+      const name = nDef ? nDef.name : sectId;
+      // 不用模板字符串：本项目里给补丁脚本塞反引号会静默炸掉整批
+      return { ...nextGame(s.game, next), notice: '已向' + name + '罢兵求和' };
     });
   },
 

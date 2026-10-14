@@ -228,6 +228,8 @@ export interface SerializedGame {
   ns?: { id?: string; relation?: unknown; gifts?: unknown; alliance?: unknown }[];
   /** 是否主动宣战过 */
   ew?: unknown;
+  /** 第 24 轮（需求 2）：是否停过战（键名取 mpc：mp 已被 mindProgress 占、pc 已被 parleyCooldowns 占） */
+  mpc?: unknown;
   /** 正在交战的宗门 */
   aw?: unknown;
   /** 大战计时（键名取 wm：wt 已经被天象 id 占了） */
@@ -337,6 +339,7 @@ export function serialize(state: GameState): SerializedGame {
       alliance: s.alliance,
     })),
     ew: state.everDeclaredWar,
+    mpc: state.everMadePeace,
     aw: [...state.atWarWith],
     wm: state.warTimer,
     pc: { ...state.parleyCooldowns },
@@ -1164,6 +1167,8 @@ export function deserialize(raw: unknown): GameState | null {
       };
     }),
     everDeclaredWar: data.ew === true,
+    // 第 24 轮（需求 2）：停战 —— 旧存档没有这个字段，默认 false
+    everMadePeace: data.mpc === true,
     atWarWith: sanitizeIds(data.aw, (id) => NPC_SECT_MAP[id] !== undefined),
     warTimer: toFloat(data.wm, WAR_BATTLE_INTERVAL, 0, 1e9),
     parleyCooldowns: sanitizeNumberMap(data.pc),

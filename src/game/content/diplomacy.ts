@@ -159,6 +159,11 @@ export const ALLIANCE_PRODUCTION_BONUS = 0.03;
 
 /** 主动宣战：关系直接掉到底，并触发大战 */
 export const DECLARE_WAR_RELATION = -100;
+/** 第 24 轮（需求 2）：罢兵求和的声望代价，与宣战对称 */
+export const MAKE_PEACE_FAME_COST = 20;
+/** 停战后关系回升一点（求和总是要带礼物的） */
+export const MAKE_PEACE_RELATION = 12;
+
 export const DECLARE_WAR_FAME_COST = 300;
 
 /** 宗门大战的周期（秒）—— 处于战争状态时每这么久打一场 */

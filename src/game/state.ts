@@ -409,6 +409,8 @@ export interface GameState {
   npcSects: { id: string; relation: number; gifts: number; alliance: boolean }[];
   /** 是否**主动**宣战过（隐世传承结局要求"从未主动宣战"） */
   everDeclaredWar: boolean;
+  /** 第 24 轮（需求 2）：是否停过战（用于结局判定/文档） */
+  everMadePeace: boolean;
   /** 正在交战的宗门 id 列表（第一个是"当前主战场"） */
   atWarWith: string[];
   /** 距离下一场宗门大战还有多久 */
@@ -636,6 +638,7 @@ export function createInitialState(now = Date.now()): GameState {
     legacyEndings: [],
     npcSects: initialNpcSects(),
     everDeclaredWar: false,
+  everMadePeace: false,
     atWarWith: [],
     warTimer: 600,
     parleyCooldowns: {},
