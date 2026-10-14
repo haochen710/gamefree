@@ -25,7 +25,8 @@ import {
   TALENT_KIND_NAMES,
   type SkillKind,
 } from '../game/content';
-import { getPostBonus, getPostCapacity, getPostCount, getPostFree, talentKindOf, describePost } from '../game/posting';
+import { getPostBonus,
+  getPostEffect, getPostCapacity, getPostCount, getPostFree, talentKindOf, describePost } from '../game/posting';
 import { skillLevelOf } from '../game/content';
 import { useGame } from '../game/store';
 import type { Disciple } from '../game/state';
@@ -148,6 +149,21 @@ export function PostSection({ kind }: { kind: SkillKind }) {
     }));
 
   const bonus = getPostBonus(game, kind);
+  /*
+   * 第 27 轮（需求 1）：玩家原话「各个建筑的岗位栏，在派遣弟子后却没有显示加成
+   * 是多少；加成提出成为一个单独的栏目显示：如成功率+xx%，资源消耗减少 xx% 等」。
+   *
+   * 现在在岗弟子的加成有**四类**（第 21 轮做的模型），但界面只显示了成功率那一项 ——
+   * 省料 / 增产 / 失败回收三项完全看不见，玩家根本不知道自己派人有啥用。
+   * 所以这里把四类一起列出来（按品阶按 1 档算：这是"平时炼低阶东西"的口径）。
+   */
+  const effect = getPostEffect(game, kind, 1);
+  const effectRows = [
+    { key: 'success', label: '成功率', value: effect.success, hint: '1 级解锁' },
+    { key: 'cost', label: '资源消耗减少', value: effect.cost, hint: '3 级解锁' },
+    { key: 'output', label: '产出（出双份）', value: effect.output, hint: '5 级解锁' },
+    { key: 'salvage', label: '失败回收', value: effect.salvage, hint: '2 级解锁' },
+  ];
   const totalPosted = buildings.reduce((sum, b) => sum + b.posted, 0);
   const totalCapacity = buildings.reduce((sum, b) => sum + b.capacity, 0);
   const onDuty = game.sect.disciples.filter((d) => d.post && POST_BUILDINGS[d.post]?.kind === kind);
@@ -165,6 +181,36 @@ export function PostSection({ kind }: { kind: SkillKind }) {
         给设施的加成也翻倍（每级 +{Math.round(SKILL_BONUS_PER_LEVEL * 100)}%，上限 {SKILL_MAX_LEVEL} 级）。
         ⚠️ 在岗的弟子<strong>不能同时去探索</strong>。
       </p>
+
+      {/*
+        第 27 轮（需求 1）：**加成单独一栏**。
+        四类加成按"技艺多少级解锁"的顺序排，没解锁的也列出来并标上门槛 ——
+        否则玩家只会看到一排 0%，不知道是"没人"还是"等级不够"。
+      */}
+      <div className="notice-board">
+        <div className="notice-board__head">
+          <span>📊 {TALENT_KIND_NAMES[kind]}加成（在岗 {effect.posted} 人，其中 {effect.contributors} 人在出力）</span>
+          <span className="notice-board__sum">
+            {totalPosted === 0 ? '尚无加成' : `成功率 +${Math.round(effect.success * 100)}%`}
+          </span>
+        </div>
+        {effectRows.map((row) => (
+          <div key={row.key} className="notice-board__row">
+            <span className="notice-board__name">{row.label}</span>
+            <span className="notice-board__detail">
+              {row.value > 0 ? (
+                <strong>+{Math.round(row.value * 100)}%</strong>
+              ) : (
+                <span className="panel__hint">0%（{row.hint}）</span>
+              )}
+            </span>
+          </div>
+        ))}
+        <p className="panel__note">
+          加成按<strong>技艺等级</strong>长出来，而且**目标品阶越高、有效等级越低**
+          （炼五品丹时，3 级弟子等于没来）。想提高，就派对口天赋、等级更高的弟子。
+        </p>
+      </div>
 
       {totalCapacity === 0 ? (
         <p className="panel__note">

@@ -115,17 +115,51 @@ export function RefinePanel({ collapsible = false }: { collapsible?: boolean } =
                 {gate ? (
                   <span className="panel__note panel__note--warn">{gate}</span>
                 ) : (
-                  [1, 10, 100].map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      className={n === 1 ? 'btn btn--primary' : 'btn'}
-                      disabled={max < n}
-                      onClick={() => doRefine(recipe.id, n)}
-                    >
-                      合成 {n}
-                    </button>
-                  ))
+                  /*
+                   * 第 27 轮（需求 2）：玩家原话「所有可以合成的资源，在合成界面那，
+                   * 按钮变为"合成""自动合成"」。
+                   *
+                   * 原来是「合成 1 / 合成 10 / 合成 100」三个按钮，玩家得自己算该点哪个。
+                   * 现在只留两个，各自对应一件事：
+                   *   - **合成**：把当前能合成的**全部**一次合掉（原来那个"最大"，
+                   *     它才是玩家真正想要的动作 —— 点一次把材料用干净）；
+                   *   - **自动合成**：把这条线的**目标存量**在"开/关"之间切换。
+                   *     开着的时候引擎会按缺口自动补货（见 engine.autoRefine），
+                   *     所以它是一个开关，不是一次动作。
+                   */
+                  (() => {
+                    const target = game.autoRefineTargets[recipe.id] ?? 0;
+                    const autoOn = target > 0;
+                    return (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn--primary"
+                          disabled={max < 1}
+                          title={`把能合成的全部合掉（当前可合成 ${max} 次）`}
+                          onClick={() => doRefine(recipe.id, max)}
+                        >
+                          合成
+                        </button>
+                        <button
+                          type="button"
+                          className={autoOn ? 'btn btn--primary' : 'btn'}
+                          title={
+                            autoOn
+                              ? `自动合成中：低于目标 ${fmt(target, 0)} 个就自动补`
+                              : '开启后引擎会按目标存量自动补货'
+                          }
+                          /*
+                           * 开：默认补到当前存量的一倍（至少 100），这样"开一下"就有意义；
+                           * 关：目标归零，引擎随即停手（已投的料不退，本来就是消耗品）。
+                           */
+                          onClick={() => setAutoRefineTarget(recipe.id, autoOn ? 0 : Math.max(100, Math.ceil(have.toNumber() * 2)))}
+                        >
+                          自动合成{autoOn ? ' ✓' : ''}
+                        </button>
+                      </>
+                    );
+                  })()
                 )}
                 <span className="refine__max">可合成 {max} 次</span>
               </div>
