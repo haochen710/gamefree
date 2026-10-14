@@ -117,7 +117,7 @@ export function startEnlighten(state: GameState, pathId: string): GameState {
     journal: pushJournal(paid.journal, {
       time: paid.playTime,
       kind: 'info',
-      text: `开始感悟${path.name}（第 ${level + 1} 阶，约 ${Math.round(seconds / 60)} 分钟）`,
+      text: `开始感悟${path.name}（第 ${level + 1} 阶，约 ${describeEnlightenTime(seconds)}）`,
     }),
   };
 }
@@ -146,8 +146,20 @@ export function getEnlightenProgress(state: GameState): number {
   return Math.max(0, Math.min(1, 1 - e.remaining / e.total));
 }
 
-export function tickEnlighten(state: GameState, dt: number): GameState {
-  const e = state.enlightening;
+/**
+ * 感悟耗时的人话（第 24 轮需求 3）。
+ *
+ * 拉长到"天"的量级之后，"约 950 分钟"就不再是人话了 ——
+ * 按量级切成 秒 / 分钟 / 小时 / 天。
+ */
+function describeEnlightenTime(seconds: number): string {
+  if (seconds < 90) return `${Math.round(seconds)} 秒`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)} 分钟`;
+  if (seconds < 172800) return `${(seconds / 3600).toFixed(1)} 小时`;
+  return `${(seconds / 86400).toFixed(1)} 天`;
+}
+
+export function tickEnlighten(state: GameState, dt: number): GameState {  const e = state.enlightening;
   if (!e || dt <= 0) return state;
 
   const remaining = e.remaining - dt;
