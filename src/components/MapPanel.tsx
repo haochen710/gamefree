@@ -542,122 +542,38 @@ function SurveyCard({ region, state }: { region: MapRegionDef; state: GameState 
 /* 小区域格子 + 大区域面板                                              */
 /* ------------------------------------------------------------------ */
 
-function SubRegionCell({
-  region,
-  state,
-  expanded,
-  onToggle,
-}: {
-  region: MapRegionDef;
-  state: GameState;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const reachable = canReachRegion(state, region);
-  /*
-   * 需求 5：能"去附近转转"的地方，格子也得点得开。
-   *
-   * 原来 `disabled={!reachable}` 用的是**小区域档次**（东部群山里从需 0 到需 4），
-   * 于是后面那些小区域连点都点不开 —— 可里面本来还有普通探索这条线。
-   * 现在只要"这一带能普通探索"就允许展开：能看到里面的秘境列表，
-   * 各秘境会各自显示自己还差什么（境界 / 队伍战力 / 是否已开启）。
-   */
-  const surveyable = canSurveyRegion(state, region.id).ok;
-  const openable = reachable || surveyable;
-  const visible = reachable || isRegionVisible(state, region);
-  const all = realmsOfRegion(region.id);
-  const found = all.filter((r) => state.discoveredRealms[r.id] === true).length;
-  const full = found >= all.length;
-
-  const classes = [
-    'subregion',
-    reachable ? 'subregion--on' : visible ? 'subregion--off' : 'subregion--far',
-    !reachable && surveyable ? 'subregion--surveyable' : '',
-    region.isRich ? 'subregion--rich' : '',
-    expanded ? 'subregion--open' : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
-
-  return (
-    <button
-      type="button"
-      className={classes}
-      disabled={!openable}
-      onClick={onToggle}
-      title={region.desc}
-    >
-      <span className="subregion__icon">{region.icon}</span>
-      <span className="subregion__name">{region.name}</span>
-      <span className="subregion__meta">
-        {reachable
-          ? full
-            ? `秘境 ${found}/${all.length} ✓`
-            : `秘境 ${found}/${all.length}`
-          : surveyable
-            ? `可探查 · 秘境需${REALMS[region.requiresRealm].name}`
-            : `需${REALMS[region.requiresRealm].name}`}
-      </span>
-      {region.isRich && <span className="subregion__badge">富集</span>}
-    </button>
-  );
-}
-
-function SubRegionDetail({ region, state }: { region: MapRegionDef; state: GameState }) {
-  const all = realmsOfRegion(region.id);
-  const discovered = all.filter((r) => state.discoveredRealms[r.id] === true);
-  const hidden = all.length - discovered.length;
-  const travelTargets = TRAVEL_REGIONS.filter((t) => t.regionId === region.id);
-  /*
-   * 需求 5：这里原来写的是 `canStartSurvey(state, region.id, []).ok || hidden > 0` ——
-   * 空队伍永远过不了"至少派 1 人"那一关，所以前半句恒为 false，
-   * 实际条件退化成 `hidden > 0`。现在直接问"这一带能不能普通探索"，
-   * 把"有没有没找到的秘境"和"能不能去"分开判断。
-   */
-  const canSurvey = canSurveyRegion(state, region.id).ok;
-
-  return (
-    <div className="subregion-detail">
-      <div className="subregion-detail__head">
-        <strong>
-          {region.icon} {region.name}
-        </strong>
-        <span className="panel__hint">
-          {region.distance} 里 · 秘境 {discovered.length}/{all.length} · 需{REALMS[region.requiresRealm].name}
-        </span>
-      </div>
-      <p className="panel__note">{region.desc}</p>
-
-      {/* 还有没发现的秘境 → 显示普通探索（需求：未发现秘境时只能普通探索） */}
-      {hidden > 0 && canSurvey && <SurveyCard region={region} state={state} />}
-
-      {discovered.map((def) => (
-        <RealmCard key={def.id} def={def} state={state} />
-      ))}
-
-      {travelTargets.map((def) => (
-        <TravelCard key={def.id} def={def} state={state} />
-      ))}
-
-      {discovered.length === 0 && travelTargets.length === 0 && hidden === 0 && (
-        <p className="panel__note">此地没有可做的事。</p>
-      )}
-    </div>
-  );
-}
-
+/*
+ * 大区域一块（第 24 轮需求 7：玩家原话「删去大地域里面的小地图区分，只保留秘境」）。
+ *
+ * 原来这里是"16 个小区域格子 → 点开某格才看见秘境"。
+ * 现在一个大区域直接列出它的**全部秘境**与游历目的地，
+ * 不再把小区域当成一层入口（小区域仍存在于数据里，只是不再是界面的组织单位）。
+ */
 function MajorRegionSection({ major, state }: { major: MajorRegionDef; state: GameState }) {
-  const [openId, setOpenId] = useState<string | null>(null);
   const subs = subRegionsOf(major.id);
   const reachable = subs.filter((r) => canReachRegion(state, r));
   const realms = subs.flatMap((r) => realmsOfRegion(r.id));
-  const found = realms.filter((r) => state.discoveredRealms[r.id] === true).length;
+  const discovered = realms.filter((r) => state.discoveredRealms[r.id] === true);
+  const hidden = realms.length - discovered.length;
+  const travels = TRAVEL_REGIONS.filter((t) => subs.some((r) => r.id === t.regionId));
   const specialty = MATERIAL_MAP[major.specialty];
 
   // 一个能到的都没有，并且连预览都看不到，就整块不显示
   if (!subs.some((r) => canReachRegion(state, r) || isRegionVisible(state, r))) return null;
 
-  const open = subs.find((r) => r.id === openId) ?? null;
+  /*
+   * 普通探索挂在**大区域**这一层。
+   *
+   * 引擎侧的 `startSurvey` 仍然按一个小区域来算（时长、境界门槛、距离都在它身上），
+   * 所以这里替玩家挑一处：**优先挑这一片里还有没发现秘境、而且去得了的小区域**，
+   * 都找不到就退回到任意一处到得了的小区域。玩家看到的是"在大区域里探索"，
+   * 而不是"选中了第 7 号小区域"。
+   */
+  const surveyRegion =
+    reachable.find((r) => realmsOfRegion(r.id).some((x) => state.discoveredRealms[x.id] !== true)) ??
+    reachable[0] ??
+    null;
+  const canSurvey = surveyRegion !== null && canSurveyRegion(state, surveyRegion.id).ok;
 
   return (
     <section className="panel">
@@ -667,24 +583,26 @@ function MajorRegionSection({ major, state }: { major: MajorRegionDef; state: Ga
         </h2>
         <span className="panel__hint">
           特产 {specialty?.icon}
-          {specialty?.name} · 已探明 {reachable.length}/{subs.length} 小区域 · 秘境 {found}/{realms.length}
+          {specialty?.name} · 秘境 {discovered.length}/{realms.length}
+          {hidden > 0 ? ' · 尚有未探明之处' : ' · 已尽数探明'}
         </span>
       </div>
       <p className="panel__note">{major.desc}</p>
 
-      <div className="subgrid">
-        {subs.map((region) => (
-          <SubRegionCell
-            key={region.id}
-            region={region}
-            state={state}
-            expanded={openId === region.id}
-            onToggle={() => setOpenId(openId === region.id ? null : region.id)}
-          />
-        ))}
-      </div>
+      {/* 还有没发现的秘境 → 显示普通探索（需求 7：只有普通探索能发现秘境） */}
+      {hidden > 0 && canSurvey && surveyRegion && <SurveyCard region={surveyRegion} state={state} />}
 
-      {open && <SubRegionDetail region={open} state={state} />}
+      {discovered.map((def) => (
+        <RealmCard key={def.id} def={def} state={state} />
+      ))}
+
+      {travels.map((def) => (
+        <TravelCard key={def.id} def={def} state={state} />
+      ))}
+
+      {discovered.length === 0 && travels.length === 0 && hidden === 0 && (
+        <p className="panel__note">此地没有可做的事。</p>
+      )}
     </section>
   );
 }
