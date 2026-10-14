@@ -42,11 +42,34 @@ import type { Disciple, GameState } from './state';
 
 /* 岗位表在 content/skills.ts（engine 也要读它，见那里的注释） */
 
-/** 某座设施当前的岗位总数 */
+/**
+ * 某座设施的**每座**岗位数（第 29 轮：随品阶增长）。
+ *
+ * 玩家原话：「岗位数随丹房品阶增长（比如 10 × 炼丹品阶），而不是再多盖几座」。
+ *
+ * 这条把两件事同时解决掉了：
+ *   - 丹房 / 炼器房可以**保持唯一**（max 1，那是更早的正式设计）；
+ *   - 想让更多人上岗，就去**提升品阶**（炼丹 / 炼器 / 制符的品阶上限是 9），
+ *     而不是把宗门盖满丹房。
+ * 于是"升级"第一次同时意味着"能炼更高品"和"能容纳更多人"。
+ *
+ * 采集类（灵田）没有品阶，按 1 倍算，维持原来的每座 15 人。
+ */
+export function postSlotsPerBuilding(state: GameState, buildingId: string): number {
+  const def = POST_BUILDINGS[buildingId];
+  if (!def) return 0;
+  let tier = 1;
+  if (def.kind === 'alchemy') tier = Math.max(1, state.alchemyTier);
+  else if (def.kind === 'refining') tier = Math.max(1, state.refiningTier);
+  else if (def.kind === 'talisman') tier = Math.max(1, state.talismanTier);
+  return def.perBuilding * tier;
+}
+
+/** 某座设施当前的岗位总数 = 座数 × 每座岗位（每座随品阶增长） */
 export function getPostCapacity(state: GameState, buildingId: string): number {
   const def = POST_BUILDINGS[buildingId];
   if (!def) return 0;
-  return getBuildingCount(state, buildingId) * def.perBuilding;
+  return getBuildingCount(state, buildingId) * postSlotsPerBuilding(state, buildingId);
 }
 
 /** 该设施上已有多少人 */

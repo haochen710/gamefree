@@ -4842,24 +4842,27 @@ section('[39] 炼制成功率 / 可携带器物（需求 2）');
   check('丹房唯一（升级走炼丹品阶，不是多盖几座）', BUILDABLE_MAP.alchemyRoom.max === 1);
   check('炼器房唯一', BUILDABLE_MAP.refinery.max === 1);
   /* ---- 岗位数：要能安置几百名弟子 ---- */
-  // 第 29 轮：唯一建筑要能容纳弟子，所以岗位数抬到 40
-  check('丹房每座 40 个岗位', POST_BUILDINGS.alchemyRoom.perBuilding === 40, String(POST_BUILDINGS.alchemyRoom.perBuilding));
-  check('炼器房每座 40 个岗位', POST_BUILDINGS.refinery.perBuilding === 40);
+  /*
+   * 第 29 轮（玩家原话）：「岗位数随丹房品阶增长（比如 10 × 炼丹品阶），
+   * 而不是再多盖几座」。所以 perBuilding 是**基数 10**，倍数看品阶 ——
+   * 品阶 1 时 10 个岗位、品阶 9 时 90 个。
+   */
+  check('丹房岗位基数是 10', POST_BUILDINGS.alchemyRoom.perBuilding === 10, String(POST_BUILDINGS.alchemyRoom.perBuilding));
+  check('炼器房岗位基数是 10', POST_BUILDINGS.refinery.perBuilding === 10);
   check('符房每座 10 个岗位', POST_BUILDINGS.talismanRoom.perBuilding === 10);
   check('灵田每座 15 个岗位', POST_BUILDINGS.herbField.perBuilding === 15);
   {
     /*
-     * 第 29 轮：这里原来乘的是 12（第 20 轮把丹房/炼器房的 max 改成了 12），
-     * 而它们现在**唯一（max 1）**、符房 8 —— 乘错了就是一条"看起来很绿、
-     * 其实算的是不存在的建筑数"的断言。
-     * 真实满编：丹房 1×40 + 炼器房 1×40 + 符房 8×10 = 160 个岗位，
-     * 另外灵田不限座（每座 15），所以整体能安置的远不止这些。
+     * 第 29 轮：岗位数现在 = **基数 × 品阶**，所以满编容量要按品阶算。
+     * 用满品阶（炼丹/炼器 9、制符 3）才是"养成到后期能容纳多少人"：
+     *   丹房 1 座 × 10 × 9 = 90 · 炼器房 90 · 符房 8 × 10 × 3 = 240 → 420
+     * （另外灵田不限座、每座 15，所以实际能安置的更多。）
      */
     const total =
-      POST_BUILDINGS.alchemyRoom.perBuilding * (BUILDABLE_MAP.alchemyRoom.max ?? 1) +
-      POST_BUILDINGS.refinery.perBuilding * (BUILDABLE_MAP.refinery.max ?? 1) +
-      POST_BUILDINGS.talismanRoom.perBuilding * (BUILDABLE_MAP.talismanRoom.max ?? 1);
-    check('三座设施满编岗位足够安置上百名弟子（≥150）', total >= 150, `${total} 个`);
+      POST_BUILDINGS.alchemyRoom.perBuilding * 9 * (BUILDABLE_MAP.alchemyRoom.max ?? 1) +
+      POST_BUILDINGS.refinery.perBuilding * 9 * (BUILDABLE_MAP.refinery.max ?? 1) +
+      POST_BUILDINGS.talismanRoom.perBuilding * 3 * (BUILDABLE_MAP.talismanRoom.max ?? 1);
+    check('满品阶时三座设施能安置数百名弟子（≥300）', total >= 300, String(total) + ' 个');
   }
   check(
     '升品不再要求建筑数量（需求 2）',
@@ -7656,11 +7659,20 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
 
   /* ---- 派遣与技艺 ---- */
   {
-    // 第 29 轮：丹房唯一（max 1），所以只建 1 座 —— 岗位数全在"每座 40 人"上
+    // 第 29 轮：丹房唯一（max 1），岗位数 = 基数 10 × 炼丹品阶
     let s = forceBuild(base(), 'alchemyRoom', 1);
     s = forceBuild(s, 'herbField', 1);
-  check('丹房岗位 = 1 座 × 40 人 = 40（第 29 轮）', posting.getPostCapacity(s, 'alchemyRoom') === 40);
-    check('灵田岗位 = 1 座 × 15 人 = 15（第 20 轮提高）', posting.getPostCapacity(s, 'herbField') === 15);
+    check(
+      '丹房岗位 = 1 座 × 10 × 品阶（开局品阶 1 → 10）',
+      posting.getPostCapacity(s, 'alchemyRoom') === 10,
+      String(posting.getPostCapacity(s, 'alchemyRoom')),
+    );
+    check(
+      '品阶越高，同一座丹房能站的人越多（品阶 5 → 50）',
+      posting.getPostCapacity({ ...s, alchemyTier: 5 }, 'alchemyRoom') === 50,
+      String(posting.getPostCapacity({ ...s, alchemyTier: 5 }, 'alchemyRoom')),
+    );
+    check('灵田岗位 = 1 座 × 15 人 = 15', posting.getPostCapacity(s, 'herbField') === 15);
 
     // 造两个弟子：一个炼丹天赋（对口）、一个种田天赋（不对口）
     const alchemist = makeDisciple({ id: 'p1', farmTalent: 'furnaceAdept', realmIndex: 2 });

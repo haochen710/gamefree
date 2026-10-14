@@ -26,7 +26,8 @@ import {
   type SkillKind,
 } from '../game/content';
 import { getPostBonus,
-  getPostEffect, getPostCapacity, getPostCount, getPostFree, talentKindOf, describePost } from '../game/posting';
+  getPostEffect, getPostCapacity,
+  postSlotsPerBuilding, getPostCount, getPostFree, talentKindOf, describePost } from '../game/posting';
 import { skillLevelOf } from '../game/content';
 import { useGame } from '../game/store';
 import type { Disciple } from '../game/state';
@@ -225,6 +226,9 @@ export function PostSection({ kind }: { kind: SkillKind }) {
             </span>
             <span className="notice-board__detail">
               {b.posted} / {b.capacity} 人
+              {/* 第 29 轮：岗位数随品阶增长，所以把"每座几人"写出来 —— 否则
+                  玩家会以为"这一座怎么突然能站 90 个人" */}
+              <span className="panel__hint">（每座 {postSlotsPerBuilding(game, b.id)} 个，随品阶增长）</span>
             </span>
             <span className="btn-row" style={{ marginLeft: 'auto' }}>
               <button
