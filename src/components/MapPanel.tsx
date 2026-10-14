@@ -94,7 +94,13 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
   // 本轮需求 4 / 需求 9：循环探索次数（1~10）
   const [repeat, setRepeat] = useState(1);
 
-  const idle = getIdleDisciples(state).filter((d) => d.realmIndex >= def.minRealm);
+  /*
+   * 第 25 轮（需求 4）：秘境现在还有**最高境界要求**，所以选人时两条边界都要过 ——
+   * 否则界面会把"境界太高、进不去"的弟子也列出来让人白点。
+   */
+  const idle = getIdleDisciples(state).filter(
+    (d) => d.realmIndex >= def.minRealm && d.realmIndex <= def.maxRealm,
+  );
   // 高危秘境（基础伤亡 ≥ 30%）会让性情恬淡的弟子拒绝前往
   const highRisk = def.baseCasualty >= HIGH_RISK_CASUALTY;
   const cooldown = getRealmCooldown(state, def.id);
@@ -153,10 +159,25 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
         <span>
           人数 {effectiveMinParty(state, def)}~{PARTY_SIZE_MAX}
         </span>
-        <span title="探得越多越熟，伤亡越低">危险度 {Math.round(getRealmDanger(state, def.id) * 100)}%</span>
-        <span>{REALMS[def.minRealm].name}以上</span>
+        <span title="探得越多越熟，伤亡越低">
+          危险度 {Math.round(getRealmDanger(state, def.id) * 100)}%
+        </span>
+        {/* 第 25 轮（需求 3 / 4）：境界要求是一个**区间**，不只是下限 */}
+        <span title={`最低${REALMS[def.minRealm].name}、最高${REALMS[def.maxRealm].name}（上限 = 下限 + 2 个大境界）`}>
+          {REALMS[def.minRealm].name}~{REALMS[def.maxRealm].name}
+        </span>
         <span>约 {Math.round(def.duration / 60)} 分钟</span>
-        <span>伤亡率 {(def.baseCasualty * 100).toFixed(0)}%</span>
+        {/*
+          第 25 轮（需求 2）：显示的伤亡率要**乘上当前危险度** ——
+          否则玩家看到的永远是"最初伤亡率"，而实际生效的是
+          `危险度 × 最初伤亡率`（卡片上那个危险度百分比就是它的系数）。
+        */}
+        <span title="当前实际伤亡率 = 最初伤亡率 × 危险度">
+          伤亡率 {(def.baseCasualty * getRealmDanger(state, def.id) * 100).toFixed(1)}%
+          <span className="panel__hint">
+            （最初 {(def.baseCasualty * 100).toFixed(0)}%）
+          </span>
+        </span>
         <span>冷却 {fmtDuration(def.cooldown)}</span>
       </div>
 

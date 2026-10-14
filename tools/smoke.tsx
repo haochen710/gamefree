@@ -1445,12 +1445,39 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
   /*
    * 需求 9：队伍规模改成 12~20（人手不足时自动放宽到"有多少派多少"），
    * 所以测试不能再按 realm.minParty 派一两个人 —— 用同一个口径算。
+   *
+   * ⚠️ 第 25 轮（需求 4）：秘境现在还有**最高境界要求**（min + 2 个大境界），
+   * 所以"合体期弟子去开局那处秘境"会被正当地拦下。这里另起一个
+   * **境界落在该秘境允许区间内**的 state 来验派遣流程。
    */
-  const wantParty = Math.min(expeditions.effectiveMinParty(strong, realm), strong.sect.disciples.length);
-  const minIds = strong.sect.disciples.slice(0, wantParty).map((d) => d.id);
-  check('战力充足的队伍可以派遣', expeditions.canStartExpedition(strong, realm.id, minIds).ok);
+  const inRange: GameState = {
+    ...strong,
+    sect: {
+      ...strong.sect,
+      disciples: strong.sect.disciples.map((d) => ({ ...d, realmIndex: realm.minRealm })),
+    },
+  };
+  const wantParty = Math.min(expeditions.effectiveMinParty(inRange, realm), inRange.sect.disciples.length);
+  const minIds = inRange.sect.disciples.slice(0, wantParty).map((d) => d.id);
+  check('战力充足的队伍可以派遣', expeditions.canStartExpedition(inRange, realm.id, minIds).ok);
 
-  const started = expeditions.startExpedition(strong, realm.id, minIds);
+  /*
+   * 第 25 轮（需求 4）：境界高于上限的弟子**进不去**（低阶秘境会过期）。
+   * 这条断言把新规矩钉住 —— 它正是上面不得不另起 state 的原因。
+   */
+  {
+    const tooHigh: GameState = {
+      ...strong,
+      sect: {
+        ...strong.sect,
+        disciples: strong.sect.disciples.map((d) => ({ ...d, realmIndex: realm.maxRealm + 1 })),
+      },
+    };
+    const check1 = expeditions.canStartExpedition(tooHigh, realm.id, minIds);
+    check('境界高于上限的弟子进不去（需求 4）', !check1.ok, check1.reason ?? '');
+  }
+
+  const started = expeditions.startExpedition(inRange, realm.id, minIds);
   check('派遣后产生探索任务', started.expeditions.length === 1);
   check(
     '被派遣的弟子状态为探索中',
@@ -2937,16 +2964,42 @@ section('[24] 地图与探索距离（需求 5）');
   }
 
   check(
-    // ⚠️ 需求 5 改了这条规则：minRealm 现在取的是**所属大区域的解锁境界**，
-    // 不再是"小区域门槛 - 1"。所以这条断言按新规则写。
-    '秘境的弟子门槛等于所属大区域的解锁境界',
-    SECRET_REALMS.every(
-      (r) => r.minRealm === (MAJOR_REGION_MAP[MAP_REGION_MAP[r.regionId].majorId]?.requiresRealm ?? 0),
-    ),
+    // 第 25 轮（需求 3）：「区域的不同秘境所需的最低境界要求不同」。
+    // 旧口径（同区域所有秘境 minRealm 都等于大区解锁境界）已按需求作废。
+    '同一大区域里的秘境最低境界要求互不相同（需求 3）',
+    MAJOR_REGIONS.every((m) => {
+      const list = SECRET_REALMS.filter((r) => MAP_REGION_MAP[r.regionId]?.majorId === m.id).map((r) => r.minRealm);
+      return new Set(list).size === list.length;
+    }),
+    MAJOR_REGIONS.map((m) =>
+      m.name + ':[' + SECRET_REALMS.filter((r) => MAP_REGION_MAP[r.regionId]?.majorId === m.id).map((r) => r.minRealm).join(',') + ']',
+    ).join(' '),
   );
   check(
-    '秘境所在小区域的门槛不低于其弟子门槛',
-    SECRET_REALMS.every((r) => r.minRealm <= MAP_REGION_MAP[r.regionId].requiresRealm),
+    '同一大区域里的秘境门槛随深度严格递增',
+    MAJOR_REGIONS.every((m) => {
+      const list = SECRET_REALMS.filter((r) => MAP_REGION_MAP[r.regionId]?.majorId === m.id)
+        .sort((a, b) => (MAP_REGION_MAP[a.regionId]?.index ?? 0) - (MAP_REGION_MAP[b.regionId]?.index ?? 0))
+        .map((r) => r.minRealm);
+      return list.every((v, i) => i === 0 || v > list[i - 1]);
+    }),
+  );
+  /* 第 25 轮（需求 4）：最高境界要求，且不超过最低境界两个大境界 */
+  check(
+    '每处秘境都有最高境界要求，且不低于最低境界（需求 4）',
+    SECRET_REALMS.every((r) => typeof r.maxRealm === 'number' && r.maxRealm >= r.minRealm),
+  );
+  check(
+    '最高境界不超过最低境界 + 2 个大境界（需求 4 原文）',
+    SECRET_REALMS.every((r) => r.maxRealm <= r.minRealm + 2),
+    (() => {
+      const bad = SECRET_REALMS.filter((r) => r.maxRealm > r.minRealm + 2);
+      return bad.length > 0 ? bad.map((r) => r.name + ':' + r.minRealm + '→' + r.maxRealm).join('、') : '全部合规';
+    })(),
+  );
+  check(
+    '跨度尽量拉满（min+2，撞到渡劫上限才截断）',
+    SECRET_REALMS.every((r) => r.maxRealm === Math.min(REALMS.length - 1, r.minRealm + 2)),
   );
   check(
     '游历目的地不会出现在还没抵达的区域里',
@@ -4192,9 +4245,13 @@ section('[33] 队伍上限 9 · 金丹开宗 · 仆人固定 300 · 掌门亲往
     '其它大区的解锁境界都高于东部群山',
     MAJOR_REGIONS.filter((m) => m.id !== 'eastMountains').every((m) => m.requiresRealm > 0),
   );
+  // 第 25 轮（需求 3）：门槛改成"同区域严格递增"，旧口径已作废（见前面那几条断言）
   check(
-    '每个大区里的秘境弟子门槛都等于该大区解锁等级',
-    SECRET_REALMS.every((r) => r.minRealm === MAJOR_REGION_MAP[MAP_REGION_MAP[r.regionId].majorId].requiresRealm),
+    '每个大区里门槛最高的一处仍高于该大区解锁境界（深处更难）',
+    MAJOR_REGIONS.every((m) => {
+      const list = SECRET_REALMS.filter((r) => MAP_REGION_MAP[r.regionId]?.majorId === m.id).map((r) => r.minRealm);
+      return list.length === 0 || Math.max(...list) > m.requiresRealm;
+    }),
   );
 
   /* ---- 需求 5：掌门独自前往秘境 ---- */
@@ -7738,7 +7795,12 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
       sect: {
         ...s.sect,
         disciples: Array.from({ length: 20 }, (_, i) =>
-          makeDisciple({ id: `x${i}`, aptitude: 'heaven', realmIndex: realm.minRealm + 3 }),
+          /*
+           * 第 25 轮（需求 4）：秘境上限是 min + 2，所以这里用 +2
+           * （正好是下面那条断言说的"高出两个大境界"）。
+           * 原来写的 +3 已经**越界**，会被正当拦下。
+           */
+          makeDisciple({ id: `x${i}`, aptitude: 'heaven', realmIndex: Math.min(8, realm.minRealm + 2) }),
         ),
       },
     };

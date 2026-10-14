@@ -154,9 +154,18 @@ export function effectiveMinParty(state: GameState, def: SecretRealmDef): number
  * 所以取"秘境自带的下限"与"所在小区域要求的境界"里更高的那个。
  */
 export function effectiveMinRealm(_state: GameState, def: SecretRealmDef): number {
-  const region = MAP_REGION_MAP[def.regionId];
-  const regionRealm = region?.requiresRealm ?? 0;
-  return Math.max(def.minRealm, regionRealm > 0 ? regionRealm - 1 : 0);
+  /*
+   * 第 25 轮（需求 3）：玩家原话「区域的不同秘境所需的最低境界要求不同」。
+   *
+   * 这里原来还会再取一次"小区域门槛 − 1"（`max(def.minRealm, regionRealm - 1)`），
+   * 而同一个大区域里有两处秘境同属"同门槛的小区域"，那一项就会把它们的下限
+   * **拉平**（打印出来是 1,1,2,3,4,5 —— 仍有重复）。
+   *
+   * 现在 `def.minRealm` 已经按"该秘境在大区域里排第几"严格递增（见 content
+   * 的 `baseRealm` + spot），它本身就是最准的深浅信号，所以门槛就取它。
+   * 小区域的门槛仍然管"**能不能到那儿**"（`canReachRegion`），只是不再叠加。
+   */
+  return def.minRealm;
 }
 
 /** 这处秘境已经探过几次（危险度进度条用） */
@@ -230,6 +239,19 @@ export function canStartExpedition(state: GameState, realmId: string, ids: strin
     if (d.status !== 'idle') return { ok: false, reason: `${d.name} 正在探索中` };
     if (d.realmIndex < effectiveMinRealm(state, def)) {
       return { ok: false, reason: `需${REALMS[effectiveMinRealm(state, def)].name}以上弟子` };
+    }
+    /*
+     * 第 25 轮（需求 4）：境界**高于**上限的弟子进不去。
+     *
+     * 玩家原话：「秘境设定最高境界要求，不超过该秘境最低境界要求两个大境界」。
+     * 于是低阶秘境会随着你变强而"过期" —— 元婴弟子再去钻炼气期的药圃，
+     * 既没挑战也没收益，不如把队伍留给配得上的地方。
+     */
+    if (d.realmIndex > def.maxRealm) {
+      return {
+        ok: false,
+        reason: `${def.name}至多容${REALMS[def.maxRealm].name}弟子（${d.name}境界已过）`,
+      };
     }
     /*
      * 心魔与性格会让人**拒绝执行任务**（设定集第 8.5 / 14.3 章）。

@@ -79,8 +79,17 @@ export interface SecretRealmDef {
   minParty: number;
   /** 最多能派遣几名弟子（人越多产出越高） */
   maxParty: number;
-  /** 弟子境界下限 */
+  /** 弟子境界下限（第 25 轮起：大区域门槛 + 在大区域里的序号，同区域严格递增） */
   minRealm: number;
+  /**
+   * 弟子境界**上限**（第 25 轮需求 4）。
+   *
+   * 玩家原话：「秘境设定最高境界要求，不超过该秘境最低境界要求两个大境界」。
+   * 所以它恒等于 `minRealm + REALM_SPAN_MAX`（= min + 2）。
+   * 境界高于此数的弟子**进不去** —— 低阶秘境会随着你变强而"过期"，
+   * 这也让"该去哪一层"成为每次都要重新看的决定。
+   */
+  maxRealm: number;
   /** 一次探索结束后的冷却秒数 */
   cooldown: number;
   /** 基础伤亡率 */
@@ -404,12 +413,64 @@ function buildLoot(
   return loot;
 }
 
+/**
+ * 秘境境界区间的**跨度上限**（第 25 轮需求 4）。
+ *
+ * 玩家原话：「秘境设定最高境界要求，不超过该秘境最低境界要求两个大境界」。
+ * 所以 `maxRealm = minRealm + 2`，一处秘境最多横跨三个大境界。
+ *
+ * ⚠️ 它必须定义在**用到它的生成器之前** —— 否则模块初始化时 `SECRET_REALMS`
+ * 会读到 TDZ 里的 `undefined`，算出 `maxRealm = NaN`（而这个 NaN 不会报错，
+ * 只会让 `>= minRealm` 这类比较静默变 false，冒烟抓了一阵才认出来）。
+ */
+export const REALM_SPAN_MAX = 2;
+
+/**
+ * 秘境境界区间的**基准**（第 25 轮需求 3 / 4）。
+ *
+ * = 大区域门槛下移两档（下限夹在 0）：
+ *   - 大区域门槛 ≥ 2 时下移两档，让同一大区域里的 6 处能用 spot 拉开而不越界；
+ *   - 门槛 0 / 1 的两个大区域（东部群山、南疆）基准就是 0，
+ *     否则只靠 spot 会撞在 0 上出现重复。
+ * 6 处秘境因此**严格递增**：门槛 3 的大区域是 1,2,3,4,5,6，依此类推。
+ */
+function baseRealm(region: MapRegionDef): number {
+  const majorRealm = MAJOR_REGION_MAP[region.majorId]?.requiresRealm ?? 0;
+  return Math.max(0, majorRealm >= 2 ? majorRealm - 2 : 0);
+}
+
+/** 境界下标夹到合法范围（0..8） */
+function clampRealm(value: number): number {
+  return Math.min(REALMS.length - 1, Math.max(0, value));
+}
+
 function buildRealm(
   region: MapRegionDef,
   rank: number,
   profile: RealmProfile,
   specialty: MaterialId | null,
+  /** 该秘境在自己大区域里排第几（0..5）——第 25 轮用来错开最低境界 */
+  spot = 0,
 ): SecretRealmDef {
+  /*
+   * 第 25 轮：先把这处秘境的境界区间算出来（下面好几处都要用）。
+   * `spot` 让同一大区域里的 6 处**严格递增、互不相同**。
+   */
+  const minRealm = clampRealm(baseRealm(region) + spot);
+  const maxRealm = clampRealm(baseRealm(region) + spot + REALM_SPAN_MAX);
+  return buildRealmBody(region, rank, profile, specialty, spot, minRealm, maxRealm);
+}
+
+function buildRealmBody(
+  region: MapRegionDef,
+  rank: number,
+  profile: RealmProfile,
+  specialty: MaterialId | null,
+  spot: number,
+  minRealm: number,
+  maxRealm: number,
+): SecretRealmDef {
+  void spot;
   const tier = regionTier(region.id);
   const stat = TIER_STATS[tier];
   const globalIndex = Math.max(0, regionIndex(region.id));
@@ -453,7 +514,22 @@ function buildRealm(
      * 不该再用境界卡一道 —— 否则就会出现"掌门化神了，弟子却还要元婴"
      * 这种把玩家挡在门外的怪规定。
      */
-    minRealm: Math.max(0, MAJOR_REGION_MAP[region.majorId]?.requiresRealm ?? 0),
+    /*
+     * 第 25 轮（需求 3）：「区域的不同秘境所需的最低境界要求不同」。
+     *
+     * 原来是 `minRealm = 大区域门槛` —— 同一个大区域里 6 处**完全一样**；真正
+     * 拉开差距的是 `effectiveMinRealm` 里"小区域门槛 − 1"那条，所以打印出来
+     * 是 0,0,0,1,2,3 这种**带重复**的序列。
+     *
+     * 现在按"在大区域里排第几"（spot）错开：大区域门槛 ≥ 2 时基准**下移两档**
+     * 再加 spot，于是每个大区域里的 6 处**严格递增、互不相同**。
+     *
+     * ⚠️ 为什么是下移而不是上移：上移会把"炼丹升品要的前置材料"推迟到够不着的
+     * 地方 —— 实测直接打红了两条材料链断言（化神丹的太阴玄晶、炼虚丹的龙血、
+     * 合体丹的仙玉……）。下移两档则让材料**更早**到手，同时把区间拉开。
+     */
+    minRealm,
+    maxRealm,
     cooldown: Math.round(stat.cooldown * (1 + 0.2 * rank)),
     /*
      * 需求 2：「等级越高的秘境，死亡率越高」。
@@ -484,7 +560,15 @@ function buildRealm(
      */
     requiresSectLevel: capSectLevelByRealm(
       stat.sectLevel,
-      Math.max(0, MAJOR_REGION_MAP[region.majorId]?.requiresRealm ?? 0),
+      /*
+       * 第 25 轮：这里原来拿**大区域**的门槛来夹，而 `minRealm` 现在是
+       * "大区域门槛下移两档 + 在大区域里的序号"，两者不再相等 ——
+       * 于是又冒出「碎星滩·虚空裂隙（需元婴期）却要 2 品宗门（需化神期）」
+       * 这种倒挂。夹的依据必须是**这处秘境自己的下限**（`minRealm`），
+       * 这也正是下面那条注释说的「声明在境界 R 开放，就不可能要求 R 时
+       * 根本达不到的品阶」。
+       */
+      minRealm,
     ),
     specialty: specialty ?? undefined,
     // 需求 1：资源富集区的秘境要先花钱"开启"
@@ -560,7 +644,7 @@ export const SECRET_REALMS: SecretRealmDef[] = MAP_REGIONS.flatMap((region) => {
     const isSpecialtySpot = spot === REALMS_PER_MAJOR - 1;
     const specialty = isSpecialtySpot ? (major?.specialty ?? null) : null;
     const profile = rotation[spot % rotation.length] ?? primaryFlavor;
-    return buildRealm(region, rank, profile, specialty);
+    return buildRealm(region, rank, profile, specialty, spot);
   });
 });
 
