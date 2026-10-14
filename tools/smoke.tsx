@@ -8560,8 +8560,15 @@ section('[58] 自动炼制：按目标存量自动补，补够就停（第 27 �
   check('测试用的丹方存在', PILL_MAP[pillId] !== undefined, pillId);
 
   const base: GameState = {
-    // 聚气丹要 妖丹 3（第一次写测试时忘了给，于是"自动炼制什么都没炼"）
-    ...grant(createInitialState(0), { qi: '1e9', herb: '1e9', demonCore: '1e6' }),
+    /*
+     * ⚠️ 必须先把仓库扩起来再给资源。
+     *
+     * 第一次写这条测试时直接 `grant(..., { qi: '1e9' })`，结果 `applyTick` 末尾的
+     * `clampResources` 把灵气**砍回基础上限 250** —— 而聚气丹要 1000 灵气，
+     * 于是"自动炼制什么也没炼"。查了半天才发现不是机制的问题，是**测试给超了上限**：
+     * 游戏里灵气本来就会被砍到储存上限，这是设计，不是 bug。
+     */
+    ...withBigStorage(grant(createInitialState(0), { qi: '1e9', herb: '1e9', demonCore: '1e6' })),
     techs: { ...createInitialState(0).techs, alchemyArt: true },
     alchemyTier: 3,
     sect: { ...createInitialState(0).sect, founded: true },
@@ -8589,6 +8596,33 @@ section('[58] 自动炼制：按目标存量自动补，补够就停（第 27 �
   );
   check('不会超过目标存量', (fired.pills[pillId] ?? 0) <= 20, String(fired.pills[pillId] ?? 0));
   check('出手后计时归零', fired.autoCraftTimer === 0, String(fired.autoCraftTimer));
+
+  /*
+   * 把上一版留下的那点不确定**钉死**：走整条 applyTick 时丹药会归零，
+   * 到底是"没炼"还是"炼了又被吃掉"？
+   *
+   * 判据是**材料减少**（炼制一定会付材料费），而不是看成品：
+   *   - 开自动 → 妖丹必然变少（炼制付过钱）；
+   *   - 关自动 → 一点也不会少。
+   * 这样两条合起来就证明了"炼制真的发生了，只是成品被 tick 里的其它环节消耗"。
+   */
+  {
+    const before = auto.materials.demonCore.toNumber();
+    const afterTick = applyTick(auto, 30, () => 0.1);
+    check(
+      '开了自动时，整条 tick 走下来材料确实被炼制消耗了（说明炼制真的发生）',
+      afterTick.materials.demonCore.toNumber() < before,
+      `${before} → ${afterTick.materials.demonCore.toNumber()}`,
+    );
+
+    const offBefore = base.materials.demonCore.toNumber();
+    const offTick = applyTick(base, 30, () => 0.1);
+    check(
+      '没开自动时材料一点也不会少',
+      offTick.materials.demonCore.toNumber() === offBefore,
+      `${offBefore} → ${offTick.materials.demonCore.toNumber()}`,
+    );
+  }
 
   // 已经囤够 → 停手（再走一段时间也不再增加）
   const full: GameState = { ...base, pills: { [pillId]: 20 }, autoCraftTargets: { [pillId]: 20 } };
