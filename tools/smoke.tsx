@@ -8664,6 +8664,41 @@ section('[58] 自动炼制：按目标存量自动补，补够就停（第 27 �
   }
 
   /*
+   * 第 28 轮（目标 ④）：**开关本身也要能存能读**。
+   *
+   * 只验"键出现在序列化里"是不够的 —— 还要验语义：开着读回来仍然开着、
+   * 关着读回来仍然关着，而且**非法 id 会被丢掉**（与目标表同一套规矩）。
+   */
+  {
+    const withSwitches: GameState = {
+      ...base,
+      autoCraftOn: { [pillId]: true },
+      autoCraftTargets: { [pillId]: 20 },
+      autoRefineOn: { stoneRefine: true },
+    };
+    const round = deserialize(JSON.parse(JSON.stringify(serialize(withSwitches))));
+    check('自动炼制的开关能存能读', round?.autoCraftOn[pillId] === true, String(round?.autoCraftOn[pillId]));
+    check('自动合成的开关能存能读', round?.autoRefineOn.stoneRefine === true, String(round?.autoRefineOn.stoneRefine));
+
+    // 关着的不会凭空变成开着
+    const offRound = deserialize(JSON.parse(JSON.stringify(serialize(base))));
+    check('没开的读回来还是没开', Object.keys(offRound?.autoCraftOn ?? {}).length === 0);
+
+    // 非法 id 丢掉；非 true 的杂值也丢掉
+    const dirty = deserialize({
+      ...JSON.parse(JSON.stringify(serialize(base))),
+      aco: { notARealItem: true, [pillId]: true },
+      aro: { stoneRefine: 'yes', nonsense: true },
+    });
+    check('开关表里的非法 id 会被丢掉', dirty?.autoCraftOn.notARealItem === undefined && dirty?.autoCraftOn[pillId] === true);
+    check(
+      '开关表里非 true 的杂值会被丢掉',
+      dirty?.autoRefineOn.stoneRefine === undefined && dirty?.autoRefineOn.nonsense === undefined,
+      JSON.stringify(dirty?.autoRefineOn),
+    );
+  }
+
+  /*
    * 把上一版留下的那点不确定**钉死**：走整条 applyTick 时丹药会归零，
    * 到底是"没炼"还是"炼了又被吃掉"？
    *
