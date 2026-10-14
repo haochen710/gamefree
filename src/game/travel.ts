@@ -44,17 +44,12 @@ import {
 import {
   addItem,
   canReachRegion,
-  discoverRealm,
-  getDiscoveryChance,
   getRealmCooldown,
   getStructureBonus,
-  getUndiscoveredCandidates,
-  isDiscoveryGuaranteed,
   isRealmAvailable,
   isRealmOpened,
   isRealmDiscovered,
   isRegionVisible,
-  recordDiscoveryFailure,
 } from './engine';
 import { canSurveyRegion, getSurveyDuration } from './expeditions';
 import { addInsight, pushJournal } from './disciples';
@@ -530,27 +525,11 @@ export function resolveTravel(
     }
   }
 
-  /* ---- 发现新秘境（需求 1：玩家探索也能发现） ---- */
-  let discovered: TravelOutcome['discovered'] = null;
-  // 掌门亲自游历：只在目的地所在的那一片找新秘境（需求 1）
-  const candidates = getUndiscoveredCandidates(working, def.regionId);
-  if (candidates.length > 0) {
-    // 硬保底与探索共用同一个失败计数（发现概率只有寻宝宝盘能提升）
-    if (isDiscoveryGuaranteed(working) || random() < getDiscoveryChance(working)) {
-      const [found] = weightedDraw(
-        candidates.map((c) => ({ ...c, weight: c.discoveryWeight })),
-        1,
-        random,
-      );
-      if (found) {
-        working = discoverRealm(working, found.id);
-        discovered = { id: found.id, name: found.name, icon: found.icon };
-      }
-    } else {
-      working = recordDiscoveryFailure(working);
-    }
-  }
-
+  /*
+   * 发现新秘境 —— **第 24 轮起这里不再发现秘境**（需求 7：只有普通探索能发现）。
+   * 游历仍然负责见闻、材料与游历事件，只是不再"顺路摸出新秘境"。
+   */
+  const discovered: TravelOutcome['discovered'] = null;
   /* ---- 掌门见闻讲与弟子（需求 4 的心得） ---- */
   const insightGain = Math.max(0, Math.round(INSIGHT_PER_TRAVEL * (1 + getStructureBonus(working, 'insightBonus'))));
   if (insightGain > 0 && working.sect.disciples.length > 0) {
@@ -574,17 +553,6 @@ export function resolveTravel(
       text: `自${def.name}游历归来：${summary || '一无所获'}${seedText ? `，另得${seedText}` : ''}`,
     }),
   };
-
-  if (discovered) {
-    working = {
-      ...working,
-      journal: pushJournal(working.journal, {
-        time: working.playTime,
-        kind: 'good',
-        text: `掌门在${def.name}外发现了新的秘境：${discovered.icon}${discovered.name}`,
-      }),
-    };
-  }
 
   return { state: working, outcome: { regionName: def.name, gains, seeds: seedGains, discovered } };
 }

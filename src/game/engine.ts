@@ -679,10 +679,29 @@ export function getDiscoveredRealms(state: GameState): SecretRealmDef[] {
  * `nearRegionId` 仍然保留，用于日志与将来可能的加权，不影响候选集。
  */
 export function getUndiscoveredCandidates(state: GameState, nearRegionId?: string): SecretRealmDef[] {
-  void nearRegionId;
-  return SECRET_REALMS.filter(
-    (def) => !isRealmDiscovered(state, def) && isRealmInRange(state, def) && def.discoveryWeight > 0,
-  );
+  /*
+   * 第 24 轮（需求 7）：玩家原话「**只有在秘境所属大地图普通探索才能发现该秘境**」。
+   *
+   * ⚠️ 这里原来有一行 `void nearRegionId;` —— 参数**被整个忽略**了，
+   * 所以"在哪儿探索"和"能发现哪儿的秘境"毫无关系：
+   * 在东边随便走一圈也能摸出西漠的秘境。这个 bug 与"发现秘境"那条线一直都在，
+   * 只是此前没人把两件事对起来看。
+   *
+   * 现在按**大区域**过滤（不是小区域 —— 需求 7 同时要求"删去大地域里面的小地图区分"，
+   * 所以归属的粒度就是大区域）。
+   */
+  const nearMajor = nearRegionId ? MAP_REGION_MAP[nearRegionId]?.majorId : undefined;
+  return SECRET_REALMS.filter((def) => {
+    if (isRealmDiscovered(state, def)) return false;
+    if (!isRealmInRange(state, def)) return false;
+    if (def.discoveryWeight <= 0) return false;
+    if (nearMajor !== undefined) {
+      // 只管自己那一片：秘境所属的大区域必须与探索地一致
+      const realmMajor = MAP_REGION_MAP[def.regionId]?.majorId;
+      if (realmMajor !== nearMajor) return false;
+    }
+    return true;
+  });
 }
 
 /**
@@ -735,9 +754,19 @@ export function getDiscoveryBonusFromArtifacts(state: GameState): number {
   return getArtifactBonuses(state).discovery;
 }
 
-/** 连续失败太多次 → 下一次必然发现（硬保底，独立于概率公式） */
+/**
+ * 硬保底**已在第 24 轮取消**（需求 7：「发现秘境**无保底**」）。
+ *
+ * 玩家要的是"发现秘境纯靠概率"。这里保留函数名与调用点，
+ * 但恒为 false —— 于是所有调用点都会走"掷骰"那条路，
+ * 不会再有"连续失败 N 次必然发现"的兜底。
+ *
+ * 为什么不直接删掉函数：调用点散在探索与游历里，留着这个名字
+ * （并在这里写明它已作废）比在每个调用点删一行更不容易漏。
+ */
 export function isDiscoveryGuaranteed(state: GameState): boolean {
-  return state.discoveryFailures >= DISCOVERY_PITY_FAILURES;
+  void state;
+  return false;
 }
 
 /** 还差几次失败才触发硬保底（界面提示用） */

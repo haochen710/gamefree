@@ -1588,7 +1588,12 @@ section('[10] 秘境探索：发现、冷却、人数（需求 1 / 5）');
     explorer = engine.tickRealmCooldowns(explorer, 99999);
   }
   const after = expeditions.getUndiscoveredCount(explorer);
-  check('反复探索能发现新秘境', after < before, `${before} → ${after}`);
+  /*
+   * 第 24 轮（需求 7）：「只有普通探索能发现秘境」——
+   * 所以反复**探秘境**不再发现任何新秘境（原来这条会变少）。
+   * 发现新秘境的路径改由普通探索负责，见下面的 survey 小节。
+   */
+  check('反复探秘境不再发现新秘境（需求 7）', after === before, `${before} → ${after}`);
   check(
     '已发现的秘境永久固定（不会因为材料变化而消失）',
     engine.getDiscoveredRealms(explorer).length === SECRET_REALMS.length - after,
@@ -3086,7 +3091,11 @@ section('[24] 地图与探索距离（需求 5）');
     /* ---- 硬保底：独立于概率公式的一条机制 ---- */
     check('失败次数不够时不触发硬保底', !engine.isDiscoveryGuaranteed(armed));
     const pityState: GameState = { ...armed, discoveryFailures: DISCOVERY_PITY_FAILURES };
-    check('连续失败到阈值就触发硬保底', engine.isDiscoveryGuaranteed(pityState));
+    /*
+   * 第 24 轮（需求 7）：「发现秘境**无保底**」——
+   * 所以哪怕失败次数远超阈值，也**不会**触发任何兜底。
+   */
+  check('失败次数再多也不再触发保底（需求 7：无保底）', !engine.isDiscoveryGuaranteed(pityState));
     check(
       '还差几次可以算出来（界面提示用）',
       engine.getDiscoveryPityRemaining({ ...armed, discoveryFailures: 4 }) === DISCOVERY_PITY_FAILURES - 4,
@@ -8356,6 +8365,50 @@ section('[55] 商店货品名字 + 缺丹判据统一（第 24 轮 需求 4 / 8�
     const s2: GameState = { ...s, sect: { ...s.sect, disciples: [training as never] } };
     check('修为没修满的不算缺丹', !disciples.isDisciplePillStalled(s2, training as never));
     check('告示栏也不会把他算进去', disciples.getPillDemand(s2).length === 0);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 56. 第 24 轮批 4：秘境发现规则（需求 7）                             */
+/* ------------------------------------------------------------------ */
+section('[56] 秘境发现：无保底 / 只在所属大区域（第 24 轮 需求 7）');
+{
+  const armed: GameState = {
+    ...createInitialState(0),
+    realmIndex: 8,
+    sect: { ...createInitialState(0).sect, founded: true },
+  };
+
+  /* ---- 无保底 ---- */
+  check(
+    '失败次数拉满也不再有保底（需求 7：发现秘境无保底）',
+    !engine.isDiscoveryGuaranteed({ ...armed, discoveryFailures: 99999 }),
+  );
+
+  /* ---- 只在所属大区域 ----
+   *
+   * ⚠️ 这条是本次真正修掉的漏洞：`getUndiscoveredCandidates` 原来有一行
+   * `void nearRegionId;` —— 参数被整个忽略，于是"在哪儿探索"与
+   * "能发现哪儿的秘境"毫无关系（东边随便走一圈也能摸出西漠的秘境）。
+   */
+  {
+    const eastRegion = MAP_REGIONS.find((r) => r.majorId === MAJOR_REGIONS[0].id)!;
+    const westRegion = MAP_REGIONS.find((r) => r.majorId === MAJOR_REGIONS[2].id)!;
+    const eastCandidates = engine.getUndiscoveredCandidates(armed, eastRegion.id);
+    check(
+      '在大区域 A 探索，候选里只有 A 的秘境',
+      eastCandidates.length > 0 &&
+        eastCandidates.every((r) => MAP_REGION_MAP[r.regionId]?.majorId === MAJOR_REGIONS[0].id),
+      `${eastCandidates.length} 处`,
+    );
+    const westCandidates = engine.getUndiscoveredCandidates(armed, westRegion.id);
+    check(
+      '换到大区域 C 探索，候选里就只有 C 的秘境（两边不重叠）',
+      westCandidates.length > 0 &&
+        westCandidates.every((r) => MAP_REGION_MAP[r.regionId]?.majorId === MAJOR_REGIONS[2].id) &&
+        !westCandidates.some((r) => eastCandidates.includes(r)),
+      `${westCandidates.length} 处`,
+    );
   }
 }
 

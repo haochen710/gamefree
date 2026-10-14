@@ -539,28 +539,14 @@ export function resolveExpedition(
     }
   }
 
-  /* ---- 1d. 发现新秘境（需求 1） ---- */
-  let discovered: ExpeditionOutcome['discovered'] = null;
-  // 只在附近发现（需求 1）：探秘境同样倾向于发现同一片地方的新秘境
-  const candidates = getUndiscoveredCandidates(working, def.regionId);
-  if (candidates.length > 0) {
-    // 硬保底：连续失败够多次就必然发现一次（它不在概率公式里，见 engine）
-    if (isDiscoveryGuaranteed(working) || random() < getDiscoveryChance(working)) {
-      const [found] = weightedDraw(
-        candidates.map((c) => ({ ...c, weight: c.discoveryWeight })),
-        1,
-        random,
-      );
-      if (found) {
-        working = discoverRealm(working, found.id);
-        discovered = { id: found.id, name: found.name, icon: found.icon };
-      }
-    } else {
-      // 没发现就累积失败次数，避免运气差的玩家永远停在第一处秘境
-      working = recordDiscoveryFailure(working);
-    }
-  }
-
+  /*
+   * 1d. 发现新秘境 —— **第 24 轮起这里不再发现秘境**。
+   *
+   * 玩家原话（需求 7）：「只有普通探索能发现秘境」。
+   * 原来探秘境、掌门游历、普通探索三条路都能发现，等于"发现"这件事
+   * 没有任何代价与门槛 —— 现在只留普通探索这一条。
+   */
+  const discovered: ExpeditionOutcome['discovered'] = null;
   /* ---- 1d2. 功法碎片（设定集第 7.3 章：小怪/精英/BOSS 掉碎片） ---- */
   const fragmentRoll = rollFragmentDrop(working, def.tier, random);
   working = fragmentRoll.state;
@@ -695,13 +681,7 @@ export function resolveExpedition(
       extra ? `，另得 ${extra}` : ''
     }`,
   });
-  if (discovered) {
-    journal = pushJournal(journal, {
-      time: working.playTime,
-      kind: 'good',
-      text: `弟子在${def.name}深处发现了新的秘境：${discovered.icon}${discovered.name}`,
-    });
-  }
+  // 第 24 轮（需求 7）：探秘境不再发现新秘境，所以这里也没有"发现了新秘境"的记事
   if (casualties.length > 0) {
     journal = pushJournal(journal, {
       time: working.playTime,
