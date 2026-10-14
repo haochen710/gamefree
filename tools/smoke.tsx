@@ -8308,6 +8308,58 @@ section('[54] 库房阶梯：灵石为主 · 解锁推后 · 无死锁（第 19 
 }
 
 /* ------------------------------------------------------------------ */
+/* 55. 第 24 轮批 1：商店中文名 / 缺丹判据统一（需求 4 / 8）              */
+/* ------------------------------------------------------------------ */
+section('[55] 商店货品名字 + 缺丹判据统一（第 24 轮 需求 4 / 8）');
+{
+  /* ---- 需求 4：商店货品的名字不能是英文 id ---- */
+  {
+    // 符箓是"材料类"货品，它的名字不在 MATERIAL_MAP 里 —— 这正是旧写法漏掉的那类
+    const talismanId = 'spiritBasic';
+    const offer = { kind: 'material', item: talismanId, price: D(1), amount: 1 } as never;
+    const view = shop.describeOffer(offer);
+    check('符箓类货品有中文名（不是英文 id）', view.name !== talismanId && view.name.length > 0, view.name);
+
+    // 每个商店货品都必须在界面上"看得出是啥"
+    const bad = SHOP_GOODS.map((g) => ({ g, v: shop.describeOffer({ ...g, price: D(1) } as never) })).filter(
+      ({ g, v }) => v.name === g.item,
+    );
+    check('没有货品会显示成原始 id', bad.length === 0, bad.map(({ g }) => g.item).join('、'));
+  }
+
+  /* ---- 需求 8：三处"缺丹"必须是同一个判据 ---- */
+  {
+    const realmIndex = 2; // 金丹：有突破丹
+    const realm = REALMS[realmIndex];
+    const base = makeDisciple({ id: 'd1', name: '甲', aptitude: 'heaven' });
+    const need = disciples.getDiscipleRealmNeed({ ...base, realmIndex } as never, realmIndex);
+    const stalled = { ...base, realmIndex, progress: need };
+    const s: GameState = {
+      ...createInitialState(0),
+      // 掌门境界要够高，否则这名弟子会被"已至掌门境界"这条上限排除（那就不是缺丹）
+      realmIndex: 6,
+      sect: { ...createInitialState(0).sect, founded: true, disciples: [stalled as never] },
+    };
+    check('修为修满就算"缺丹"', disciples.isDisciplePillStalled(s, stalled as never));
+    check('突破丹就是该境界的那一味', realm.breakthroughPill !== undefined, String(realm.breakthroughPill));
+
+    // 丹房告示栏里必须能看见他（旧版这里与行内徽章用的是不同判据）
+    const demand = disciples.getPillDemand(s);
+    check(
+      '丹房告示栏能列出这名缺丹弟子',
+      demand.some((entry) => entry.pillId === realm.breakthroughPill && entry.waiting >= 1),
+      demand.map((e) => `${e.name}×${e.waiting}`).join('、') || '（空）',
+    );
+
+    // 修为没修满的不算缺丹
+    const training = { ...stalled, progress: 0 };
+    const s2: GameState = { ...s, sect: { ...s.sect, disciples: [training as never] } };
+    check('修为没修满的不算缺丹', !disciples.isDisciplePillStalled(s2, training as never));
+    check('告示栏也不会把他算进去', disciples.getPillDemand(s2).length === 0);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* 结果                                                                */
 /* ------------------------------------------------------------------ */
 console.log('');

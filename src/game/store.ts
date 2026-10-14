@@ -576,33 +576,54 @@ export const useGame = create<GameStore>()((set, get) => ({
   autoEquipManuals: () => {
     set((s) => {
       let working = s.game;
-      const owned = manuals
+      /*
+       * 第 24 轮重写（需求 5 / 6 / 1）。
+       *
+       * 玩家原话：
+       *   「一键发书和一键装备等会优先低阶功法和装备，应该是按弟子境界，
+       *     从高阶功法、装备分发」；
+       *   「一键发书等功能实际是点一下给一个弟子发书」。
+       *
+       * 旧写法的两个毛病：
+       *   ① `candidates` 是 `disciples` 的**旧快照** —— 发完一本后 `working` 里
+       *      那名弟子的对象已经换了，快照里他还是"槽位空着"，于是 `.find()`
+       *      又返回同一个人 → `equipManual` 发现槽位已占 → `break` →
+       *      **每次点击只发得出一本**（需求 6）。
+       *   ② `handed` 因此只累加到 1，界面上的"已发出 X 本"与实际不符（需求 1）。
+       *
+       * 现在与 `gear.autoEquipGears` 用同一套写法：**每发一本都从最新的 state
+       * 重新挑人**，并且按"品阶从高到低"遍历功法、每次都发给**够境界且境界最高**
+       * 的那名弟子 —— 这正是需求 5 要的"从高阶功法往下发"。
+       */
+      // 仓库里有的功法，按**品阶从高到低**排（这就是"从高阶功法往下发"的顺序）
+      const order = manuals
         .getOwnedManuals(working)
-        .sort((a, b) => b.def.grade - a.def.grade)
-        .map((entry) => ({ ...entry }));
-      if (owned.length === 0) return { notice: '仓库里没有可发的功法' };
-
-      const candidates = [...working.sect.disciples].sort(
-        (a, b) => b.realmIndex - a.realmIndex || a.name.localeCompare(b.name),
-      );
+        .map((entry) => entry.def)
+        .sort((a, b) => b.grade - a.grade || a.id.localeCompare(b.id));
       let handed = 0;
-      for (const entry of owned) {
-        const slot = entry.def.kind === 'cultivation' ? 'cultivationManual' : 'combatManual';
-        for (let i = 0; i < entry.count; i += 1) {
-          const target = candidates.find(
-            (d) =>
-              !d[slot] &&
-              d.realmIndex >= MANUAL_GRADE_MIN_REALM[entry.def.grade] &&
-              manuals.getManualCount(working, entry.def.id) > 0,
-          );
-          if (!target) break;
-          const next = manuals.equipManual(working, target.id, entry.def.id);
+
+      for (const def of order) {
+        const slot: 'cultivationManual' | 'combatManual' =
+          def.kind === 'cultivation' ? 'cultivationManual' : 'combatManual';
+        let guard = 0;
+        while (manuals.getManualCount(working, def.id) > 0 && guard < 10000) {
+          guard += 1;
+          // 从**当前** state 里挑：够境界、该槽位还空着、境界最高的那位
+          let best: { id: string; realmIndex: number } | null = null;
+          for (const d of working.sect.disciples) {
+            if (d[slot]) continue;
+            if (d.realmIndex < MANUAL_GRADE_MIN_REALM[def.grade]) continue;
+            if (!best || d.realmIndex > best.realmIndex) best = { id: d.id, realmIndex: d.realmIndex };
+          }
+          if (!best) break;
+          const next = manuals.equipManual(working, best.id, def.id);
           if (next === working) break;
           working = next;
           handed += 1;
         }
       }
-      if (working === s.game) return { notice: '没有可发出去的功法（弟子境界不够或都已装备）' };
+
+      if (handed === 0) return { notice: '没有可发出去的功法（弟子境界不够或都已装备）' };
       return { ...nextGame(s.game, working), notice: `已发出 ${handed} 本功法` };
     });
   },

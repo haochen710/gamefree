@@ -233,6 +233,27 @@ export function getDiscipleRealmNeed(disciple: Disciple, realmIndex: number): nu
 }
 
 /**
+ * 这名弟子是不是"修为已满、只差一颗突破丹"（第 24 轮需求 8）。
+ *
+ * ⚠️ 这一条**必须只有一处实现**。玩家原话：
+ *   「弟子缺乏丹药时，在弟子管理界面选择缺乏丹药时，弟子名单却不显示该弟子，
+ *     丹房告示栏也没有」。
+ * 根因就是"缺丹"当时有**三套不同的判据**：
+ *   - 弟子行内的「缺丹」徽章用 `realm.cultivationYears`（**未缩放**的旧值）；
+ *   - 弟子管理的筛选用 `getDiscipleRealmNeed(...)`（按境界系数缩放、还减功法）；
+ *   - 丹房告示栏用 `getDiscipleRealmNeed(...)`，并且**再排除掉到上限的人**。
+ * 缩放系数一调，前两者就会错开：弟子挂着「缺丹」徽章，却筛不出来、
+ * 告示栏里也没有。现在三处都读这一个函数。
+ */
+export function isDisciplePillStalled(state: GameState, disciple: Disciple): boolean {
+  const realm = REALMS[disciple.realmIndex];
+  if (!realm?.breakthroughPill) return false;
+  // 已经是资质上限 / 掌门境界上限的人不需要丹，别把他们算成"缺丹"
+  if (getDiscipleCapReason(state, disciple) !== null) return false;
+  return disciple.progress >= getDiscipleRealmNeed(disciple, disciple.realmIndex);
+}
+
+/**
  * 弟子**自己**受到的秘境伤亡率削减（战斗天赋 + 性格 + 忠诚档 + 功法）。
  *
  * 为什么挂"每人一份"而不是全宗一个系数：秘境的伤亡本来就是逐人掷骰
@@ -691,10 +712,8 @@ export function getPillDemand(state: GameState): PillDemand[] {
   for (const d of state.sect.disciples) {
     const def = REALMS[d.realmIndex];
     if (!def || !def.breakthroughPill) continue;
-    // 修为没满的不算缺丹（他们还在修）
-    if (d.progress < getDiscipleRealmNeed(d, d.realmIndex)) continue;
-    // 已经是资质上限 / 掌门境界上限的，也不再需要丹
-    if (getDiscipleCapReason(state, d) !== null) continue;
+    // 第 24 轮（需求 8）：与弟子行内徽章、弟子管理筛选共用**同一个**判据
+    if (!isDisciplePillStalled(state, d)) continue;
     waitingByPill.set(def.breakthroughPill, (waitingByPill.get(def.breakthroughPill) ?? 0) + 1);
   }
 

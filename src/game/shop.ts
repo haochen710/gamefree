@@ -13,8 +13,7 @@
 import { D } from './decimal';
 import {
   BLUEPRINT_MAP,
-  ITEM_MAP,
-  MATERIAL_MAP,
+  itemView,
   SEED_MAP,
   SHOP_GOODS,
   RARE_GOODS_CHANCE,
@@ -158,22 +157,29 @@ export interface ShopBuyResult {
 
 /** 货品的显示名与图标（图纸、种子、材料、资源的名字来源各不相同） */
 export function describeOffer(offer: ShopOffer): { name: string; icon: string; note: string } {
+  /*
+   * 第 24 轮（需求 4）：玩家原话「商店部分材料显示英文，看不出来是啥」。
+   * 根因与第 19 轮那个"英文材料名"同族：这里只查 MATERIAL_MAP / ITEM_MAP，
+   * 而符箓（TALISMAN_MAP）、丹药（PILL_MAP）、器物（ARTIFACT_MAP）都不在里面，
+   * 于是一律回落到 `?? offer.item` —— 玩家看到的就是 `spiritBasic` 这种 id。
+   * 现在统一交给 content/itemView.ts（它按"资源 → 材料器物 → 符箓 → 图纸"依次查）。
+   */
+  const view = itemView(offer.item);
   switch (offer.kind) {
     case 'blueprint': {
       const def = BLUEPRINT_MAP[offer.item];
-      return { name: def?.name ?? offer.item, icon: def?.icon ?? '📜', note: '图纸' };
+      return { name: def?.name ?? view.name, icon: def?.icon ?? view.icon, note: '图纸' };
     }
     case 'seed': {
       const def = SEED_MAP[offer.item];
-      return { name: def?.name ?? offer.item, icon: def?.icon ?? '🌰', note: '种子' };
+      return { name: def?.name ?? view.name, icon: def?.icon ?? view.icon, note: '种子' };
     }
     case 'material': {
-      const def = MATERIAL_MAP[offer.item as keyof typeof MATERIAL_MAP];
-      return { name: def?.name ?? offer.item, icon: def?.icon ?? '?', note: '材料' };
+      // 材料、符箓、丹药都可能是"材料类"货品 —— 交给 itemView 统一取名
+      return { ...view, note: '材料' };
     }
     default: {
-      const def = ITEM_MAP[offer.item as keyof typeof ITEM_MAP];
-      return { name: def?.name ?? offer.item, icon: def?.icon ?? '?', note: '资源' };
+      return { ...view, note: '资源' };
     }
   }
 }

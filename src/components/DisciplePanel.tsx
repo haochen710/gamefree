@@ -28,7 +28,7 @@ import {
   aptitudeRank,
   getDiscipleCapReason,
   getDiscipleEffectiveSpeed,
-  getDiscipleRealmNeed,
+  isDisciplePillStalled,
   getDiscipleSpeed,
   isRefusingTask,
   refusesHighRisk,
@@ -107,10 +107,14 @@ function DiscipleRow({ disciple }: { disciple: Disciple }) {
   /*
    * 需求 9：弟子突破也要吃丹药。修为满了但仓库没丹 → 卡在瓶颈。
    * 这是"弟子怎么不涨了"最常见的答案，所以直接写在行内。
+   *
+   * ⚠️ 第 24 轮（需求 8）：判据必须与**筛选**和**丹房告示栏**完全一致 ——
+   * 原来这里用的是未缩放的 `realm.cultivationYears`，于是会出现
+   * "行内挂着缺丹徽章、筛选却筛不出来、告示栏也没有"。现在三处都读
+   * `disciples.isDisciplePillStalled`。
    */
   const pillNeed = realm.breakthroughPill;
-  const pillStalled =
-    !atCap && realm.cultivationYears > 0 && disciple.progress >= realm.cultivationYears;
+  const pillStalled = isDisciplePillStalled(game, disciple);
 
   const capText = pillStalled
     ? `修为已满${realm.name}，缺 ${PILL_MAP[pillNeed]?.name ?? '突破丹'} ×1`
@@ -271,8 +275,8 @@ export function DisciplePanel({ collapsible }: { collapsible?: boolean } = {}) {
         if (statusFilter === 'demon') return d.demon >= 31;
         if (statusFilter === 'lowLoyalty') return d.loyalty < 40;
         if (statusFilter === 'stalled') {
-          const need = getDiscipleRealmNeed(d, d.realmIndex);
-          return need > 0 && d.progress >= need;
+          // 第 24 轮（需求 8）：与行内徽章、丹房告示栏同一个判据
+          return isDisciplePillStalled(game, d);
         }
         return true;
       });
