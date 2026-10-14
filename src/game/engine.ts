@@ -1069,11 +1069,22 @@ export function maxAffordable(def: BuildableDef, owned: number, state: GameState
   let max = Infinity;
   for (const [id, base] of Object.entries(def.baseCost) as [ItemId, number][]) {
     const available = getAmount(state, id);
-    // 同上：价格不涨时直接除，绕开 r = 1 的退化情况
+    /*
+     * 🚨 第 26 轮修的 bug：这里原来用的是**原始** `def.costGrowth`，
+     * 而真正扣钱走的 `getCost` 用的是 `steepenedGrowth(def.costGrowth)`
+     * （第 18 轮加的 ×1.2、下限 1.3）。
+     *
+     * 两者一旦不一致，"最大 (N)"按钮算出来的 N 就**偏大** ——
+     * 界面上显示能建 N 座、点下去却建不了（玩家原话："没有跟着实际需求
+     * 资源走，显示能点也点不了"）。
+     *
+     * 规矩很简单：**算得出几个，就必须和实际扣钱的公式用同一条增长曲线**。
+     */
+    const growth = def.costGrowth === 1 ? 1 : steepenedGrowth(def.costGrowth);
     const n =
-      def.costGrowth === 1
+      growth === 1
         ? Math.floor(available.div(base).toNumber())
-        : Decimal.affordGeometricSeries(available, base, def.costGrowth, owned).floor().toNumber();
+        : Decimal.affordGeometricSeries(available, base, growth, owned).floor().toNumber();
     max = Math.min(max, n);
   }
   if (!Number.isFinite(max)) return 0;
@@ -1426,8 +1437,22 @@ export function upgradeQueue(state: GameState): GameState {
 
 /** 把一个可建造物排进队列 */
 export function enqueueBuild(state: GameState, id: string): GameState {
-  if (!BUILDABLE_MAP[id]) return state;
+  const def = BUILDABLE_MAP[id];
+  if (!def) return state;
   if (state.buildQueue.length >= getQueueSlots(state)) return state;
+  /*
+   * 第 26 轮（需求 2）：**已经到上限的建筑不许排队**。
+   *
+   * 原来没有这条守卫：界面上的「排队」按钮也没查上限，于是点下去会真的
+   * 进队列，而 `tickBuildQueue` 下一帧发现"已满"再把它丢掉 ——
+   * 玩家的体感就是"显示能点、点了没反应"。
+   * 更要紧的是：如果队列里排了别的项，这个点不动的项还会**占着一个名额**
+   * 直到下一帧才被清掉。
+   *
+   * 一起算上"已经在队列里等着的同种建筑"，否则连点几下就能排满。
+   */
+  const pending = state.buildQueue.filter((queued) => queued === id).length;
+  if (getBuildingCount(state, id) + pending >= getMaxCount(def)) return state;
   return { ...state, buildQueue: [...state.buildQueue, id] };
 }
 

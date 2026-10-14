@@ -206,6 +206,8 @@ import {
   optionRequiredItems,
   SECRET_REALMS,
   SECRET_REALM_MAP,
+  // 第 26 轮：危险度按档次缩放（1 档 64 次、9 档 512 次）
+  runsToSafeOfTier,
   STARTER_REALM_ID,
   SURVEY_MAX_PARTY,
   realmsOfRegion,
@@ -7782,12 +7784,34 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
     const deepRealm = SECRET_REALMS.filter((r) => expeditions.effectiveMinRealm(s, r) >= 4)[0];
     check('深处的秘境要求更高的境界', Boolean(deepRealm), deepRealm ? `${deepRealm.name} 需 ${expeditions.effectiveMinRealm(s, deepRealm)}` : '（没找到）');
 
-    // 危险度递减
+    // 危险度递减（第 26 轮：按档次，1 档 64 次、9 档 512 次）
+    const runsNeeded = runsToSafeOfTier(realm.tier);
     check('新秘境危险度是满的', expeditions.getRealmDanger(s, realm.id) === 1);
-    const explored = { ...s, realmRuns: { [realm.id]: 6 } };
-    check('探过之后危险度下降', expeditions.getRealmDanger(explored, realm.id) === 0.5);
-    const safe = { ...s, realmRuns: { [realm.id]: 12 } };
+    const half = { ...s, realmRuns: { [realm.id]: runsNeeded / 2 } };
+    check('探到一半就没有一半危险', expeditions.getRealmDanger(half, realm.id) === 0.5, `${runsNeeded} 次为满`);
+    const safe = { ...s, realmRuns: { [realm.id]: runsNeeded } };
     check('探够次数就没有危险', expeditions.getRealmDanger(safe, realm.id) === 0);
+
+    /*
+     * 第 26 轮（需求 1）：玩家原话「境界要求越高的秘境，降低难度越大，
+     * 比如初始练气秘境需要 64 次，最高等级的秘境则需要 512 次」。
+     */
+    check('最低档要探 64 次', runsToSafeOfTier(1) === 64, String(runsToSafeOfTier(1)));
+    check('最高档要探 512 次', runsToSafeOfTier(9) === 512, String(runsToSafeOfTier(9)));
+    check(
+      '所需次数随档次严格递增',
+      Array.from({ length: 8 }, (_, i) => runsToSafeOfTier(i + 2) - runsToSafeOfTier(i + 1)).every((d) => d > 0),
+      Array.from({ length: 9 }, (_, i) => runsToSafeOfTier(i + 1)).join(' / '),
+    );
+    check(
+      '越难的秘境越难摸透（同一探索次数下危险度更高）',
+      expeditions.getRealmDanger({ ...s, realmRuns: { [SECRET_REALMS[0].id]: 40 } }, SECRET_REALMS[0].id) <
+        expeditions.getRealmDanger(
+          { ...s, realmRuns: { [SECRET_REALMS[SECRET_REALMS.length - 1].id]: 40 } },
+          SECRET_REALMS[SECRET_REALMS.length - 1].id,
+        ),
+      `${SECRET_REALMS[0].name}(档次${SECRET_REALMS[0].tier}) vs ${SECRET_REALMS[SECRET_REALMS.length - 1].name}(档次${SECRET_REALMS[SECRET_REALMS.length - 1].tier})`,
+    );
 
     // 境界压制：高出两个大境界不会伤亡
     let party: GameState = {

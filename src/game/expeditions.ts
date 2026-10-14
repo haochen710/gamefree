@@ -38,7 +38,7 @@ import {
   PARTY_SIZE_MIN,
   REALM_OVERMATCH_REDUCTION,
   REALM_SAFE_GAP,
-  RUNS_TO_SAFE,
+  runsToSafeOfTier,
   MAX_YIELD_FACTOR,
   MIN_YIELD_FACTOR,
   PARTY_YIELD_PER_EXTRA,
@@ -181,7 +181,16 @@ export function getRealmRuns(state: GameState, realmId: string): number {
  */
 export function getRealmDanger(state: GameState, realmId: string): number {
   const runs = getRealmRuns(state, realmId);
-  return Math.max(0, 1 - runs / RUNS_TO_SAFE);
+  /*
+   * 第 26 轮（需求 1）：摸透所需的次数按**档次**走 ——
+   * 炼气那档 64 次、最高档 512 次（等比插值，见 `runsToSafeOfTier`）。
+   *
+   * ⚠️ 原来是所有档次统一 12 次：越难的秘境反而越容易摸透，
+   * 危险度与"这地方有多凶"完全脱节。现在高档秘境得反复刷很久才敢说熟。
+   */
+  const def = SECRET_REALM_MAP[realmId];
+  const runsToSafe = runsToSafeOfTier(def?.tier ?? 1);
+  return Math.max(0, 1 - runs / runsToSafe);
 }
 
 export interface StartCheck {

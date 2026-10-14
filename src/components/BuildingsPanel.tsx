@@ -216,9 +216,19 @@ function BuildRow({ def, state }: { def: BuildableDef; state: GameState }) {
             <button
               type="button"
               className="btn"
-              disabled={gate !== null || queue.length >= queueSlots}
+              /*
+               * 第 26 轮（需求 2）：这里原来只查了技术门槛与队列名额，**没查是否已满** ——
+               * 于是建到上限之后「排队」还是亮的，点下去却什么也不会发生
+               * （引擎侧现在也补了守卫，但界面必须先把按钮灰掉，
+               *   否则玩家永远不知道自己为什么点不动）。
+               */
+              disabled={gate !== null || atMax || queue.length >= queueSlots}
+              title={
+                atMax
+                  ? `已达上限（${owned}/${maxCount === Infinity ? '∞' : maxCount}）`
+                  : '加入建造队列后，资源够了会自动开工'
+              }
               onClick={() => enqueueBuild(def.id)}
-              title="加入建造队列后，资源够了会自动开工"
             >
               排队
             </button>

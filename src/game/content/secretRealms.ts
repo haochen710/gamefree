@@ -777,7 +777,42 @@ export const EXPEDITION_INSIGHT_SCALE = 1.7;
  * 取 12 是配着"循环上限 10 次"来的：挂满一轮循环之后这处秘境基本就熟了，
  * 玩家的体感是"这地方我摸透了"。
  */
-export const RUNS_TO_SAFE = 12;
+/**
+ * 把一处秘境**摸到没有危险**需要探多少次（第 26 轮需求 1）。
+ *
+ * 玩家原话：
+ *   「秘境危险度降低应该是有变化的，境界要求越高的秘境，降低难度越大，
+ *     比如初始练气秘境需要 64 次，最高等级的秘境则需要 512 次，中间的变化你看着来」。
+ *
+ * 所以按**档次**做等比插值：1 档 **64 次** → 9 档 **512 次**（正好 8 倍），
+ * 每档 ×8^(1/8) ≈ ×1.297，中间几档是
+ *   64 / 83 / 108 / 140 / 181 / 235 / 305 / 395 / 512。
+ *
+ * 为什么选等比而不是等差：档次本身是按境界指数铺开的（第 N 档的产出与门槛
+ * 都是乘法级的），等差会让"低档太磨、高档太便宜"——两条曲线对不上。
+ *
+ * ⚠️ 原来的常数是**所有档次统一 12 次**，等于"越难的秘境越容易摸透"，
+ * 与它的危险度完全脱节。现在难度直接体现在"要刷多久才熟"上。
+ */
+export const RUNS_TO_SAFE_BASE = 64;
+export const RUNS_TO_SAFE_TOP = 512;
+/** 最高档次（用来算中间档的等比系数） */
+const RUNS_TO_SAFE_MAX_TIER = 9;
+
+/** 某个档次要探多少次才彻底没有危险 */
+export function runsToSafeOfTier(tier: number): number {
+  const clamped = Math.min(Math.max(1, Math.round(tier)), RUNS_TO_SAFE_MAX_TIER);
+  if (clamped <= 1) return RUNS_TO_SAFE_BASE;
+  if (clamped >= RUNS_TO_SAFE_MAX_TIER) return RUNS_TO_SAFE_TOP;
+  const ratio = Math.pow(RUNS_TO_SAFE_TOP / RUNS_TO_SAFE_BASE, 1 / (RUNS_TO_SAFE_MAX_TIER - 1));
+  return Math.round(RUNS_TO_SAFE_BASE * Math.pow(ratio, clamped - 1));
+}
+
+/**
+ * @deprecated 第 26 轮起按档次取值（见 `runsToSafeOfTier`）。
+ * 保留这个名字只是因为老文档与老注释还在引用它，**不要再用它算危险度**。
+ */
+export const RUNS_TO_SAFE = RUNS_TO_SAFE_BASE;
 
 /** 境界压制：每高出一个大境界，个人伤亡额外削减多少 */
 export const REALM_OVERMATCH_REDUCTION = 0.35;

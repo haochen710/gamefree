@@ -20,6 +20,8 @@ import {
   HIGH_RISK_CASUALTY,
   PARTY_SIZE_MAX,
   ITEM_MAP,
+  // 第 26 轮：危险度按档次缩放，界面上要能看见"几次摸透"
+  runsToSafeOfTier,
   MAJOR_REGIONS,
   MAP_REGIONS,
   MAP_REGION_MAP,
@@ -161,6 +163,9 @@ function RealmCard({ def, state }: { def: SecretRealmDef; state: GameState }) {
         </span>
         <span title="探得越多越熟，伤亡越低">
           危险度 {Math.round(getRealmDanger(state, def.id) * 100)}%
+          <span className="panel__hint">
+            （{getRealmRuns(state, def.id)}/{runsToSafeOfTier(def.tier)} 次摸透）
+          </span>
         </span>
         {/* 第 25 轮（需求 3 / 4）：境界要求是一个**区间**，不只是下限 */}
         <span title={`最低${REALMS[def.minRealm].name}、最高${REALMS[def.maxRealm].name}（上限 = 下限 + 2 个大境界）`}>
