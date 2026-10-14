@@ -108,7 +108,7 @@ export function AlchemyPanel() {
   const game = useGame((s) => s.game);
   const craftPill = useGame((s) => s.craftPill);
   // 第 27 轮（需求 3）：自动炼制
-  const setAutoCraftTarget = useGame((s) => s.setAutoCraftTarget);
+  const setAutoCraftOn = useGame((s) => s.setAutoCraftOn);
 
   // 只展示已解锁品阶 + 下一个品阶，避免开局就列出九品丹方
   const visible = PILLS.filter((p) => p.tier <= game.alchemyTier + 1);
@@ -152,7 +152,9 @@ export function AlchemyPanel() {
                           const max = maxCraftable(game, cost);
   // 第 27 轮（需求 3）：自动炼制这条线的目标存量（> 0 即开着）
   const autoTarget = game.autoCraftTargets[pill.id] ?? 0;
-  const autoOn = autoTarget > 0;
+  // 第 28 轮：开关与目标分开 —— 这里只表示"开着吗"
+  const autoOn = game.autoCraftOn[pill.id] === true;
+  void autoTarget;
               const owned = game.pills[pill.id] ?? 0;
               // 需求 2：炼制有概率失败
               const rate = getCraftSuccessRate(game, 'alchemy', pill.tier);
@@ -201,10 +203,12 @@ export function AlchemyPanel() {
                   disabled={locked}
                   title={
                     autoOn
-                      ? '自动炼制中：低于目标 ' + autoTarget + ' 个就自动补'
-                      : '开启后每 2 秒自动炼一批，直到囤够目标'
+                      ? autoTarget > 0
+                        ? '自动炼制中：补到目标 ' + autoTarget + ' 个就停'
+                        : '自动炼制中：没设目标，会一直炼下去（材料见底才停）'
+                      : '开启后每 2 秒自动炼一批；设了目标就补到目标，没设就一直炼'
                   }
-                  onClick={() => setAutoCraftTarget(pill.id, autoOn ? 0 : Math.max(10, (game.pills[pill.id] ?? 0) * 2))}
+                  onClick={() => setAutoCraftOn(pill.id, !autoOn)}
                 >
                   自动炼制{autoOn ? ' ✓' : ''}
                 </button>

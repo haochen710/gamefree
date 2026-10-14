@@ -59,6 +59,9 @@ export const SAVE_KEYS: Record<string, string> = {
   au: 'state.autoRefineLevel',
   ap: 'state.autoRefineProgress',
   art: '{ ...state.autoRefineTargets }',
+  // 第 28 轮：自动的开关（与目标存量 art/act 分开）
+  aro: '自动合成的开关（键 → true 即开着）',
+  aco: '自动炼制的开关（键 → true 即开着）',
   // 第 27 轮（需求 3）：自动炼制。⚠️ act / art 只差一个字母，
   // 它们分别是"炼制"与"合成"的目标表 —— 语义写在这里，别再靠猜。
   act: '自动炼制的目标存量（丹药/器物/符箓 id → 目标数）',

@@ -2158,9 +2158,45 @@ section('[18] 灵石自动合成（需求 4）');
     ...stocked,
     autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
     autoRefineTargets: { stoneRefine: 100000 },
+    // 第 28 轮：开关与目标分开，必须同时打开开关，否则按新语义什么都不做
+    autoRefineOn: { stoneRefine: true },
   };
   const on = applyTick(fast, 60, makeRandom(1));
   check('开启后产出灵石', on.resources.stone.gt(stocked.resources.stone), `+${fmt(on.resources.stone.sub(stocked.resources.stone))}`);
+
+  /*
+   * 第 28 轮：**开着但没设目标 → 一直合成下去**。
+   * （原来 `autoRefineTargets[id] > 0` 既是开关又是目标，没目标就等于关着。）
+   */
+  {
+    const noTarget = applyTick(
+      { ...stocked, autoRefineLevel: AUTO_REFINE_LEVEL_MAX, autoRefineOn: { stoneRefine: true } },
+      60,
+      makeRandom(1),
+    );
+    check(
+      '自动合成没设目标时也会一直合成',
+      noTarget.resources.stone.gt(stocked.resources.stone),
+      `${fmt(stocked.resources.stone)} → ${fmt(noTarget.resources.stone)}`,
+    );
+
+    // 有目标时补到目标就停（原有行为不能被改坏）
+    const capped = applyTick(
+      {
+        ...stocked,
+        autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
+        autoRefineOn: { stoneRefine: true },
+        autoRefineTargets: { stoneRefine: 100 },
+      },
+      600,
+      makeRandom(1),
+    );
+    check(
+      '设了目标就补到目标即停',
+      capped.resources.stone.gte(100) && capped.resources.stone.lte(200),
+      `灵石 = ${fmt(capped.resources.stone)}`,
+    );
+  }
   check('开启后消耗灵气', on.resources.qi.lt(stocked.resources.qi));
   check('开启后消耗灵矿', on.resources.ore.lt(stocked.resources.ore));
   check(
@@ -2197,7 +2233,7 @@ section('[18] 灵石自动合成（需求 4）');
   check('灵石被上限截断', noRoom.resources.stone.eq(stoneCap));
 
   /* ---- 慢档比快档少烧灵气 ---- */
-  const slow = applyTick({ ...stocked, autoRefineLevel: 1, autoRefineTargets: { stoneRefine: 100000 } }, 60, makeRandom(1));
+  const slow = applyTick({ ...stocked, autoRefineLevel: 1, autoRefineOn: { stoneRefine: true }, autoRefineTargets: { stoneRefine: 100000 } }, 60, makeRandom(1));
   check(
     '慢档消耗少于快档',
     slow.resources.qi.gt(on.resources.qi),
@@ -5420,7 +5456,8 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
     const targeted: GameState = {
       ...rich,
       autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
-      autoRefineTargets: { spiritEssenceRefine: 50 },
+autoRefineTargets: { spiritEssenceRefine: 50 },
+    autoRefineOn: { spiritEssenceRefine: true },
     };
     let t = targeted;
     for (let i = 0; i < 60; i += 1) t = engine.autoRefine(t, 10);
@@ -5435,7 +5472,8 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
     const stoneRun: GameState = {
       ...grant(rich, { stone: '0', qi: '1e9', ore: '1e6' }),
       autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
-      autoRefineTargets: { stoneRefine: 1000 },
+autoRefineTargets: { stoneRefine: 1000 },
+    autoRefineOn: { stoneRefine: true },
     };
     let s2 = stoneRun;
     for (let i = 0; i < 60; i += 1) s2 = engine.autoRefine(s2, 10);
@@ -8579,7 +8617,7 @@ section('[58] 自动炼制：按目标存量自动补，补够就停（第 27 �
   check('没开自动就什么也不炼', (idle.pills[pillId] ?? 0) === 0, String(idle.pills[pillId] ?? 0));
 
   // 开了自动之后的 state（下面的机制测试都用它）
-  const auto: GameState = { ...base, autoCraftTargets: { [pillId]: 20 } };
+  const auto: GameState = { ...base, autoCraftOn: { [pillId]: true }, autoCraftTargets: { [pillId]: 20 } };
 
   /*
    * 直接测机制本身（不走整条 applyTick）。
@@ -8596,6 +8634,34 @@ section('[58] 自动炼制：按目标存量自动补，补够就停（第 27 �
   );
   check('不会超过目标存量', (fired.pills[pillId] ?? 0) <= 20, String(fired.pills[pillId] ?? 0));
   check('出手后计时归零', fired.autoCraftTimer === 0, String(fired.autoCraftTimer));
+
+  /*
+   * 第 28 轮（玩家原话）：「自动合成为什么点击之后会自己设置目标？删除这个设定，
+   * 若玩家没有自己设置目标，则一直合成下去」。
+   *
+   * 所以这里钉住新语义：**开着但没设目标 → 一直炼**（真正的刹车只有材料）。
+   */
+  {
+    const noTarget: GameState = { ...base, autoCraftOn: { [pillId]: true } };
+    const first = crafting.autoCraft(noTarget, 5, () => 0.1);
+    check('开着但没设目标也会炼（不会因为"目标为 0"就当成关着）', (first.pills[pillId] ?? 0) > 0, String(first.pills[pillId] ?? 0));
+
+    // 连续走很多拍：只要材料够，就一直涨（没有目标上限）
+    let rolling = noTarget;
+    for (let i = 0; i < 40; i += 1) rolling = crafting.autoCraft(rolling, 5, () => 0.1);
+    check(
+      '没设目标时会一直炼下去（突破任意"假目标"）',
+      (rolling.pills[pillId] ?? 0) > 20,
+      `连续 40 拍后丹药 = ${rolling.pills[pillId] ?? 0}`,
+    );
+  }
+
+  /* 开关关着就绝对不动手（哪怕有目标） */
+  {
+    const offWithTarget: GameState = { ...base, autoCraftTargets: { [pillId]: 20 } };
+    const off = crafting.autoCraft(offWithTarget, 30, () => 0.1);
+    check('开关关着时，哪怕设了目标也不炼', (off.pills[pillId] ?? 0) === 0, String(off.pills[pillId] ?? 0));
+  }
 
   /*
    * 把上一版留下的那点不确定**钉死**：走整条 applyTick 时丹药会归零，
@@ -8625,7 +8691,7 @@ section('[58] 自动炼制：按目标存量自动补，补够就停（第 27 �
   }
 
   // 已经囤够 → 停手（再走一段时间也不再增加）
-  const full: GameState = { ...base, pills: { [pillId]: 20 }, autoCraftTargets: { [pillId]: 20 } };
+  const full: GameState = { ...base, pills: { [pillId]: 20 }, autoCraftOn: { [pillId]: true }, autoCraftTargets: { [pillId]: 20 } };
   const afterFull = applyTick(full, 60, () => 0.1);
   check('囤够目标就停手', (afterFull.pills[pillId] ?? 0) === 20, String(afterFull.pills[pillId] ?? 0));
 
@@ -8633,7 +8699,7 @@ section('[58] 自动炼制：按目标存量自动补，补够就停（第 27 �
    * 节拍：不到一个间隔（2 秒）不该出手 —— 否则 applyTick 一秒跑很多次，
    * 会变成"每帧炼一批"，快到玩家反应不过来。
    */
-  const tooSoon = crafting.autoCraft({ ...base, autoCraftTargets: { [pillId]: 20 } }, 0.5, () => 0.1);
+  const tooSoon = crafting.autoCraft({ ...base, autoCraftOn: { [pillId]: true }, autoCraftTargets: { [pillId]: 20 } }, 0.5, () => 0.1);
   check('不到一个节拍不炼（限速生效）', (tooSoon.pills[pillId] ?? 0) === 0, String(tooSoon.pills[pillId] ?? 0));
 
   // 存档往返

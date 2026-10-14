@@ -456,12 +456,25 @@ export interface GameState {
    */
   autoRefineTargets: Record<string, number>;
   /**
+   * 第 28 轮：自动合成的**开关**（与目标存量分开）。
+   *
+   * 玩家原话：「自动合成为什么点击之后会自己设置目标？删除这个设定，
+   * 若玩家没有自己设置目标，则一直合成下去」。
+   *
+   * ⚠️ 原来 `autoRefineTargets[id] > 0` **既是开关又是目标** ——
+   * 于是按钮只能靠"替玩家设一个目标"来表达"开"。现在两件事各有一个字段：
+   *   开关关 → 不做；开关开 + 有目标 → 补到目标就停；开关开 + 无目标 → 一直做。
+   */
+  autoRefineOn: Record<string, boolean>;
+  /**
    * 第 27 轮（需求 3）：**自动炼制**的目标存量（键 = 丹药 / 器物 / 符箓 id）。
    *
    * 与 autoRefineTargets 同一套思路：> 0 表示这条线开着自动，囤到目标就停手。
    * 三种炼制共用这一张表（id 不会重名），所以只需要一个字段。
    */
   autoCraftTargets: Record<string, number>;
+  /** 第 28 轮：自动炼制的开关（语义与 autoRefineOn 完全一致） */
+  autoCraftOn: Record<string, boolean>;
   /**
    * 自动炼制的节拍（秒）。
    *
@@ -666,7 +679,9 @@ export function createInitialState(now = Date.now()): GameState {
     personalTravel: null,
     autoRefineLevel: 0,
   autoRefineTargets: {},
+  autoRefineOn: {},
   autoCraftTargets: {},
+  autoCraftOn: {},
   autoCraftTimer: 0,
     autoRefineProgress: 0,
     seeds: {},

@@ -249,6 +249,10 @@ export interface GameStore {
    * 传 0 即关闭自动（与自动合成那张表的语义一致）。
    */
   setAutoCraftTarget(itemId: string, target: number): void;
+  /** 第 28 轮：自动合成的**开关**（与目标存量无关） */
+  setAutoRefineOn(recipeId: string, on: boolean): void;
+  /** 第 28 轮：自动炼制的**开关**（与目标存量无关） */
+  setAutoCraftOn(itemId: string, on: boolean): void;
   /* ---- 感悟（需求 3） ---- */
   enlighten(pathId: string): void;
   cancelEnlighten(): void;
@@ -1210,6 +1214,24 @@ export const useGame = create<GameStore>()((set, get) => ({
   },
 
   /** 设置某条配方的自动合成目标存量（本轮需求 2） */
+  setAutoRefineOn: (recipeId, on) => {
+    set((s) => {
+      const flags = { ...s.game.autoRefineOn };
+      if (on) flags[recipeId] = true;
+      else delete flags[recipeId];
+      return { game: { ...s.game, autoRefineOn: flags } };
+    });
+  },
+
+  setAutoCraftOn: (itemId, on) => {
+    set((s) => {
+      const flags = { ...s.game.autoCraftOn };
+      if (on) flags[itemId] = true;
+      else delete flags[itemId];
+      return { game: { ...s.game, autoCraftOn: flags } };
+    });
+  },
+
   setAutoCraftTarget: (itemId, target) => {
     set((s) => {
       const next = Math.max(0, Math.floor(target));

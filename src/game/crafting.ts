@@ -434,7 +434,15 @@ export function craftPill(
  */
 export function autoCraft(state: GameState, dt: number, random: RandomSource = gameRandom): GameState {
   if (dt <= 0) return state;
-  const entries = Object.entries(state.autoCraftTargets).filter(([, target]) => target > 0);
+  /*
+   * 第 28 轮：开关与目标拆开。参与的条件从"有目标"改成"**开关开着**"，
+   * 目标只决定"补到多少就停" —— 没设目标就一直炼下去。
+   *
+   * 玩家原话：「自动合成为什么点击之后会自己设置目标？删除这个设定，
+   * 若玩家没有自己设置目标，则一直合成下去；自动炼制你也检查一下」。
+   */
+  const on = state.autoCraftOn ?? {};
+  const entries = Object.keys(on).filter((id) => on[id] === true);
   if (entries.length === 0) return state;
 
   const timer = state.autoCraftTimer + dt;
@@ -442,7 +450,12 @@ export function autoCraft(state: GameState, dt: number, random: RandomSource = g
   const next: GameState = { ...state, autoCraftTimer: 0 };
 
   const candidates = entries
-    .map(([id, target]) => ({ id, short: target - craftStockOf(next, id) }))
+    .map((id) => {
+      const target = state.autoCraftTargets[id] ?? 0;
+      // 没设目标 → 永远有缺口（一直炼）；设了目标 → 到量即停
+      const short = target <= 0 ? Number.MAX_SAFE_INTEGER : target - craftStockOf(next, id);
+      return { id, short };
+    })
     .filter((c) => c.short > 0)
     .filter((c) => maxCraftableOf(next, c.id) > 0)
     .sort((a, b) => b.short - a.short);
@@ -450,7 +463,9 @@ export function autoCraft(state: GameState, dt: number, random: RandomSource = g
   const pick = candidates[0];
   if (!pick) return next;
 
-  const batch = Math.max(1, Math.min(pick.short, maxCraftableOf(next, pick.id), AUTO_CRAFT_BATCH));
+  // 没设目标时一批就是"批量上限"（真正的刹车是材料）
+  const wanted = pick.short === Number.MAX_SAFE_INTEGER ? AUTO_CRAFT_BATCH : pick.short;
+  const batch = Math.max(1, Math.min(wanted, maxCraftableOf(next, pick.id), AUTO_CRAFT_BATCH));
   if (PILL_MAP[pick.id]) return craftPill(next, pick.id, batch, random).state;
   if (ARTIFACT_MAP[pick.id]) return craftArtifact(next, pick.id, batch, random).state;
   if (TALISMAN_MAP[pick.id]) {

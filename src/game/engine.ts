@@ -2140,8 +2140,19 @@ export function maxAutoRefineBatches(state: GameState): number {
 function autoRefineShortfall(state: GameState, recipeId: string): number {
   const recipe = REFINE_RECIPE_MAP[recipeId];
   if (!recipe) return 0;
+  /*
+   * 第 28 轮：开关与目标拆开之后，语义变成三档 ——
+   *   - 开关关着 → 0（不参与）；
+   *   - 开关开着 + 设了目标 → 到量就是 0（停手）；
+   *   - 开关开着 + **没设目标** → 永远有缺口（一直做下去）。
+   *
+   * 玩家原话：「若玩家没有自己设置目标，则一直合成下去」。
+   * 用一个很大的数表示"永远有缺口"即可 —— 排序时它自然排在最前，
+   * 真正的刹车交给材料与储存上限（`maxAutoRefineBatchesFor`）。
+   */
+  if (state.autoRefineOn?.[recipeId] !== true) return 0;
   const target = state.autoRefineTargets[recipeId] ?? 0;
-  if (target <= 0) return 0;
+  if (target <= 0) return Number.MAX_SAFE_INTEGER;
   const have = getAmount(state, recipe.output.item);
   return have.gte(target) ? 0 : target - have.toNumber();
 }

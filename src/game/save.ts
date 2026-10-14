@@ -250,6 +250,9 @@ export interface SerializedGame {
   rr?: unknown;
   /** 各条配方的自动合成目标存量（本轮需求 2） */
   art?: Record<string, number>;
+  /** 第 28 轮：自动合成 / 自动炼制的开关（与目标存量分开） */
+  aro?: Record<string, boolean>;
+  aco?: Record<string, boolean>;
   /**
    * 第 27 轮（需求 3）：自动炼制的目标存量。
    *
@@ -370,6 +373,9 @@ export function serialize(state: GameState): SerializedGame {
     au: state.autoRefineLevel,
     ap: state.autoRefineProgress,
     art: { ...state.autoRefineTargets },
+    /* 第 28 轮：自动的开关（与目标存量分开）——键名取 aro / aco */
+    aro: { ...state.autoRefineOn },
+    aco: { ...state.autoCraftOn },
     /* 第 27 轮（需求 3）：自动炼制 —— 键名取 act / actm（art 已被自动合成的目标占用） */
     act: { ...state.autoCraftTargets },
     actm: state.autoCraftTimer,
@@ -830,6 +836,22 @@ function sanitizeAutoCraftTargets(raw: unknown): Record<string, number> {
   return out;
 }
 
+/**
+ * 布尔开关表（第 28 轮）：自动合成 / 自动炼制的"开着吗"。
+ *
+ * 与目标存量分开之后，`{}`（没有目标）终于可以表达"一直做下去"，
+ * 而不再等于"关着"。
+ */
+function sanitizeFlagMap(raw: unknown, known: (id: string) => boolean): Record<string, boolean> {
+  if (raw === null || typeof raw !== 'object') return {};
+  const out: Record<string, boolean> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!known(id)) continue;
+    if (value === true) out[id] = true;
+  }
+  return out;
+}
+
 function sanitizeAutoRefineTargets(raw: unknown): Record<string, number> {
   if (raw === null || typeof raw !== 'object') return {};
   const out: Record<string, number> = {};
@@ -1219,6 +1241,8 @@ export function deserialize(raw: unknown): GameState | null {
     personalTravel: sanitizeTravel(data.pv),
     autoRefineLevel: toInt(data.au, 0, 0, AUTO_REFINE_LEVEL_MAX),
     autoRefineTargets: sanitizeAutoRefineTargets(data.art),
+    autoRefineOn: sanitizeFlagMap(data.aro, (id) => REFINE_RECIPE_MAP[id] !== undefined),
+    autoCraftOn: sanitizeFlagMap(data.aco, (id) => PILL_MAP[id] !== undefined || ARTIFACT_MAP[id] !== undefined || TALISMAN_MAP[id] !== undefined),
     autoCraftTargets: sanitizeAutoCraftTargets(data.act),
     autoCraftTimer: toFloat(data.actm, 0, 0, 1e9),
     autoRefineProgress: toFloat(data.ap, 0, 0, 1e6),

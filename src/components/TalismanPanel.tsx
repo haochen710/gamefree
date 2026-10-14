@@ -129,14 +129,16 @@ function TalismanRow({ def }: { def: TalismanDef }) {
   const craft = useGame((s) => s.craftTalisman);
   const use = useGame((s) => s.useTalisman);
   // 第 27 轮（需求 3）：自动绘制
-  const setAutoCraftTarget = useGame((s) => s.setAutoCraftTarget);
+  const setAutoCraftOn = useGame((s) => s.setAutoCraftOn);
 
   const owned = getTalismanCount(game, def.id);
   const rate = getCraftSuccessRate(game, 'talisman', def.grade);
   const check = canCraftTalisman(game, def.id);
   // 第 27 轮（需求 3）：自动绘制这条线
   const autoTarget = game.autoCraftTargets[def.id] ?? 0;
-  const autoOn = autoTarget > 0;
+  // 第 28 轮：开关与目标分开
+  const autoOn = game.autoCraftOn[def.id] === true;
+  void autoTarget;
 
   return (
     <article className={def.grade >= 3 ? 'recipe recipe--rare' : 'recipe'}>
@@ -170,7 +172,7 @@ function TalismanRow({ def }: { def: TalismanDef }) {
             type="button"
             className={autoOn ? 'btn btn--primary' : 'btn'}
             title={autoOn ? '自动绘制中：低于目标 ' + autoTarget + ' 张就自动补' : '开启后每 2 秒自动画一批'}
-            onClick={() => setAutoCraftTarget(def.id, autoOn ? 0 : Math.max(10, owned * 2))}
+onClick={() => setAutoCraftOn(def.id, !autoOn)}
           >
             自动绘制{autoOn ? ' ✓' : ''}
           </button>

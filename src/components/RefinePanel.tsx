@@ -35,6 +35,8 @@ export function RefinePanel({ collapsible = false }: { collapsible?: boolean } =
   const doRefine = useGame((s) => s.refine);
   const setAutoRefine = useGame((s) => s.setAutoRefine);
   const setAutoRefineTarget = useGame((s) => s.setAutoRefineTarget);
+  // 第 28 轮：自动合成也有独立的开关了（不再靠"设个目标"来表达"开"）
+  const setAutoRefineOn = useGame((s) => s.setAutoRefineOn);
   const rate = getAutoRefineRate(game);
 
   return (
@@ -129,7 +131,8 @@ export function RefinePanel({ collapsible = false }: { collapsible?: boolean } =
                    */
                   (() => {
                     const target = game.autoRefineTargets[recipe.id] ?? 0;
-                    const autoOn = target > 0;
+                    // 第 28 轮：开关与目标分开 —— 没设目标也照样能"一直合成"
+                    const autoOn = game.autoRefineOn[recipe.id] === true;
                     return (
                       <>
                         <button
@@ -146,14 +149,19 @@ export function RefinePanel({ collapsible = false }: { collapsible?: boolean } =
                           className={autoOn ? 'btn btn--primary' : 'btn'}
                           title={
                             autoOn
-                              ? `自动合成中：低于目标 ${fmt(target, 0)} 个就自动补`
-                              : '开启后引擎会按目标存量自动补货'
+                              ? target > 0
+                                ? '自动合成中：补到目标 ' + fmt(target, 0) + ' 个就停'
+                                : '自动合成中：没设目标，会一直合成下去（材料见底才停）'
+                              : '开启后引擎会自动补货；设了目标就补到目标，没设就一直合成'
                           }
                           /*
-                           * 开：默认补到当前存量的一倍（至少 100），这样"开一下"就有意义；
-                           * 关：目标归零，引擎随即停手（已投的料不退，本来就是消耗品）。
+                           * 第 28 轮：**只切开关，不再替玩家设目标**。
+                           * 原来这里是 `setAutoRefineTarget(..., Math.max(100, have * 2))`，
+                           * 也就是点一下自动就替你填了个目标 —— 玩家明确说不要这个：
+                           * 「若玩家没有自己设置目标，则一直合成下去」。
+                           * 目标留给他自己在下面的输入框里填。
                            */
-                          onClick={() => setAutoRefineTarget(recipe.id, autoOn ? 0 : Math.max(100, Math.ceil(have.toNumber() * 2)))}
+                          onClick={() => setAutoRefineOn(recipe.id, !autoOn)}
                         >
                           自动合成{autoOn ? ' ✓' : ''}
                         </button>

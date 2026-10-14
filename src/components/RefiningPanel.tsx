@@ -60,7 +60,7 @@ export function RefiningPanel() {
   const game = useGame((s) => s.game);
   const craftArtifact = useGame((s) => s.craftArtifact);
   // 第 27 轮（需求 3）：自动炼制
-  const setAutoCraftTarget = useGame((s) => s.setAutoCraftTarget);
+  const setAutoCraftOn = useGame((s) => s.setAutoCraftOn);
 
   const holders = Math.max(1, game.sect.disciples.length);
   const visible = ARTIFACTS.filter((a) => a.tier <= game.refiningTier + 1);
@@ -103,7 +103,9 @@ export function RefiningPanel() {
                           const max = maxCraftable(game, cost);
   // 第 27 轮（需求 3）：自动炼制这条线
   const autoTarget = game.autoCraftTargets[artifact.id] ?? 0;
-  const autoOn = autoTarget > 0;
+  // 第 28 轮：开关与目标分开
+  const autoOn = game.autoCraftOn[artifact.id] === true;
+  void autoTarget;
               const owned = game.artifacts[artifact.id] ?? 0;
               const effective = Math.min(owned, holders);
               // 需求 2：炼制有概率失败；可携带器物还要显示剩余次数
@@ -160,7 +162,7 @@ export function RefiningPanel() {
                   className={autoOn ? 'btn btn--primary' : 'btn'}
                   disabled={locked}
                   title={autoOn ? '自动炼制中：低于目标 ' + autoTarget + ' 个就自动补' : '开启后每 2 秒自动炼一批'}
-                  onClick={() => setAutoCraftTarget(artifact.id, autoOn ? 0 : Math.max(10, (game.artifacts[artifact.id] ?? 0) * 2))}
+onClick={() => setAutoCraftOn(artifact.id, !autoOn)}
                 >
                   自动炼制{autoOn ? ' ✓' : ''}
                 </button>
