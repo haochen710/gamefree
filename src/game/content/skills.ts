@@ -187,8 +187,9 @@ export function skillView(kind: SkillKind, points: number): SkillView {
  *   2. 每座岗位数大幅提高：丹房 / 炼器房 / 符房 2 → **10**，灵田 3 → **15**。
  */
 export const POST_BUILDINGS: Record<string, { kind: SkillKind; perBuilding: number; name: string; icon: string }> = {
-  alchemyRoom: { kind: 'alchemy', perBuilding: 10, name: '丹房', icon: '⚗' },
-  refinery: { kind: 'refining', perBuilding: 10, name: '炼器房', icon: '🔨' },
+  // 第 29 轮：丹房恢复唯一（max 1），所以岗位数抬到 40 —— "唯一"与"容得下"两件事都要成立
+  alchemyRoom: { kind: 'alchemy', perBuilding: 40, name: '丹房', icon: '⚗' },
+  refinery: { kind: 'refining', perBuilding: 40, name: '炼器房', icon: '🔨' },
   talismanRoom: { kind: 'talisman', perBuilding: 10, name: '符房', icon: '📜' },
   herbField: { kind: 'farm', perBuilding: 15, name: '灵田', icon: '🌱' },
 };

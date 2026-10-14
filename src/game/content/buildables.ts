@@ -510,7 +510,8 @@ export const STRUCTURES: StructureDef[] = [
     requiresTech: 'alchemyArt',
     // 需求 2：丹房改为唯一建筑
     // 第 20 轮：max 1 → 12（原来全宗门只能有一座丹房、两个岗位）
-    max: 12,
+    // 第 29 轮：恢复"丹房唯一"（第 20 轮被我改成 12，玩家指出这是回退）
+    max: 1,
   },
   {
     id: 'refinery',
@@ -526,7 +527,8 @@ export const STRUCTURES: StructureDef[] = [
     requiresTech: 'refiningArt',
     // 需求 2：炼器房改为唯一建筑
     // 第 20 轮：max 1 → 12（同理：原来全宗门只有一座炼器房）
-    max: 12,
+    // 第 29 轮：恢复"炼器房唯一"（同上）
+    max: 1,
   },
   {
     id: 'alchemyFurnace',
@@ -844,7 +846,8 @@ export const STRUCTURES: StructureDef[] = [
       unlock: { spiritSilk: 20 },
       requiresRealm: 1,
       // 第 20 轮：max 8 → 12，与丹房 / 炼器房对齐
-      max: 12,
+      // 第 29 轮：符房回到 8 座（第 20 轮改成了 12）
+      max: 8,
     },
     {
       id: 'library',
