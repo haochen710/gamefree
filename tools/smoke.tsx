@@ -57,6 +57,8 @@ import * as diplomacy from '../src/game/diplomacy';
 
 // 声望的两个最常用读取口（第 47 节里用到很多次）
 const { getFame, getFameTier } = fame;
+// 第 24 轮收尾：存档键名清单（唯一权威表，冒烟断言它与 serialize 逐键一致）
+import { SAVE_KEY_COUNT, SAVE_KEYS } from '../src/game/saveKeys';
 import { useGame } from '../src/game/store';
 import { D, fmt } from '../src/game/decimal';
 import {
@@ -8413,8 +8415,54 @@ section('[56] 秘境发现：无保底 / 只在所属大区域（第 24 轮 需�
 }
 
 /* ------------------------------------------------------------------ */
-/* 结果                                                                */
+/* 57. 第 24 轮收尾：存档键名清单（防止第 4 次撞名）                     */
 /* ------------------------------------------------------------------ */
+section('[57] 存档键名清单与序列化结果逐键一致（第 24 轮收尾）');
+{
+  /*
+   * 为什么要有这一节：`tr→tf`、`tl/tt/tq→tmf/ttier`、`mp/pc→mpc` 已经**撞过三次名**。
+   * tsc 的 TS1117 能拦住"同一对象字面量里重复属性"，但拦不住"我想用一个短键" ——
+   * 每次都得写到一半被拦下来再改。现在靠这张清单把"试错"变成"查表"。
+   */
+  const rich = engine.refreshUnlocks(
+    grant(createInitialState(0), { qi: '1e6', wood: '1e5', ore: '1e5', herb: '1e5', stone: '1e5' }),
+  );
+  const serialized = serialize(rich) as unknown as Record<string, unknown>;
+  const actual = Object.keys(serialized).sort();
+  const registered = Object.keys(SAVE_KEYS).sort();
+
+  const undocumented = actual.filter((k) => !(k in SAVE_KEYS));
+  check(
+    '每个序列化出来的键都在清单里登记过',
+    undocumented.length === 0,
+    undocumented.join('、') || '全部已登记',
+  );
+
+  const stale = registered.filter((k) => !actual.includes(k));
+  check(
+    '清单里没有过期条目（登记了却没真的序列化）',
+    stale.length === 0,
+    stale.join('、') || '无过期条目',
+  );
+
+  check(
+    '键数与清单长度一致',
+    actual.length === SAVE_KEY_COUNT,
+    `实际 ${actual.length} / 清单 ${SAVE_KEY_COUNT}`,
+  );
+
+  const emptyDesc = Object.entries(SAVE_KEYS as Record<string, string>).filter(
+    ([, desc]) => !desc || desc.trim().length === 0,
+  );
+  check('每个键都写了用途（便于下次查表）', emptyDesc.length === 0, emptyDesc.map(([k]) => k).join('、'));
+
+  // 老存档要能读回来（清单是"现状快照"，不许改变读档行为）
+  const round = deserialize(JSON.parse(JSON.stringify(serialized)));
+  check(
+    '按清单序列化后仍能原样读回',
+    round !== null && round.buildings !== undefined && round.realmIndex === rich.realmIndex,
+  );
+}
 console.log('');
 console.log('='.repeat(64));
 if (!passed) {
