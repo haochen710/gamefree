@@ -6,7 +6,7 @@
  * 制符技能、制符天赋、符房岗位的加成全都作用在这条线上。
  */
 import { TALISMAN_GRADE_NAMES, TALISMAN_KIND_NAMES, type TalismanDef } from '../game/content';
-import { getCraftSuccessRate } from '../game/crafting';
+import { getCraftSuccessRate, maxCraftable } from '../game/crafting';
 import {
   canCraftTalisman,
   getTalismanCount,
@@ -128,10 +128,15 @@ function TalismanRow({ def }: { def: TalismanDef }) {
   const game = useGame((s) => s.game);
   const craft = useGame((s) => s.craftTalisman);
   const use = useGame((s) => s.useTalisman);
+  // 第 27 轮（需求 3）：自动绘制
+  const setAutoCraftTarget = useGame((s) => s.setAutoCraftTarget);
 
   const owned = getTalismanCount(game, def.id);
   const rate = getCraftSuccessRate(game, 'talisman', def.grade);
   const check = canCraftTalisman(game, def.id);
+  // 第 27 轮（需求 3）：自动绘制这条线
+  const autoTarget = game.autoCraftTargets[def.id] ?? 0;
+  const autoOn = autoTarget > 0;
 
   return (
     <article className={def.grade >= 3 ? 'recipe recipe--rare' : 'recipe'}>
@@ -151,11 +156,23 @@ function TalismanRow({ def }: { def: TalismanDef }) {
           <CostList cost={toCostMap(def.cost as never)} state={game} />
         </div>
         <div className="btn-row">
-          <button type="button" className="btn btn--tiny" disabled={!check.ok} title={check.reason ?? ''} onClick={() => craft(def.id, 1)}>
-            画一张
+          {/* 第 27 轮（需求 3）：制符也收成「绘制 / 自动绘制」两个按钮 */}
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={!check.ok}
+            title={check.reason ?? '把当前能画的全部画掉'}
+            onClick={() => craft(def.id, Math.max(1, maxCraftable(game, toCostMap(def.cost as never))))}
+          >
+            绘制
           </button>
-          <button type="button" className="btn btn--tiny" disabled={!check.ok} title={check.reason ?? ''} onClick={() => craft(def.id, 10)}>
-            画十张
+          <button
+            type="button"
+            className={autoOn ? 'btn btn--primary' : 'btn'}
+            title={autoOn ? '自动绘制中：低于目标 ' + autoTarget + ' 张就自动补' : '开启后每 2 秒自动画一批'}
+            onClick={() => setAutoCraftTarget(def.id, autoOn ? 0 : Math.max(10, owned * 2))}
+          >
+            自动绘制{autoOn ? ' ✓' : ''}
           </button>
           <button type="button" className="btn" disabled={owned <= 0} onClick={() => use(def.id)}>
             用一张

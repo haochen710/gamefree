@@ -15,6 +15,9 @@ import {
   ALCHEMY_TIER_TECH,
   ARTIFACTS,
   ARTIFACT_MAP,
+  // 第 27 轮（需求 3）：自动炼制的节拍与批量
+  AUTO_CRAFT_BATCH,
+  AUTO_CRAFT_INTERVAL_SECONDS,
   CRAFT_BASE_SUCCESS,
   CRAFT_MASTER_GAP,
   CRAFT_SUCCESS_FLOOR,
@@ -23,6 +26,8 @@ import {
   MIND_MAX,
   PILLS,
   PILL_MAP,
+  // 第 27 轮（需求 3）：自动炼制也要能画符（符箓 id 与丹药/器物同表不同册）
+  TALISMAN_MAP,
   REFINING_SLOT_REQUIREMENT,
   REFINING_TIER_COST,
   REFINING_TIER_TECH,
@@ -52,6 +57,8 @@ import { furnaceAlchemyBonus, furnaceBatchBonus, furnaceRefiningBonus } from './
 import { completeAllExpeditions } from './expeditions';
 // 第 21 轮：派遣的四类加成（成功率 / 省料 / 增产 / 越阶）
 import { getPostCostMultiplier, getPostEffect, getPostSalvage } from './posting';
+// 第 27 轮（需求 3）：自动炼制里的符箓那一支（符箓的炼制在 talismans.ts）
+import { craftTalisman } from './talismans';
 import type { GameState } from './state';
 
 /* ------------------------------------------------------------------ */
@@ -406,6 +413,68 @@ export function craftPill(
     };
   }
   return { state: next, made, failed, rate };
+}
+
+/**
+ * 自动炼制（第 27 轮需求 3）。
+ *
+ * 玩家原话：「炼丹和炼器、制符等也变成"炼制""自动炼制"」。
+ *
+ * ⚠️ 查证过：合成有 autoRefineTargets + engine.autoRefine 这一套，
+ * 但三种炼制**原本没有任何自动机制** —— 所以不能只把按钮改名成"自动炼制"，
+ * 那会做出一个点下去什么也不会发生的按钮。这里照着 autoRefine 的形状补一套：
+ *
+ *   - 目标存在 autoCraftTargets（键 = 丹药 / 器物 / 符箓 id），> 0 即开着；
+ *   - 每 AUTO_CRAFT_INTERVAL_SECONDS 秒炼**一批**（autoCraftTimer 计时）；
+ *   - 每批挑"**缺口最大、而且炼得动**"的那一条，补到目标就停手；
+ *   - 与合成一样**不保留欠账**，否则资源一变多就会爆发式狂炼。
+ *
+ * ⚠️ 放在 crafting.ts 而不是 engine.ts：engine ← crafting 的依赖方向不能反
+ * （engine 里拿不到这些炼制函数，反过来会成环）。
+ */
+export function autoCraft(state: GameState, dt: number, random: RandomSource = gameRandom): GameState {
+  if (dt <= 0) return state;
+  const entries = Object.entries(state.autoCraftTargets).filter(([, target]) => target > 0);
+  if (entries.length === 0) return state;
+
+  const timer = state.autoCraftTimer + dt;
+  if (timer < AUTO_CRAFT_INTERVAL_SECONDS) return { ...state, autoCraftTimer: timer };
+  const next: GameState = { ...state, autoCraftTimer: 0 };
+
+  const candidates = entries
+    .map(([id, target]) => ({ id, short: target - craftStockOf(next, id) }))
+    .filter((c) => c.short > 0)
+    .filter((c) => maxCraftableOf(next, c.id) > 0)
+    .sort((a, b) => b.short - a.short);
+
+  const pick = candidates[0];
+  if (!pick) return next;
+
+  const batch = Math.max(1, Math.min(pick.short, maxCraftableOf(next, pick.id), AUTO_CRAFT_BATCH));
+  if (PILL_MAP[pick.id]) return craftPill(next, pick.id, batch, random).state;
+  if (ARTIFACT_MAP[pick.id]) return craftArtifact(next, pick.id, batch, random).state;
+  if (TALISMAN_MAP[pick.id]) {
+    // 符箓只有 1~3 品（字段叫 grade，不是 tier）
+    const rate = getCraftSuccessRate(next, 'talisman', TALISMAN_MAP[pick.id].grade);
+    return craftTalisman(next, pick.id, batch, rate, random).state;
+  }
+  return next;
+}
+
+/** 某个炼制品的现有库存（丹药 / 器物 / 符箓三表里查） */
+export function craftStockOf(state: GameState, id: string): number {
+  if (PILL_MAP[id]) return state.pills[id] ?? 0;
+  if (ARTIFACT_MAP[id]) return state.artifacts[id] ?? 0;
+  if (TALISMAN_MAP[id]) return state.talismans[id] ?? 0;
+  return 0;
+}
+
+/** 某条炼制线现在最多能炼几个（取决于材料与品阶门槛） */
+export function maxCraftableOf(state: GameState, id: string): number {
+  if (PILL_MAP[id]) return maxCraftable(state, toCostMap(PILL_MAP[id].cost));
+  if (ARTIFACT_MAP[id]) return maxCraftable(state, toCostMap(ARTIFACT_MAP[id].cost));
+  if (TALISMAN_MAP[id]) return maxCraftable(state, toCostMap(TALISMAN_MAP[id].cost));
+  return 0;
 }
 
 export function canCraftArtifact(state: GameState, artifactId: string): CraftCheck {

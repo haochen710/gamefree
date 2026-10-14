@@ -9,7 +9,7 @@ import { fmt } from '../game/decimal';
 import { ARTIFACTS, TIER_NAMES, tierName } from '../game/content';
 import { toCostMap } from '../game/engine';
 import {
-  canCraftArtifact,
+
   describeCraftRate,
   getCraftSuccessRate,
   getRefiningUpgradeStatus,
@@ -59,6 +59,8 @@ function TierUpgrade() {
 export function RefiningPanel() {
   const game = useGame((s) => s.game);
   const craftArtifact = useGame((s) => s.craftArtifact);
+  // 第 27 轮（需求 3）：自动炼制
+  const setAutoCraftTarget = useGame((s) => s.setAutoCraftTarget);
 
   const holders = Math.max(1, game.sect.disciples.length);
   const visible = ARTIFACTS.filter((a) => a.tier <= game.refiningTier + 1);
@@ -98,8 +100,10 @@ export function RefiningPanel() {
             {(byTier.get(tier) ?? []).map((artifact) => {
               const locked = artifact.tier > game.refiningTier;
               const cost = toCostMap(artifact.cost);
-              const check = canCraftArtifact(game, artifact.id);
-              const max = maxCraftable(game, cost);
+                          const max = maxCraftable(game, cost);
+  // 第 27 轮（需求 3）：自动炼制这条线
+  const autoTarget = game.autoCraftTargets[artifact.id] ?? 0;
+  const autoOn = autoTarget > 0;
               const owned = game.artifacts[artifact.id] ?? 0;
               const effective = Math.min(owned, holders);
               // 需求 2：炼制有概率失败；可携带器物还要显示剩余次数
@@ -141,22 +145,25 @@ export function RefiningPanel() {
                   <CostList cost={cost} state={game} />
                 </div>
                 <div className="btn-row">
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={locked || !check.ok}
-                    onClick={() => craftArtifact(artifact.id, 1)}
-                  >
-                    炼制
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={locked || max < 1}
-                    onClick={() => craftArtifact(artifact.id, max)}
-                  >
-                    最大 {max > 0 ? `(${max})` : ''}
-                  </button>
+                {/* 第 27 轮（需求 3）：炼制 / 自动炼制（与炼丹、合成同一套交互） */}
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  disabled={locked || max < 1}
+                  title={max > 0 ? '当前可炼 ' + max + ' 个' : '材料不足'}
+                  onClick={() => craftArtifact(artifact.id, Math.max(1, max))}
+                >
+                  炼制
+                </button>
+                <button
+                  type="button"
+                  className={autoOn ? 'btn btn--primary' : 'btn'}
+                  disabled={locked}
+                  title={autoOn ? '自动炼制中：低于目标 ' + autoTarget + ' 个就自动补' : '开启后每 2 秒自动炼一批'}
+                  onClick={() => setAutoCraftTarget(artifact.id, autoOn ? 0 : Math.max(10, (game.artifacts[artifact.id] ?? 0) * 2))}
+                >
+                  自动炼制{autoOn ? ' ✓' : ''}
+                </button>
                 </div>
               </div>
 

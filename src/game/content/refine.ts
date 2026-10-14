@@ -133,5 +133,16 @@ export const REFINE_RECIPE_MAP: Record<string, RefineRecipe> = REFINE_RECIPES.re
  * 于是界面按新价显示、实际却按旧价扣 —— 冒烟里那条"产出量符合合成比例"当场红了。
  * 现在唯一来源就是配方本身。
  */
+/**
+ * 自动炼制的节拍（秒/批）—— 第 27 轮（需求 3）。
+ *
+ * 取 2 秒：`applyTick` 一秒会跑很多次，不限速就会"每帧炼一批"；
+ * 而炼制是有成功率的（失败会损耗材料），太快反而看不出成败。
+ */
+export const AUTO_CRAFT_INTERVAL_SECONDS = 2;
+
+/** 自动炼制一批最多炼几个（防止一口气把材料全砸进去） */
+export const AUTO_CRAFT_BATCH = 10;
+
 export const STONE_REFINE_COST = REFINE_RECIPE_MAP.stoneRefine.cost as { qi: number; ore: number };
 export const STONE_REFINE_OUTPUT = REFINE_RECIPE_MAP.stoneRefine.output.amount;

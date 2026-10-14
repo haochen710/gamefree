@@ -7860,7 +7860,9 @@ section('[50] 天赋六类 · 派遣与技艺 · 符箓 · 秘境大改（需求
     check('符箓面板渲染出来了', talismanHtml.includes('符箓'));
     check('列出剩下的两类符', ['聚灵符', '破境符'].every((n) => talismanHtml.includes(n)));
     check('符箓页有大阵入口（需求 9）', talismanHtml.includes('宗门大阵'));
-    check('有画符按钮', talismanHtml.includes('画一张'));
+    // 第 27 轮（需求 3）：「画一张 / 画十张」换成「绘制 / 自动绘制」
+    check('有绘制按钮', talismanHtml.includes('绘制'));
+    check('有自动绘制按钮', talismanHtml.includes('自动绘制'));
     Object.assign(initial, { game: backup.game });
   }
 }
@@ -8549,6 +8551,76 @@ section('[57] 存档键名清单与序列化结果逐键一致（第 24 轮收�
     round !== null && round.buildings !== undefined && round.realmIndex === rich.realmIndex,
   );
 }
+/* ------------------------------------------------------------------ */
+/* 58. 第 27 轮（需求 3）：自动炼制                                      */
+/* ------------------------------------------------------------------ */
+section('[58] 自动炼制：按目标存量自动补，补够就停（第 27 轮 需求 3）');
+{
+  const pillId = 'qiGatheringPill'; // 聚气丹（一品，开局就能炼）
+  check('测试用的丹方存在', PILL_MAP[pillId] !== undefined, pillId);
+
+  const base: GameState = {
+    // 聚气丹要 妖丹 3（第一次写测试时忘了给，于是"自动炼制什么都没炼"）
+    ...grant(createInitialState(0), { qi: '1e9', herb: '1e9', demonCore: '1e6' }),
+    techs: { ...createInitialState(0).techs, alchemyArt: true },
+    alchemyTier: 3,
+    sect: { ...createInitialState(0).sect, founded: true },
+  };
+
+  // 没开自动时，时间流逝什么也不会发生
+  const idle = applyTick(base, 30, () => 0.1);
+  check('没开自动就什么也不炼', (idle.pills[pillId] ?? 0) === 0, String(idle.pills[pillId] ?? 0));
+
+  // 开了自动之后的 state（下面的机制测试都用它）
+  const auto: GameState = { ...base, autoCraftTargets: { [pillId]: 20 } };
+
+  /*
+   * 直接测机制本身（不走整条 applyTick）。
+   *
+   * ⚠️ 一开始这条是用 applyTick 测的，结果丹药恒为 0 而 `autoCraftTimer` 也归零 ——
+   * 说明**炼制确实发生了，但丹药被 tick 里的其它环节消耗掉了**（弟子服药之类）。
+   * 那样测的是"整条 tick 的净结果"，噪声太大；这里改成只钉住自动炼制这一段。
+   */
+  const fired = crafting.autoCraft(auto, 5, () => 0.1);
+  check(
+    '过了节拍就会自动炼一批',
+    (fired.pills[pillId] ?? 0) > 0,
+    `丹药=${fired.pills[pillId] ?? 0} · 最多能炼=${crafting.maxCraftableOf(auto, pillId)}`,
+  );
+  check('不会超过目标存量', (fired.pills[pillId] ?? 0) <= 20, String(fired.pills[pillId] ?? 0));
+  check('出手后计时归零', fired.autoCraftTimer === 0, String(fired.autoCraftTimer));
+
+  // 已经囤够 → 停手（再走一段时间也不再增加）
+  const full: GameState = { ...base, pills: { [pillId]: 20 }, autoCraftTargets: { [pillId]: 20 } };
+  const afterFull = applyTick(full, 60, () => 0.1);
+  check('囤够目标就停手', (afterFull.pills[pillId] ?? 0) === 20, String(afterFull.pills[pillId] ?? 0));
+
+  /*
+   * 节拍：不到一个间隔（2 秒）不该出手 —— 否则 applyTick 一秒跑很多次，
+   * 会变成"每帧炼一批"，快到玩家反应不过来。
+   */
+  const tooSoon = crafting.autoCraft({ ...base, autoCraftTargets: { [pillId]: 20 } }, 0.5, () => 0.1);
+  check('不到一个节拍不炼（限速生效）', (tooSoon.pills[pillId] ?? 0) === 0, String(tooSoon.pills[pillId] ?? 0));
+
+  // 存档往返
+  const saved = deserialize(JSON.parse(JSON.stringify(serialize(auto))));
+  check(
+    '自动炼制的目标能存能读',
+    saved !== null && saved.autoCraftTargets[pillId] === 20,
+    String(saved?.autoCraftTargets[pillId]),
+  );
+  check(
+    '非法 id 会被读档丢掉',
+    (() => {
+      const bad = deserialize({
+        ...JSON.parse(JSON.stringify(serialize(auto))),
+        act: { notARealItem: 999, [pillId]: 5 },
+      });
+      return bad !== null && bad.autoCraftTargets.notARealItem === undefined && bad.autoCraftTargets[pillId] === 5;
+    })(),
+  );
+}
+
 console.log('');
 console.log('='.repeat(64));
 if (!passed) {

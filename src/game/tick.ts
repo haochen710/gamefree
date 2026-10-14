@@ -16,6 +16,8 @@
  *   tick.ts         ← 依赖以上全部
  */
 import { tickBuffs } from './content';
+// 第 27 轮（需求 3）：自动炼制住在 crafting.ts（engine ← crafting 不能反向依赖）
+import { autoCraft } from './crafting';
 import {
   autoRefine,
   clampResources,
@@ -76,6 +78,8 @@ export function applyTick(state: GameState, dt: number, random: RandomSource = g
   next = tickSeason(next, dt, random);
   next = produceResources(next, dt);
   next = autoRefine(next, dt);
+  // 第 27 轮（需求 3）：自动炼制（与自动合成挨着，两套机制并排读）
+  next = autoCraft(next, dt, random);
   next = tickMind(next, dt);
   next = tickInjury(next, dt);
   next = tickResearch(next, dt);

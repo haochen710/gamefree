@@ -243,6 +243,12 @@ export interface GameStore {
   openRealm(realmId: string): void;
   /** 设置某条配方的自动合成目标存量（本轮需求 2） */
   setAutoRefineTarget(recipeId: string, target: number): void;
+  /**
+   * 第 27 轮（需求 3）：设置某条炼制线的**自动炼制**目标存量。
+   *
+   * 传 0 即关闭自动（与自动合成那张表的语义一致）。
+   */
+  setAutoCraftTarget(itemId: string, target: number): void;
   /* ---- 感悟（需求 3） ---- */
   enlighten(pathId: string): void;
   cancelEnlighten(): void;
@@ -1204,6 +1210,16 @@ export const useGame = create<GameStore>()((set, get) => ({
   },
 
   /** 设置某条配方的自动合成目标存量（本轮需求 2） */
+  setAutoCraftTarget: (itemId, target) => {
+    set((s) => {
+      const next = Math.max(0, Math.floor(target));
+      const targets = { ...s.game.autoCraftTargets };
+      if (next > 0) targets[itemId] = next;
+      else delete targets[itemId];
+      return { game: { ...s.game, autoCraftTargets: targets } };
+    });
+  },
+
   setAutoRefineTarget: (recipeId, target) => {
     set((s) => {
       const next = Math.max(0, Math.floor(target));

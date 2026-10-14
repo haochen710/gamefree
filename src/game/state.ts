@@ -455,6 +455,20 @@ export interface GameState {
    * 0 或缺省 = 那条不参与自动合成。
    */
   autoRefineTargets: Record<string, number>;
+  /**
+   * 第 27 轮（需求 3）：**自动炼制**的目标存量（键 = 丹药 / 器物 / 符箓 id）。
+   *
+   * 与 autoRefineTargets 同一套思路：> 0 表示这条线开着自动，囤到目标就停手。
+   * 三种炼制共用这一张表（id 不会重名），所以只需要一个字段。
+   */
+  autoCraftTargets: Record<string, number>;
+  /**
+   * 自动炼制的节拍（秒）。
+   *
+   * 必须要有它：applyTick 一秒会跑很多次，若不限速就会"每帧炼一批"，
+   * 快到玩家根本反应不过来（合成那边是靠 AUTO_REFINE_RATES 的批/秒限速的）。
+   */
+  autoCraftTimer: number;
   /** 自动合成的凑整进度，攒够 1 次就合成一批 */
   autoRefineProgress: number;
 
@@ -651,7 +665,9 @@ export function createInitialState(now = Date.now()): GameState {
     injurySeconds: 0,
     personalTravel: null,
     autoRefineLevel: 0,
-    autoRefineTargets: {},
+  autoRefineTargets: {},
+  autoCraftTargets: {},
+  autoCraftTimer: 0,
     autoRefineProgress: 0,
     seeds: {},
     plantings: [],

@@ -250,6 +250,15 @@ export interface SerializedGame {
   rr?: unknown;
   /** 各条配方的自动合成目标存量（本轮需求 2） */
   art?: Record<string, number>;
+  /**
+   * 第 27 轮（需求 3）：自动炼制的目标存量。
+   *
+   * ⚠️ 键名与 `art`（自动合成）只差一个字母，所以这里把语义写死在注释里：
+   * **art = autoRefineTargets（合成）· act = autoCraftTargets（炼制）**。
+   */
+  act?: Record<string, number>;
+  /** 自动炼制的节拍（秒） */
+  actm?: number;
   /** 天工院特殊升级等级（需求 2） */
   tl?: number;
   /** 善恶值 / 待选遭遇 id / 遭遇判定计时（需求 2） */
@@ -361,6 +370,9 @@ export function serialize(state: GameState): SerializedGame {
     au: state.autoRefineLevel,
     ap: state.autoRefineProgress,
     art: { ...state.autoRefineTargets },
+    /* 第 27 轮（需求 3）：自动炼制 —— 键名取 act / actm（art 已被自动合成的目标占用） */
+    act: { ...state.autoCraftTargets },
+    actm: state.autoCraftTimer,
     sd: { ...state.seeds },
     pg: state.plantings,
     npi: state.nextPlantingId,
@@ -801,6 +813,23 @@ function toSeedMap(raw: unknown): Record<string, number> {
 /** 已开启的秘境：只认还存在的秘境 id */
 /** 可携带器物的剩余次数：只认还在库存里、而且确实可携带的器物 */
 /** 自动合成目标：只认还存在的配方 id，值夹到 0~1e9 */
+/**
+ * 自动炼制的目标存量（第 27 轮）。
+ *
+ * 与自动合成那张表要**分开校验**：丹药 / 器物 / 符箓的 id 不在
+ * REFINE_RECIPE_MAP 里，照搬 sanitizeAutoRefineTargets 会把它们全滤掉。
+ */
+function sanitizeAutoCraftTargets(raw: unknown): Record<string, number> {
+  if (raw === null || typeof raw !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!PILL_MAP[id] && !ARTIFACT_MAP[id] && !TALISMAN_MAP[id]) continue;
+    const n = toInt(value, 0, 0, 1e9);
+    if (n > 0) out[id] = n;
+  }
+  return out;
+}
+
 function sanitizeAutoRefineTargets(raw: unknown): Record<string, number> {
   if (raw === null || typeof raw !== 'object') return {};
   const out: Record<string, number> = {};
@@ -1190,6 +1219,8 @@ export function deserialize(raw: unknown): GameState | null {
     personalTravel: sanitizeTravel(data.pv),
     autoRefineLevel: toInt(data.au, 0, 0, AUTO_REFINE_LEVEL_MAX),
     autoRefineTargets: sanitizeAutoRefineTargets(data.art),
+    autoCraftTargets: sanitizeAutoCraftTargets(data.act),
+    autoCraftTimer: toFloat(data.actm, 0, 0, 1e9),
     autoRefineProgress: toFloat(data.ap, 0, 0, 1e6),
     seeds: toSeedMap(data.sd),
     plantings,

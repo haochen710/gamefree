@@ -6,8 +6,8 @@
  */
 import { fmt } from '../game/decimal';
 import { PILLS, TIER_NAMES, tierName, type PillDef } from '../game/content';
-import { canAfford, toCostMap } from '../game/engine';
-import { canCraftPill, describeCraftRate, getAlchemyUpgradeStatus, getCraftSuccessRate, maxCraftable } from '../game/crafting';
+import { toCostMap } from '../game/engine';
+import { describeCraftRate, getAlchemyUpgradeStatus, getCraftSuccessRate, maxCraftable } from '../game/crafting';
 import { getPillDemand } from '../game/disciples';
 import { useGame } from '../game/store';
 import { FoldSection } from './fold';
@@ -107,6 +107,8 @@ function TierUpgrade() {
 export function AlchemyPanel() {
   const game = useGame((s) => s.game);
   const craftPill = useGame((s) => s.craftPill);
+  // 第 27 轮（需求 3）：自动炼制
+  const setAutoCraftTarget = useGame((s) => s.setAutoCraftTarget);
 
   // 只展示已解锁品阶 + 下一个品阶，避免开局就列出九品丹方
   const visible = PILLS.filter((p) => p.tier <= game.alchemyTier + 1);
@@ -147,8 +149,10 @@ export function AlchemyPanel() {
             {(byTier.get(tier) ?? []).map((pill) => {
               const locked = pill.tier > game.alchemyTier;
               const cost = toCostMap(pill.cost);
-              const check = canCraftPill(game, pill.id);
-              const max = maxCraftable(game, cost);
+                          const max = maxCraftable(game, cost);
+  // 第 27 轮（需求 3）：自动炼制这条线的目标存量（> 0 即开着）
+  const autoTarget = game.autoCraftTargets[pill.id] ?? 0;
+  const autoOn = autoTarget > 0;
               const owned = game.pills[pill.id] ?? 0;
               // 需求 2：炼制有概率失败
               const rate = getCraftSuccessRate(game, 'alchemy', pill.tier);
@@ -175,30 +179,35 @@ export function AlchemyPanel() {
                   <CostList cost={cost} state={game} />
                 </div>
                 <div className="btn-row">
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={locked || !check.ok || !canAfford(game, cost)}
-                    onClick={() => craftPill(pill.id, 1)}
-                  >
-                    炼制
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={locked || max < 10}
-                    onClick={() => craftPill(pill.id, 10)}
-                  >
-                    炼制 10
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={locked || max < 1}
-                    onClick={() => craftPill(pill.id, max)}
-                  >
-                    最大 {max > 0 ? `(${max})` : ''}
-                  </button>
+                {/*
+                  * 第 27 轮（需求 3）：玩家原话「炼丹和炼器、制符等也变成
+                  * “炼制”“自动炼制”」。所以原来的「炼制 1 / 炼制 10 / 最大」
+                  * 三个按钮收成两个，与合成面板同一套交互：
+                  *   炼制     = 把当前能炼的全部炼掉（原来那个"最大"）
+                  *   自动炼制 = 开关（目标存量 > 0 即开着），引擎按缺口自动补
+                  */}
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  disabled={locked || max < 1}
+                  title={max > 0 ? '当前可炼 ' + max + ' 个' : '材料不足'}
+                  onClick={() => craftPill(pill.id, Math.max(1, max))}
+                >
+                  炼制
+                </button>
+                <button
+                  type="button"
+                  className={autoOn ? 'btn btn--primary' : 'btn'}
+                  disabled={locked}
+                  title={
+                    autoOn
+                      ? '自动炼制中：低于目标 ' + autoTarget + ' 个就自动补'
+                      : '开启后每 2 秒自动炼一批，直到囤够目标'
+                  }
+                  onClick={() => setAutoCraftTarget(pill.id, autoOn ? 0 : Math.max(10, (game.pills[pill.id] ?? 0) * 2))}
+                >
+                  自动炼制{autoOn ? ' ✓' : ''}
+                </button>
                 </div>
               </div>
 
