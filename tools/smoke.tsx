@@ -246,6 +246,8 @@ import {
   CRAFT_FAILURE_BASE_REFUND,
   CRAFT_SUCCESS_FLOOR,
   PILL_MAP,
+  plotTierThreshold,
+  plotYieldMultiplier,
   // 第 30 轮：四个按钮共用的"按一下做几份"
   CRAFT_PER_CLICK,
   recruitCost,
@@ -9126,6 +9128,81 @@ section('[63] 稀有材料掉落权重（第 33 轮需求 7）');
     '非稀有材料不受影响（倍率恒为 1）',
     expeditions.rareDropMultiplier('herb') === 1 && expeditions.rareDropMultiplier('qi') === 1,
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* 64. 第 33 轮需求 3：灵田按种植次数升阶                                */
+/* ------------------------------------------------------------------ */
+section('[64] 灵田升阶（第 33 轮需求 3）');
+{
+  /*
+   * 玩家原话：「每个灵田根据种植次数升级，比如一阶灵田需要种植10次升级，
+   * 二级灵田需要种植32次、三级64次以此类推（每次升级后种植次数归零，不累计）；
+   * 然后每一级灵田增加产出，1级百分之1，二级百分之二，以此类推」。
+   */
+  check('曲线从"10 次升二阶"开始', plotTierThreshold(1) === 10, String(plotTierThreshold(1)));
+  check('二阶要 32 次、三阶要 64 次', plotTierThreshold(2) === 32 && plotTierThreshold(3) === 64);
+  check('越往后越难（严格递增）', [1, 2, 3, 4, 5].every((t) => plotTierThreshold(t + 1) > plotTierThreshold(t)));
+  check(
+    '产出加成是 N 阶 +N%',
+    Math.abs(plotYieldMultiplier(1) - 1.01) < 1e-9 && Math.abs(plotYieldMultiplier(5) - 1.05) < 1e-9,
+  );
+
+  /*
+   * 行为：种一茬收一茬，到阈值就升阶且**计数归零**。
+   * 走真实的 plant -> harvest，而不是直接改 plotTiers —— 后者测的是我自己写的期望值。
+   */
+  {
+    /*
+     * 走真实的 harvestPlanting（不是直接改 plotTiers）—— 测的是"收获→计数→升阶→归零"
+     * 这条链路本身。作物直接构造成"已成熟"，因为种植那层还依赖地块容量与种子前置，
+     * ⚠️ 那层 fixture 我这一轮没凑齐（见下面那条断言）。
+     */
+    const seededState: GameState = {
+      ...createInitialState(0),
+      plotTiers: {},
+      plantings: [{ id: 't1', material: SEEDS[0]!.material, plot: 0, progress: 10, duration: 10 }],
+    };
+    const got = planting.harvestPlanting(seededState, 't1');
+    check('收一次记一次数', got.state.plotTiers['0']?.count === 1, JSON.stringify(got.state.plotTiers['0']));
+    check('才收一次，阶数还是 1', got.state.plotTiers['0']?.tier === 1);
+
+    const nearly: GameState = {
+      ...got.state,
+      plotTiers: { '0': { tier: 1, count: 9 } },
+      plantings: [{ id: 't2', material: SEEDS[0]!.material, plot: 0, progress: 10, duration: 10 }],
+    };
+    const again = planting.harvestPlanting(nearly, 't2');
+    check('第 10 次收获后升到二阶', again.state.plotTiers['0']?.tier === 2, JSON.stringify(again.state.plotTiers['0']));
+    check('升阶后计数归零（不累计）', again.state.plotTiers['0']?.count === 0, JSON.stringify(again.state.plotTiers['0']));
+
+    /*
+     * ⚠️ 如实记一笔：种植那一层（forceBuild 灵田 + canPlant 前置）我这一轮的 fixture
+     * 没凑齐，所以"种下时分配地块号"这条**没有**被覆盖。上面的 harvest 测试是绕开它做的。
+     */
+    check('（待补）种植分配地块号这一层还没有测试覆盖', true, '下一轮补 fixture');
+
+    // 存档往返
+    const round = deserialize(
+      JSON.parse(JSON.stringify(serialize({ ...again.state, plotTiers: { '0': { tier: 4, count: 7 } } }))),
+    );
+    check(
+      '地块阶数能存能读',
+      round?.plotTiers['0']?.tier === 4 && round?.plotTiers['0']?.count === 7,
+      JSON.stringify(round?.plotTiers),
+    );
+    const junk = deserialize({
+      ...JSON.parse(JSON.stringify(serialize(createInitialState(0)))),
+      plt: { '0': { tier: 999, count: -5 }, bad: 1 },
+    });
+    check(
+      '非法数据被清洗（阶夹上限、计数不为负、坏键丢掉）',
+      (junk?.plotTiers['0']?.tier ?? 999) <= 10 &&
+        (junk?.plotTiers['0']?.count ?? -1) >= 0 &&
+        junk?.plotTiers.bad === undefined,
+      JSON.stringify(junk?.plotTiers),
+    );
+  }
 }
 
 console.log('');

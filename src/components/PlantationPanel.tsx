@@ -15,6 +15,9 @@ import {
   SEED_MAP,
   hastenQiCost,
   hastenStoneCost,
+  // 第 33 轮需求 3：地块阶数曲线与产出加成
+  plotTierThreshold,
+  plotYieldMultiplier,
   type MaterialId,
 } from '../game/content';
 import { getPlotCapacity } from '../game/engine';
@@ -36,12 +39,35 @@ function formatSeconds(seconds: number): string {
   return `${Math.round(seconds / 60)} 分钟`;
 }
 
+/** 一块**空地**的框（第 33 轮需求 3）：有框、有阶数，写明还差几次升阶 */
+function EmptyPlotCard({ slot, state }: { slot: number; state: GameState }) {
+  const info = state.plotTiers[String(slot)] ?? { tier: 1, count: 0 };
+  const need = plotTierThreshold(info.tier);
+  return (
+    <article className="plot plot--empty">
+      <div className="plot__head">
+        <span className="plot__icon">🟫</span>
+        <span className="plot__name">空地</span>
+        <span className="plot__tier">{info.tier} 阶</span>
+      </div>
+      <p className="plot__note">
+        再种 {Math.max(0, need - info.count)} 次升 {info.tier + 1} 阶（产出 +{Math.round(
+          (plotYieldMultiplier(info.tier + 1) - 1) * 100,
+        )}%）
+      </p>
+    </article>
+  );
+}
+
 function PlotCard({ planting, state }: { planting: Planting; state: GameState }) {
   const hasten = useGame((s) => s.hastenPlanting);
   const harvest = useGame((s) => s.harvest);
 
   const def = MATERIAL_MAP[planting.material];
   const seed = SEED_MAP[planting.material];
+  // 第 33 轮需求 3：这块地的阶（缺键即一阶）
+  const info = state.plotTiers[String(planting.plot)] ?? { tier: 1, count: 0 };
+  const tier = info.tier;
   const ready = isPlantingReady(planting);
   const progress = getPlantingProgress(planting);
 
@@ -55,6 +81,8 @@ function PlotCard({ planting, state }: { planting: Planting; state: GameState })
         <span className="plot__time">
           {ready ? '已成熟' : `还需 ${formatSeconds(getPlantingRemaining(planting))}`}
         </span>
+        {/* 第 33 轮需求 3：这块地现在是几阶（阶越高产出越高） */}
+        <span className="plot__tier">{tier} 阶</span>
       </div>
 
       <div className="bar">
@@ -62,7 +90,10 @@ function PlotCard({ planting, state }: { planting: Planting; state: GameState })
       </div>
 
       <div className="plot__foot">
-        <span className="plot__yield">可收 {seed?.yield ?? 1} 份</span>
+        <span className="plot__yield">
+          可收 {Math.max(1, Math.floor((seed?.yield ?? 1) * plotYieldMultiplier(tier)))} 份
+          {tier > 1 && <span className="panel__hint">（{tier} 阶 +{tier}%）</span>}
+        </span>
         {ready ? (
           <button type="button" className="btn btn--tiny btn--primary" onClick={() => harvest(planting.id)}>
             收获
@@ -142,9 +173,21 @@ export function PlantationPanel() {
               <p className="panel__note">地块空着。从下面的种子列表里挑一种种下。</p>
             ) : (
               <div className="plot-grid">
-                {game.plantings.map((planting) => (
-                  <PlotCard key={planting.id} planting={planting} state={game} />
-                ))}
+                {/*
+                 * 第 33 轮需求 3（玩家原话）：「灵田图片化（或者说要有框框在那）」。
+                 *
+                 * 原来只渲染**有作物**的地块 —— 空地是"看不见的"，玩家只能从
+                 * "还能种几块"这个数字去猜。现在按**容量**渲染：每块地都有框，
+                 * 空着的那块也画出来并写明"空地"，一眼能看出田有多大、空了几块。
+                 */}
+                {Array.from({ length: getPlotCapacity(game) }, (_, slot) => {
+                  const planting = game.plantings.find((pl) => pl.plot === slot);
+                  return planting ? (
+                    <PlotCard key={planting.id} planting={planting} state={game} />
+                  ) : (
+                    <EmptyPlotCard key={`empty-${slot}`} slot={slot} state={game} />
+                  );
+                })}
               </div>
             )}
           </>

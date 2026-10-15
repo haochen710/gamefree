@@ -2034,6 +2034,33 @@ a {
   background: rgba(255, 255, 255, 0.5);
 }
 
+
+/*
+ * 第 33 轮需求 3：地块的"阶"徽章，以及**空地**的框。
+ *
+ * 空地为什么也要画：玩家原话「灵田图片化（或者说要有框框在那）」——
+ * 原来只渲染有作物的地块，空地是看不见的，玩家只能靠"还能种几块"的数字去猜。
+ */
+.plot__tier {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 11px;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.plot--empty {
+  border-style: dashed;
+  opacity: 0.55;
+}
+
+.plot--empty .plot__note {
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.8;
+}
 .plot--ready {
   border-color: var(--jade);
   background: rgba(0, 0, 0, 0.09);
