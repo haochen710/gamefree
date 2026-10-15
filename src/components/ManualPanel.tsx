@@ -23,6 +23,7 @@ import {
 } from '../game/content';
 import {
   canContemplate,
+  contemplateFateCost,
   canEquipManual,
   describeSynth,
   getEligibleDisciples,
@@ -215,10 +216,15 @@ export function ManualPanel({ collapsible }: { collapsible?: boolean }) {
                   type="button"
                   className="btn btn--tiny"
                   disabled={!check.ok}
-                  title={check.reason ?? `消耗 ☯${fmt(cost)} 换 1 份碎片`}
+                  title={
+                    check.reason ??
+                    `消耗 ☯${fmt(cost)} + 天机 ${contemplateFateCost(grade)} 点，换 1 份碎片`
+                  }
                   onClick={() => contemplateManual(grade)}
                 >
                   参悟{MANUAL_GRADE_NAMES[grade]} ☯{fmt(cost)}
+                  {/* 第 33 轮需求 5（玩家反馈）：参悟也要烧天机点，得标出来 */}
+                  <span className="btn__sub">🌌 {contemplateFateCost(grade)} 点</span>
                 </button>
                 {/* 需求 7：批量参悟（一次点十下太累） */}
                 <button

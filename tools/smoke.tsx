@@ -9310,6 +9310,16 @@ section('[65] 观天楼与天机点（第 33 轮需求 5）');
   check('等级越高，同样时间攒的天机越多', after > before, `${before} -> ${after}`);
 }
 
+/* 第 33 轮需求 5 界面补齐：断言资源栏与钻研面板真的显示了天机点 */
+{
+  const html = renderToString(<ResourceBar />);
+  check('基础资源栏里显示了天机点（第 33 轮需求 5）', html.includes('天机点'), html.slice(0, 120));
+  check('没建观天楼时写明缘由，而不是留空', html.includes('需先建观天楼') || html.includes('观天楼'));
+
+  const techHtml = renderToString(<ResearchPanel />);
+  check('钻研面板标出了天机消耗（玩家反馈的那一处）', techHtml.includes('天机'), '');
+}
+
 console.log('');
 console.log('='.repeat(64));
 if (!passed) {

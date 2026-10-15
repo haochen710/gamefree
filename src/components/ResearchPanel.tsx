@@ -16,6 +16,7 @@ import {
   isTechResearched,
   isTechVisible,
   missingPrereqs,
+  researchFateCost,
 } from '../game/research';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
@@ -43,6 +44,10 @@ function TechRow({ def, state }: { def: TechDef; state: GameState }) {
         <span className="recipe__name">{def.name}</span>
         <span className="tier-badge">{REALMS[def.requiresRealm].name}</span>
         <span className="tier-badge">{def.seconds} 秒</span>
+        /* 第 33 轮需求 5（玩家反馈）：钻研要烧天机点，界面得把它标出来 */
+        <span className="tier-badge" title="钻研与领悟都要消耗天机点（观天楼夜观星象所得）">
+          天机 {researchFateCost(def)} 点
+        </span>
         {done && <span className="recipe__owned">已掌握</span>}
         {active && <span className="recipe__owned">钻研中…</span>}
       </div>

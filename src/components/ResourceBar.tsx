@@ -17,7 +17,9 @@
 import { useEffect, useState } from 'react';
 import { D, fmt, fmtDuration, fmtRate } from '../game/decimal';
 import { MATERIALS, RESOURCES, RARITY_COLORS, type MaterialDef } from '../game/content';
-import { getProduction, getStorageCaps } from '../game/engine';
+// 第 33 轮需求 5（玩家反馈）：天机点要显示在基础资源里，产出速率与观天楼判定都要读
+import { FATE_PER_SECOND } from '../game/content';
+import { getBuildingCount, getProduction, getStorageCaps } from '../game/engine';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
 
@@ -130,7 +132,10 @@ function MaterialCard({ def, game }: { def: MaterialDef; game: GameState }) {
 }
 
 export function ResourceBar() {
+
   const game = useGame((s) => s.game);
+  /* 第 33 轮需求 5：天机点那一行要知道观天楼建没建 */
+  const hasObservatory = getBuildingCount(game, 'observatory') > 0;
   const production = getProduction(game);
   const caps = getStorageCaps(game);
 
@@ -145,7 +150,7 @@ export function ResourceBar() {
   return (
     <section className="resource-bar">
       {/* 需求 3：不同种类的资源分开、各自可折叠 */}
-      <Group id="resources" title="基础资源" count={RESOURCES.length}>
+      <Group id="resources" title="基础资源" count={RESOURCES.length + 1}>
         {RESOURCES.map((def) => {
           const amount = game.resources[def.id];
           const cap = caps[def.id];
@@ -193,6 +198,28 @@ export function ResourceBar() {
             </div>
           );
         })}
+        {/*
+          * 第 33 轮需求 5（玩家反馈补做）：「基础资源你需要增加天机点这个东西啊」。
+          *
+          * 天机点原来只活在 state 里、界面上完全看不到（我上一轮只做了引擎侧的门槛）。
+          * 这里把它当成基础资源的一员：数值 + 每秒产出；没建观天楼时写明缘由，
+          * 免得玩家以为是坏的。
+          */}
+        <div className="resource" title="观天楼夜观星象所得。钻研与领悟功法都要消耗它。">
+          <div className="resource__head">
+            <span className="resource__icon">🌌</span>
+            <span className="resource__name">天机点</span>
+          </div>
+          <div className="resource__amount">{Math.floor(game.fatePoints)}</div>
+          <div className={hasObservatory ? 'resource__rate' : 'resource__rate resource__rate--zero'}>
+            {hasObservatory
+              ? fmtRate(D(FATE_PER_SECOND * game.observatoryLevel))
+              : '需先建观天楼'}
+          </div>
+          <div className="resource__eta">
+            {hasObservatory ? `观天楼 ${game.observatoryLevel} 级` : '开局可建，唯一建筑'}
+          </div>
+        </div>
       </Group>
 
       {baseMaterials.length > 0 && (
