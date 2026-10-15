@@ -830,6 +830,29 @@ function pushJournal(journal: JournalEntry[], entry: JournalEntry): JournalEntry
  * 不会浪费修为），并在宗门记事里说明"缺哪一味丹"。
  * 这是"突破对丹药的需求很强烈"落在弟子身上的那一半。
  */
+/**
+ * 大境界突破的**文字解说**（第 33 轮需求 1）。
+ *
+ * 玩家原话：「增加玩家突破时的文字解说，凸显突破的感觉」。
+ *
+ * 索引 = 突破**进入**的那个大境界（`REALMS` 的下标）：
+ *   1 筑基 · 2 金丹 · 3 元婴 · 4 化神 · 5 炼虚 · 6 合体 · 7 大乘 · 8 渡劫
+ * 第 0 项（炼气）没有"从更低境界突破进来"这回事，所以留空。
+ *
+ * 写法上刻意从"体内"逐级写到"天地"：低境界是身体与气息的变化，
+ * 中段开始有天地灵气响应，最后是雷劫与道则 —— 让玩家一眼看出**走到哪一步了**。
+ */
+export const BREAKTHROUGH_FLAVOR: Record<number, string> = {
+  1: '引气入体，周身经脉豁然贯通，自此踏入筑基——仙途的第一道门槛算是迈过去了。',
+  2: '金丹凝成，丹田中一点金光不散，举手投足间已能引动丝丝天地灵气。',
+  3: '元婴破壳而出，与本体遥遥相应，神魂自此有了第二副皮囊。',
+  4: '神念化虚，方圆百里的风声雨声一齐涌入识海，化神一成，天地为之一宽。',
+  5: '虚空生涟漪，指尖已能触到界壁的缝隙，炼虚之路自此再无回头。',
+  6: '法则入体，肉身与天地同呼吸，合体之后，举手便是小天地。',
+  7: '大乘已至，霞光自天而降，整座山门的灵气都在为他一人翻涌。',
+  8: '九天雷劫轰然落下，他立在雷光中央未曾退过半步——渡劫功成，只待飞升。',
+};
+
 export function tickDisciples(state: GameState, dt: number): GameState {
   if (state.sect.disciples.length === 0 || dt <= 0) return state;
 
@@ -919,10 +942,20 @@ export function tickDisciples(state: GameState, dt: number): GameState {
 
     if (realmIndex !== disciple.realmIndex) {
       changed = true;
+      /*
+       * 第 33 轮需求 1（玩家原话）：「增加玩家突破时的文字解说，凸显突破的感觉」。
+       *
+       * 这里正好是**大境界突破**（`realmIndex` 是大境界索引，层数是另一个字段），
+       * 所以给每个大境界配一句专属解说 —— 原来只有"某某 突破至筑基期"，
+       * 读起来像系统通知，没有"渡过去了"的感觉。
+       *
+       * 找不到文案时退回原来那句，不会出现空白。
+       */
+      const flavor = BREAKTHROUGH_FLAVOR[realmIndex];
       journal = pushJournal(journal, {
         time: state.playTime,
         kind: 'good',
-        text: `${disciple.name} 突破至${REALMS[realmIndex].name}`,
+        text: flavor ? `${disciple.name} ${flavor}` : `${disciple.name} 突破至${REALMS[realmIndex].name}`,
       });
     } else if (progress !== disciple.progress) {
       changed = true;

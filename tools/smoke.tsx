@@ -268,6 +268,8 @@ import {
 import { createInitialState, type Disciple, type GameState } from '../src/game/state';
 import * as engine from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
+// 第 33 轮需求 1：突破文案表跟着 disciples 走（不在 content 里）
+import { BREAKTHROUGH_FLAVOR } from '../src/game/disciples';
 import * as expeditions from '../src/game/expeditions';
 import * as encounter from '../src/game/encounter';
 import { ENCOUNTER_CHANCE } from '../src/game/encounter';
@@ -9038,6 +9040,34 @@ section('[61] 声望商店的碎片权重被压低（第 33 轮需求 6）');
     '碎片权重确实被压低过（不再是 10/8/6/4）',
     fragments.length === 4 && fragments.every((g) => g.weight <= 3),
     fragments.map((g) => String(g.weight)).join('/'),
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 62. 第 33 轮需求 1：大境界突破要有文字解说                            */
+/* ------------------------------------------------------------------ */
+section('[62] 大境界突破的文字解说（第 33 轮需求 1）');
+{
+  /*
+   * 玩家原话：「增加玩家突破时的文字解说，凸显突破的感觉」。
+   *
+   * 判据：1~8 每个大境界都有一句**够长**的专属文案（不是"突破至筑基期"那种通知）。
+   * 长度门槛挡的是"文案被简化回一行系统提示"这种退化。
+   */
+  const missing: number[] = [];
+  const tooShort: number[] = [];
+  for (let i = 1; i <= 8; i += 1) {
+    const line = BREAKTHROUGH_FLAVOR[i];
+    if (!line) missing.push(i);
+    else if (line.length < 16) tooShort.push(i);
+  }
+  check('1~8 每个大境界都有突破解说', missing.length === 0, `缺 ${missing.join('、')}`);
+  check('解说不是"突破至 X 期"那种通知（长度 >= 16 字）', tooShort.length === 0, `过短 ${tooShort.join('、')}`);
+  check('炼气期没有"突破进来"这回事，所以不设文案', BREAKTHROUGH_FLAVOR[0] === undefined);
+  check(
+    '文案递进：渡劫那句提到雷劫（境界越高越有天地异象）',
+    (BREAKTHROUGH_FLAVOR[8] ?? '').includes('雷'),
+    BREAKTHROUGH_FLAVOR[8] ?? '',
   );
 }
 

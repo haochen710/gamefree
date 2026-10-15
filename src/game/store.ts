@@ -34,6 +34,8 @@ import {
 } from './content';
 import * as engine from './engine';
 import * as disciples from './disciples';
+// 第 33 轮需求 1：突破文案与弟子侧共用同一张表；记事函数也在那边
+import { BREAKTHROUGH_FLAVOR, pushJournal } from './disciples';
 import * as expeditions from './expeditions';
 import * as crafting from './crafting';
 import * as research from './research';
@@ -401,7 +403,30 @@ export const useGame = create<GameStore>()((set, get) => ({
 
       const realm = engine.getRealm(result.state);
       if (result.success) {
-        return { ...nextGame(s.game, result.state), notice: `突破成功，已入${realm.name}！` };
+        /*
+         * 第 33 轮需求 1（玩家原话）：「增加玩家突破时的文字解说，凸显突破的感觉」。
+         *
+         * 原来只有一句"突破成功，已入筑基期！"——像系统提示。
+         * 现在用与弟子同一张文案表（`BREAKTHROUGH_FLAVOR`，索引即新大境界），
+         * 并且**同时写进宗门记事** —— 玩家关掉提示后还能回头看到自己走过的那一步。
+         */
+        const flavor = BREAKTHROUGH_FLAVOR[result.state.realmIndex];
+        const next = nextGame(s.game, result.state);
+        // `nextGame` 的 game 是可选的（有些路径只给提示不给状态），这里必须判一下
+        const base = next.game;
+        if (!base) return { ...next, notice: flavor ? `✨ ${flavor}` : `突破成功，已入${realm.name}！` };
+        return {
+          ...next,
+          notice: flavor ? `✨ ${flavor}` : `突破成功，已入${realm.name}！`,
+          game: {
+            ...base,
+            journal: pushJournal(base.journal, {
+              time: base.playTime,
+              kind: 'good',
+              text: flavor ? `你${flavor}` : `你突破至${realm.name}`,
+            }),
+          },
+        };
       }
       if (result.injurySeconds > 0) {
         return {
