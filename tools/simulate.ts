@@ -333,6 +333,19 @@ function payback(state: GameState, id: string, prices: Record<string, number>): 
 }
 
 function chooseBuilding(state: GameState): string | null {
+  /*
+   * 第 33 轮需求 5：观天楼优先。
+   *
+   * 它产的是天机点（不进资源表），所以 payback 算不出有限值、下面那轮循环会跳过它；
+   * 而钻研现在要烧天机点 —— AI 不建它，整条科技线就永久停摆
+   * （实测：境界从化神 5 层掉到筑基 9 层）。所以这里给它一条显式的优先路径：
+   * 能建就先建一座（唯一建筑，建完条件自然不再成立）。
+   */
+  if (engine.getBuildingCount(state, 'observatory') === 0 && state.resources.stone.gte(2e4)) {
+    const def = [...GENERATORS, ...STRUCTURES].find((d) => d.id === 'observatory');
+    if (def && engine.getBuildGate(def, state) === null) return 'observatory';
+  }
+
   const prices = shadowPrices(state);
   let best: { id: string; score: number } | null = null;
 
