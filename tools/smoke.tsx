@@ -6797,7 +6797,11 @@ section('[46] 功法：五档制 · 碎片合成 · 藏经阁 · 装备与回收
     check('没有藏经阁时不能参悟', !manuals.canContemplate(noLib, 1).ok, manuals.canContemplate(noLib, 1).reason ?? '');
     check('天纵永远不能参悟（只能靠九档秘境）', !manuals.canContemplate(forceBuild(noLib, 'library', 1), 5).ok);
 
-    const stocked = forceBuild(grant(noLib, { qi: '1e12' }), 'library', 2);
+    // 第 33 轮需求 5：参悟现在要烧天机点（观天楼产出）
+  const stocked = {
+    ...forceBuild(grant(noLib, { qi: '1e12' }), 'library', 2),
+    fatePoints: 1e6,
+  };
     const ok = manuals.canContemplate(stocked, 3);
     check('有藏经阁且有灵气时可以参悟上品', ok.ok, ok.reason ?? '');
     const before = stocked.resources.qi;
@@ -9214,6 +9218,57 @@ section('[64] 灵田升阶（第 33 轮需求 3）');
       JSON.stringify(junk?.plotTiers),
     );
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 65. 第 33 轮需求 5：观天楼与天机点                                   */
+/* ------------------------------------------------------------------ */
+section('[65] 观天楼与天机点（第 33 轮需求 5）');
+{
+  /*
+   * 玩家原话：「增加观天楼建筑，该建筑为基础建筑，开局可建，属于唯一建筑。
+   * 该建筑夜观星象，可获得天机点，钻研和领悟功法等增加消耗天机点的需求」。
+   */
+  const observatory = BUILDABLE_MAP.observatory;
+  check('观天楼存在且唯一（max 1）', observatory !== undefined && observatory.max === 1, String(observatory?.max));
+  check('开局可建（没有任何门槛）', engine.getBuildGate(observatory, createInitialState(0)) === null);
+
+  /* 没建楼 -> 一点都不产；建了 -> 按等级每秒 0.1 点 */
+  const bare = createInitialState(0);
+  check('没建观天楼时不产天机点', engine.produceFatePoints(bare, 100).fatePoints === 0);
+
+  const withObs: GameState = { ...forceBuild(bare, 'observatory', 1), observatoryLevel: 1 };
+  const produced = engine.produceFatePoints(withObs, 100);
+  check('建了观天楼就按 0.1/秒 攒天机点', Math.abs(produced.fatePoints - 10) < 1e-9, String(produced.fatePoints));
+  check(
+    '等级越高产得越快（等级 3 = 三倍）',
+    Math.abs(engine.produceFatePoints({ ...withObs, observatoryLevel: 3 }, 100).fatePoints - 30) < 1e-9,
+  );
+
+  /* 钻研：天机点不够就挡住，且理由可读 */
+  const tech = Object.values(TECH_MAP)[0]!;
+  const noFate: GameState = {
+    ...withObs,
+    realmIndex: tech.requiresRealm,
+    fatePoints: 0,
+    resources: { ...withObs.resources, stone: D(1e9), herb: D(1e9) },
+  };
+  const blocked = research.canStartResearch(noFate, tech.id);
+  check('天机点不够时钻研被挡住（需求 5）', !blocked.ok, blocked.reason ?? '');
+  check('挡住时给出了可读理由（提到天机）', (blocked.reason ?? '').includes('天机'), blocked.reason ?? '');
+  const enough: GameState = { ...noFate, fatePoints: 1e6 };
+  check('天机点够时就能钻研', research.canStartResearch(enough, tech.id).ok);
+
+  /* 参悟：同样要烧天机点，费用按品阶递增 */
+  check('参悟费用按品阶递增', manuals.contemplateFateCost(1) < manuals.contemplateFateCost(5));
+  check('最低品阶也要 1 点天机', manuals.contemplateFateCost(1) === 1, String(manuals.contemplateFateCost(1)));
+
+  /* 存档往返 */
+  const saved = deserialize(
+    JSON.parse(JSON.stringify(serialize({ ...withObs, fatePoints: 123.5, observatoryLevel: 4 }))),
+  );
+  check('天机点能存能读', Math.abs((saved?.fatePoints ?? 0) - 123.5) < 1e-6, String(saved?.fatePoints));
+  check('观天楼等级能存能读', saved?.observatoryLevel === 4, String(saved?.observatoryLevel));
 }
 
 console.log('');

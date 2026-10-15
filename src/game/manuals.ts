@@ -36,6 +36,8 @@ import {
   type ManualDef,
   type ManualGrade,
   type ManualKind,
+  // 第 33 轮需求 5：参悟额外消耗天机点
+  FATE_COST_CONTEMPLATE,
 } from './content';
 import { getBuildingCount, getTraitEffect } from './engine';
 import { pushJournal } from './disciples';
@@ -256,6 +258,14 @@ export function canContemplate(
   if (cost <= 0) return { ok: false, reason: '天纵功法无法参悟，只能从九档秘境中取得', cost: 0 };
   if (getBuildingCount(state, 'library') < 1) return { ok: false, reason: '需先建藏经阁', cost };
   if (state.resources.qi.lt(cost)) return { ok: false, reason: '灵气不足', cost };
+  /* 第 33 轮需求 5：参悟要烧天机点（观天楼产出） */
+  if (state.fatePoints < contemplateFateCost(grade)) {
+    return {
+      ok: false,
+      reason: `需天机 ${contemplateFateCost(grade)} 点（现有 ${Math.floor(state.fatePoints)}）`,
+      cost: 0,
+    };
+  }
   return { ok: true, reason: null, cost };
 }
 
@@ -264,6 +274,12 @@ export interface ContemplateResult {
   /** 参悟到了哪本功法的碎片 */
   gained: { id: string; name: string; amount: number } | null;
   message: string;
+}
+
+/** 参悟一册某品阶功法要多少天机点（第 33 轮需求 5） */
+export function contemplateFateCost(grade: ManualGrade): number {
+  const i = Math.min(Math.max(grade, 1), FATE_COST_CONTEMPLATE.length) - 1;
+  return FATE_COST_CONTEMPLATE[i];
 }
 
 export function contemplate(
@@ -278,12 +294,20 @@ export function contemplate(
   if (pool.length === 0) return { state, gained: null, message: '此品阶暂无功法' };
   const def = pool[Math.floor(random() * pool.length)];
 
+  /*
+   * 第 33 轮需求 5：领悟（参悟）**额外**消耗天机点。
+   *
+   * 玩家原话：「钻研和领悟功法等增加消耗天机点的需求」。
+   * 费用按品阶递增（1/2/4/8/16）—— 越上品的功法越"窥探天机"。
+   */
+  const fateBefore = state.fatePoints;
   const next: GameState = {
     ...addFragments(
       { ...state, resources: { ...state.resources, qi: state.resources.qi.sub(D(check.cost)) } },
       def.id,
       CONTEMPLATE_FRAGMENTS,
     ),
+    fatePoints: fateBefore - contemplateFateCost(grade),
   };
   return {
     state: next,
