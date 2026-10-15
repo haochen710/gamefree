@@ -2086,8 +2086,26 @@ export function refineStone(state: GameState, times: number): GameState {
  */
 export function getAutoRefineRate(state: GameState): number {
   const level = Math.min(Math.max(Math.floor(state.autoRefineLevel), 0), AUTO_REFINE_LEVEL_MAX);
-  const base = AUTO_REFINE_RATES[level];
-  if (base <= 0) return 0;
+  let base = AUTO_REFINE_RATES[level];
+  /*
+   * 🚨 第 31 轮修的 bug：玩家反馈「工坊自动合成开启后，实际没有自动合成，
+   * 资源无消耗，合成产物无增加」。
+   *
+   * 根因：速率档的第 0 档是 **0 批/秒**（历史上"自动合成"只有这一个开关，
+   * 所以 0 档就是"关"）。而第 28 轮把"每条配方各自的开关"独立出来之后，
+   * 就出现了**两个开关**：玩家打开了配方开关、却没动上面那个速度档，
+   * 于是 `base <= 0` 直接 return —— 开关看起来打开了，实际什么都不会发生。
+   *
+   * 修法：**把"开/关"的所有权交给配方开关，速度档只负责"多快"**。
+   * 只要还有任何一条配方开着，速度档为 0 时就按**最低档**跑，
+   * 而不是当成"全关"—— 玩家按下的开关必须真的有用。
+   * （一条都没开时仍然是 0：此时速度档的"关"就是真的关。）
+   */
+  if (base <= 0) {
+    const anyOn = Object.values(state.autoRefineOn ?? {}).some((v) => v === true);
+    if (!anyOn) return 0;
+    base = AUTO_REFINE_RATES[1];
+  }
   // 丹炉九件（设定集第 11 章）：当前那口炉子的自动合成加速
   return base * (1 + getFurnaceRefineSpeedBonus(state));
 }

@@ -67,6 +67,17 @@ export function RefinePanel({ collapsible = false }: { collapsible?: boolean } =
           填一个<strong>目标存量</strong>，系统就会按下面的速率慢慢补到那个数、补到就停手。
           0 表示那条不管。速率是所有配方<strong>共用</strong>的 —— 否则四条一起开会把灵气抽干。
         </p>
+        {/*
+          第 31 轮：玩家报「自动合成开启后实际没有合成」——
+          根因是这里和每条配方的开关**是两个旋钮**：配方的开关才是"开/关"，
+          而这一排是"多快"；玩家只按了前者、这一排还停在"关闭"，于是什么都没发生。
+          现在引擎侧已经保证"只要有一条配方开着就一定按最低速跑"，
+          这里再把两者的分工写清楚，免得下一个人再踩。
+        */}
+        <p className="panel__note">
+          ⚙️ 这一排是<strong>速度档</strong>（所有配方共用）；<strong>开不开</strong>由每条配方自己的
+          「自动合成」按钮决定。已经开着配方时，这里即使停在"关闭"也会按<strong>最低速</strong>运行。
+        </p>
         <div className="btn-row btn-row--wrap">
           {AUTO_REFINE_RATES.map((value, level) => (
             <button
@@ -75,7 +86,7 @@ export function RefinePanel({ collapsible = false }: { collapsible?: boolean } =
               className={game.autoRefineLevel === level ? 'btn btn--primary' : 'btn'}
               onClick={() => setAutoRefine(level)}
             >
-              {level === 0 ? '关闭' : `档 ${level}`}
+              {level === 0 ? '最低速' : `档 ${level}`}
               {level > 0 && <span className="btn__sub">{value} 批/秒</span>}
             </button>
           ))}

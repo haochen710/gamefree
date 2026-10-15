@@ -2187,6 +2187,41 @@ section('[18] 灵石自动合成（需求 4）');
   check('开启后产出灵石', on.resources.stone.gt(stocked.resources.stone), `+${fmt(on.resources.stone.sub(stocked.resources.stone))}`);
 
   /*
+   * 🚨 第 31 轮：玩家报的**原场景**。
+   *
+   * 「工坊自动合成开启后，实际没有自动合成，资源无消耗，合成产物无增加」
+   *  → 打开了配方的「自动合成」开关，但没有动上面那个速度档（默认第 0 档 = 0 批/秒），
+   *    于是 `autoRefine` 在 `rate <= 0` 处直接返回，开关形同虚设。
+   *
+   * 这条断言把这个场景钉死：**速度档为 0 时，只要配方开关开着，就必须真的合成**。
+   */
+  {
+    const zeroLevel = applyTick(
+      { ...stocked, autoRefineLevel: 0, autoRefineOn: { stoneRefine: true } },
+      120,
+      makeRandom(1),
+    );
+    check(
+      '速度档为 0 时，配方开关开着也要真的合成（第 31 轮修的 bug）',
+      zeroLevel.resources.stone.gt(stocked.resources.stone),
+      `${fmt(stocked.resources.stone)} → ${fmt(zeroLevel.resources.stone)}`,
+    );
+    check(
+      '而且真的消耗了灵气',
+      zeroLevel.resources.qi.lt(stocked.resources.qi),
+      `${fmt(stocked.resources.qi)} → ${fmt(zeroLevel.resources.qi)}`,
+    );
+
+    // 一条配方都没开时，速度档 0 仍然是"真的关"
+    const allOff = applyTick({ ...stocked, autoRefineLevel: 0 }, 120, makeRandom(1));
+    check(
+      '一条配方都没开时，速度档 0 仍然什么都不做',
+      allOff.resources.stone.eq(stocked.resources.stone),
+      fmt(allOff.resources.stone),
+    );
+  }
+
+  /*
    * 第 28 轮：**开着但没设目标 → 一直合成下去**。
    * （原来 `autoRefineTargets[id] > 0` 既是开关又是目标，没目标就等于关着。）
    */
