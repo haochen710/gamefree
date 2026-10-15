@@ -500,6 +500,13 @@ export interface GameState {
   /** 正在生长的作物 */
   plantings: Planting[];
   /**
+   * 天机点（第 33 轮需求 5）：观天楼夜观星象攒下来的"看破天机"的资本。
+   * 钻研与领悟功法都要消耗它 —— 它不是材料，所以不占仓库、不进资源表。
+   */
+  fatePoints: number;
+  /** 观天楼等级（第 33 轮需求 5）：产出倍率；每升一个大境界才能再升一级 */
+  observatoryLevel: number;
+  /**
    * 每块地的**阶与累计种植次数**（第 33 轮需求 3），键是地块序号。
    *
    * 升阶时 `count` 归零（玩家原话：「每次升级后种植次数归零，不累计」）。
@@ -702,6 +709,8 @@ export function createInitialState(now = Date.now()): GameState {
     seeds: {},
   plantings: [],
   plotTiers: {},
+  fatePoints: 0,
+  observatoryLevel: 1,
     nextPlantingId: 1,
     techs: {},
     research: null,

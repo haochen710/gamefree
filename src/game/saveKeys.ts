@@ -68,6 +68,8 @@ export const SAVE_KEYS: Record<string, string> = {
   sd: '{ ...state.seeds }',
   pg: 'state.plantings',
   plt: 'state.plotTiers',
+  fp: 'state.fatePoints',
+  obl: 'state.observatoryLevel',
   npi: 'state.nextPlantingId',
   tc: '{ ...state.techs }',
   rs: 'state.research',

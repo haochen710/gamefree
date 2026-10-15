@@ -8,7 +8,13 @@
  * 技术是**建筑的前置条件**，所以这个模块只负责"技术有没有被钻研出来"，
  * 至于哪些建筑需要哪些技术，写在 content/buildables.ts 的 requiresTech 上。
  */
-import { REALMS, TECH_MAP, type TechDef } from './content';
+import {
+  // 第 33 轮需求 5：钻研额外消耗天机点
+  FATE_COST_RESEARCH_PER_REALM,
+  REALMS,
+  TECH_MAP,
+  type TechDef,
+} from './content';
 import { canAfford, payCost, toCostMap, type CostMap } from './engine';
 import { pushJournal } from './disciples';
 import type { GameState } from './state';
@@ -54,7 +60,22 @@ export function canStartResearch(state: GameState, id: string): ResearchCheck {
     return { ok: false, reason: `需修至${REALMS[def.requiresRealm].name}` };
   }
   if (!canAfford(state, getTechCost(def))) return { ok: false, reason: '资源不足' };
+  /*
+   * 第 33 轮需求 5：钻研**额外**消耗天机点。
+   *
+   * 玩家原话：「钻研和领悟功法等增加消耗天机点的需求」。
+   * 门槛按它要求的境界递增 —— 越深的技术越"逆天"，要的天机也越多。
+   */
+  const fate = researchFateCost(def);
+  if (state.fatePoints < fate) {
+    return { ok: false, reason: `需天机 ${fate} 点（现有 ${Math.floor(state.fatePoints)}）` };
+  }
   return { ok: true, reason: null };
+}
+
+/** 钻研一项技术要多少天机点（第 33 轮需求 5） */
+export function researchFateCost(def: TechDef): number {
+  return (def.requiresRealm + 1) * FATE_COST_RESEARCH_PER_REALM;
 }
 
 export function startResearch(state: GameState, id: string): GameState {
@@ -62,7 +83,7 @@ export function startResearch(state: GameState, id: string): GameState {
   if (!check.ok) return state;
 
   const def = TECH_MAP[id];
-  const paid = payCost(state, getTechCost(def));
+  const paid = { ...payCost(state, getTechCost(def)), fatePoints: state.fatePoints - researchFateCost(def) };
 
   return {
     ...paid,

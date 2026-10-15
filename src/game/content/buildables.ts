@@ -620,6 +620,22 @@ export const STRUCTURES: StructureDef[] = [
     max: 5,
   },
 
+  /* ---------------- 观天楼（第 33 轮需求 5） ---------------- */
+  {
+    id: 'observatory',
+    kind: 'structure',
+    group: 'sect',
+    name: '观天楼',
+    icon: '🔭',
+    desc:
+      '夜观星象，接引天机。每级每秒产 0.1 天机点 —— 钻研与领悟都要烧它。开局即可建，唯一建筑。',
+    baseCost: { qi: 3e4, wood: 1500, stone: 800 },
+    costGrowth: 1.4,
+    // 开局可建（玩家原话：该建筑为基础建筑，开局可建），所以解锁门槛为空
+    unlock: {},
+    max: 1,
+  },
+
   /* ---------------- 坊市（需求 3） ---------------- */
   {
     id: 'tradeHouse',

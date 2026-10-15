@@ -21,6 +21,7 @@ import { autoCraft } from './crafting';
 import {
   autoRefine,
   clampResources,
+  produceFatePoints,
   produceResources,
   refreshUnlocks,
   tickBuildQueue,
@@ -77,6 +78,8 @@ export function applyTick(state: GameState, dt: number, random: RandomSource = g
   // 季节与天象排在最前面：它决定这一 tick 的产出该按哪个季节算（需求 1）
   next = tickSeason(next, dt, random);
   next = produceResources(next, dt);
+  // 观天楼（第 33 轮需求 5）：夜观星象攒天机点，供钻研与领悟消耗
+  next = produceFatePoints(next, dt);
   next = autoRefine(next, dt);
   // 第 27 轮（需求 3）：自动炼制（与自动合成挨着，两套机制并排读）
   next = autoCraft(next, dt, random);

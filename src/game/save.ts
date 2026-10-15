@@ -58,6 +58,7 @@ import {
   type EndingId,
   PILL_MAP,
   // 第 33 轮需求 3：清洗地块阶数时要夹上限
+  OBSERVATORY_MAX_LEVEL,
   PLOT_TIER_THRESHOLDS,
   REALMS,
   RESOURCE_IDS,
@@ -187,6 +188,10 @@ export interface SerializedGame {
    * 加键前必须先搜一遍 `saveKeys.ts`。
    */
   plt?: Record<string, { tier: number; count: number }>;
+  /** 第 33 轮需求 5：天机点 */
+  fp?: unknown;
+  /** 第 33 轮需求 5：观天楼等级 */
+  obl?: unknown;
   /** techs / research：钻研（需求 6） */
   tc?: Record<string, boolean>;
   rs?: ResearchState | null;
@@ -391,6 +396,9 @@ export function serialize(state: GameState): SerializedGame {
   pg: state.plantings,
   // 第 33 轮需求 3：每块地的阶与计数（键名 plt —— pt 已被 playTime 占用）
   plt: state.plotTiers,
+  // 第 33 轮需求 5：天机点与观天楼等级
+  fp: state.fatePoints,
+  obl: state.observatoryLevel,
     npi: state.nextPlantingId,
     tc: { ...state.techs },
     rs: state.research,
@@ -1278,6 +1286,8 @@ export function deserialize(raw: unknown): GameState | null {
     seeds: toSeedMap(data.sd),
   plantings,
   plotTiers: sanitizePlotTiers(data.plt),
+  fatePoints: toFloat(data.fp, 0, 0, 1e12),
+  observatoryLevel: toInt(data.obl, 1, 1, OBSERVATORY_MAX_LEVEL),
     nextPlantingId,
     techs: toBoolMap(data.tc, TECHS.map((t) => t.id)),
     research: sanitizeResearch(data.rs),

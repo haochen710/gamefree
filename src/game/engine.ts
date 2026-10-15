@@ -102,6 +102,9 @@ import {
   type QueueUpgradeDef,
   type RefineRecipe,
   type RealmDef,
+  // 第 33 轮需求 5：观天楼的天机点产出
+  FATE_PER_SECOND,
+  OBSERVATORY_MAX_LEVEL,
   type ResourceId,
   type SecretRealmDef,
   type ServantJobId,
@@ -2238,6 +2241,20 @@ export function autoRefine(state: GameState, dt: number): GameState {
  * 只推进资源生产与统计。弟子、秘境、增益由 tick.ts 组合进来，
  * 这样 engine 不必依赖 disciples / expeditions，避免循环引用。
  */
+/**
+ * 夜观星象（第 33 轮需求 5）：有观天楼就按等级攒天机点。
+ *
+ * 放在 tick 里 `produceResources` 之后 —— 它和资源产出是同一类东西，
+ * 但**不进资源表**（天机点不是材料），所以单独一个函数、单独一个字段。
+ * 没建楼就一点都不产（而不是"有一级楼的底子"）。
+ */
+export function produceFatePoints(state: GameState, dt: number): GameState {
+  if (dt <= 0) return state;
+  if ((state.buildings.observatory ?? 0) <= 0) return state;
+  const level = Math.max(1, Math.min(state.observatoryLevel, OBSERVATORY_MAX_LEVEL));
+  return { ...state, fatePoints: state.fatePoints + FATE_PER_SECOND * level * dt };
+}
+
 export function produceResources(state: GameState, dt: number): GameState {
   if (dt <= 0) return state;
 

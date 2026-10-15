@@ -1325,6 +1325,8 @@ section('[8] 离线收益');
     away = forceBuild(away, 'plantation', 1);
     away = forceBuild(away, 'tradeHouse', 1);
     away = withTech(away, 'plantingArt', 'tradeArt', 'alchemyArt');
+  // 第 33 轮需求 5：钻研现在要烧天机点
+  away = { ...away, fatePoints: 1e6 };
     away = planting.addSeeds(away, 'demonCore', 5);
     away = planting.plantSeed(away, 'demonCore', makeRandom(1));
     away = travel.startTravel(away, 'mortalVillage');
@@ -2460,7 +2462,11 @@ section('[20] 钻研与图纸（需求 6）');
   // 例外只有两样：茅屋（开局唯一的居所）与储物袋
   // —— 它们是"能攒下灵气去突破"的前提，卡住它们会直接把游戏锁死
   // 静室是本轮需求 6 明确要的「初期就能建」，所以它刻意不带任何门槛
-  const UNGATED_OK = new Set(['thatchHut', 'qiVault1', 'quietRoom']);
+  /*
+ * 第 33 轮需求 5：观天楼也在这个名单里 ——
+ * 玩家原话「该建筑为基础建筑，开局可建」，所以它**故意**不带任何门槛。
+ */
+const UNGATED_OK = new Set(['thatchHut', 'qiVault1', 'quietRoom', 'observatory']);
   const needTech = STRUCTURES.filter(
     (s) =>
       s.group !== 'resource' &&
@@ -2511,7 +2517,10 @@ section('[20] 钻研与图纸（需求 6）');
 
   /* ---- 钻研：付钱 → 计时 → 完成 ---- */
   const rich = grant(base, { stone: '1e6', herb: '1e6' });
-  const started = research.startResearch(rich, 'alchemyArt');
+  // 第 33 轮需求 5：钻研现在要烧天机点，先把点数补上
+  const richWithFate: GameState = { ...rich, fatePoints: 1e6 };
+
+  const started = research.startResearch(richWithFate, 'alchemyArt');
   check('开始钻研后进入钻研状态', started.research?.id === 'alchemyArt');
   check('钻研扣除了材料', started.resources.stone.lt(rich.resources.stone));
   check('钻研中进度从 0 开始', research.getResearchProgress(started) === 0);
@@ -2846,6 +2855,8 @@ section('[23] store 动作闭环');
       ore: '1e7',
       herb: '1e7',
     });
+    // 第 33 轮需求 5：钻研现在要烧天机点（观天楼产出），fixture 先补上
+    next = { ...next, fatePoints: 1e6 };
     /*
      * 商行价格随境界倍率放大，所以仓库也得跟上，否则灵石会被上限夹住。
      * 需求 10 之后单座库房只抬一项，所以这里五种专库一起建。
