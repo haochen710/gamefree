@@ -130,8 +130,19 @@ export function getMaxExpeditions(state: GameState): number {
   return expeditionSlots(state.sect.level);
 }
 
+/**
+ * 现在**真正闲着、可以派出去**的弟子。
+ *
+ * 第 30 轮（需求 2）：玩家原话「已派遣到其他建筑的弟子不显示在探索列表里」。
+ *
+ * ⚠️ 这里原来只查 `status === 'idle'`。理论上入岗会把 status 改成 'posted'
+ * （见 `posting.postDisciple`），但**把"可用"这件事寄托在另一个字段被正确维护上**
+ * 是脆的：只要有一条路径设了 `post` 却没同步 `status`（旧存档、或将来新加的
+ * 入口），这名弟子就会同时出现在"岗位"和"探索列表"里。
+ * 所以两个条件都写上 —— 判据要**自洽**，不要依赖别人的副作用。
+ */
 export function getIdleDisciples(state: GameState): Disciple[] {
-  return state.sect.disciples.filter((d) => d.status === 'idle');
+  return state.sect.disciples.filter((d) => d.status === 'idle' && !d.post);
 }
 
 /**
@@ -142,7 +153,18 @@ export function getIdleDisciples(state: GameState): Disciple[] {
  */
 export function effectiveMinParty(state: GameState, def: SecretRealmDef): number {
   const minRealm = effectiveMinRealm(state, def);
-  const idle = getIdleDisciples(state).filter((d) => !d.post && d.realmIndex >= minRealm).length;
+  /*
+   * 第 30 轮：人数下限也要按**区间**数人（原来只按下限）。
+   *
+   * 这是需求 1 那条 bug 的第二处：秘境有最高境界门槛之后，
+   * "够境界的空闲弟子数"必须把**境界过高（进不去）的人排除掉** ——
+   * 否则会算出一个推荐池填不满的人数下限，
+   * 于是"推荐队伍"给出的组合永远过不了 `canStartExpedition`。
+   * 三处（推荐 / 人数下限 / 出发校验）现在用同一个区间。
+   */
+  const idle = getIdleDisciples(state).filter(
+    (d) => !d.post && d.realmIndex >= minRealm && d.realmIndex <= def.maxRealm,
+  ).length;
   return Math.max(1, Math.min(PARTY_SIZE_MIN, Math.max(idle, 1)));
 }
 
@@ -299,6 +321,16 @@ export function autoSelectParty(state: GameState, realmId: string, size?: number
     // 派遣中的弟子不可用（需求 3）
     .filter((d) => !d.post)
     .filter((d) => d.realmIndex >= def.minRealm)
+    /*
+     * 第 30 轮（需求 1）：玩家原话「探索自动推荐应当以秘境支持的**最高境界**来推荐」。
+     *
+     * ⚠️ 这里原来**只查下限**。而第 25 轮给秘境加了最高境界门槛
+     * （`maxRealm = minRealm + 2`，超过就进不去）—— 于是"推荐队伍"会推荐出
+     * 一个 `canStartExpedition` 判定为非法的组合：玩家点了派遣却失败，
+     * 还得自己去找是谁的问题。这与本函数开头那条注释警告的是**同一类 bug**
+     * （那次漏的是"拒绝出征的人"，这次漏的是"境界过高的人"）。
+     */
+    .filter((d) => d.realmIndex <= def.maxRealm)
     .filter((d) => !isRefusingTask(d))
     .filter((d) => !(highRisk && refusesHighRisk(d)))
     .sort((a, b) => REALMS[b.realmIndex].power - REALMS[a.realmIndex].power);

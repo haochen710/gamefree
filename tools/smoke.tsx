@@ -8783,6 +8783,96 @@ section('[58] 自动炼制：按目标存量自动补，补够就停（第 27 �
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* 59. 第 30 轮：自动推荐 / 空闲判定 / 寿命显示                          */
+/* ------------------------------------------------------------------ */
+section('[59] 自动推荐按最高境界 · 入岗弟子不算空闲 · 寿命显示（第 30 轮）');
+{
+  const realm = SECRET_REALM_MAP[STARTER_REALM_ID];
+
+  /* ---- 需求 1：自动推荐不能推荐"境界过高、进不去"的人 ---- */
+  {
+    const fresh = createInitialState(0);
+    const mixed: GameState = {
+      ...fresh,
+      sect: {
+        ...fresh.sect,
+        founded: true,
+        disciples: [
+          makeDisciple({ id: 'ok', name: '合规', realmIndex: realm.maxRealm }),
+          makeDisciple({ id: 'ok2', name: '合规二', realmIndex: realm.maxRealm }),
+          makeDisciple({ id: 'ok3', name: '合规三', realmIndex: realm.maxRealm }),
+          // 比上限高一档：第 25 轮起进不去，推荐里就不该出现
+          makeDisciple({ id: 'high', name: '过高', realmIndex: Math.min(8, realm.maxRealm + 1) }),
+        ],
+      },
+    };
+    const picked = expeditions.autoSelectParty(mixed, realm.id, 5);
+    check('自动推荐不含境界高于上限的弟子（需求 1）', !picked.includes('high'), picked.join('、'));
+
+    /*
+     * 更硬的一条：推荐出来的队伍必须**真的能出发**。
+     * 这正是需求 1 的实质 —— 原来推荐会给出一个 canStartExpedition 判非法的组合
+     * （与函数开头那条"别推荐出拒绝出征的人"是同一类 bug）。
+     */
+    const ready = expeditions.canStartExpedition(mixed, realm.id, picked);
+    check('自动推荐的队伍一定能出发（推荐与校验同一套判据）', ready.ok, ready.reason ?? '');
+  }
+
+  /* ---- 需求 2：入岗弟子不算"空闲" ---- */
+  {
+    const fresh = createInitialState(0);
+    const working: GameState = {
+      ...fresh,
+      sect: {
+        ...fresh.sect,
+        founded: true,
+        disciples: [
+          makeDisciple({ id: 'free', name: '闲人' }),
+          // 已入岗：status 与 post 都给上（真实入岗两个都会写）
+          { ...makeDisciple({ id: 'posted', name: '在岗' }), status: 'posted' as const, post: 'alchemyRoom' },
+          /*
+           * 这条是需求 2 真正的价值：**只设了 post、status 没同步**的弟子
+           * （旧存档、或将来新加的入口都可能这样）也必须被排除在"空闲"之外。
+           */
+          { ...makeDisciple({ id: 'stale', name: '状态没同步' }), post: 'refinery' },
+        ],
+      },
+    };
+    const idle = expeditions.getIdleDisciples(working).map((d) => d.id);
+    check('入岗弟子不在空闲名单里（需求 2）', !idle.includes('posted'), idle.join('、'));
+    check('只设了 post 没改 status 的弟子也不在空闲名单里', !idle.includes('stale'), idle.join('、'));
+    check('真正的空闲弟子仍在名单里', idle.includes('free'));
+  }
+
+  /* ---- 需求 4：寿命显示要把"年龄 / 寿元上限 / 剩余"说清 ---- */
+  {
+    /*
+     * ⚠️ 面板是读 store 的，所以要先往 store 里塞一个弟子 ——
+     * 否则列表是空的、连 tooltip 都不会渲染（第一次写这条断言时就栽在这儿）。
+     */
+    const fresh = createInitialState(0);
+    const seeded: GameState = {
+      ...fresh,
+      sect: {
+        ...fresh.sect,
+        founded: true,
+        disciples: [makeDisciple({ id: 'age1', name: '寿命样本', age: 40 })],
+      },
+    };
+    const store = useGame.getInitialState();
+    const backup = store.game;
+    store.game = seeded;
+    const html = renderToString(<DisciplePanel />);
+    store.game = backup;
+
+    check('寿命提示里有"年龄"（原来把年龄标成了寿元）', html.includes('年龄'));
+    check('寿命提示里有"寿元上限"', html.includes('寿元上限'));
+    check('寿命提示里有"还能活"（玩家真正关心的数）', html.includes('还能活'));
+    check('不再出现把年龄当成寿元的旧文案', !html.includes('寿元 40 /'));
+  }
+}
+
 console.log('');
 console.log('='.repeat(64));
 if (!passed) {

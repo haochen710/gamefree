@@ -148,7 +148,16 @@ function DiscipleRow({ disciple }: { disciple: Disciple }) {
         <div className="mini-bar" title={`修为 ${disciple.progress.toFixed(1)} / ${realm.cultivationYears} 年`}>
           <div className="mini-bar__fill mini-bar__fill--cultivation" style={{ width: `${progressRatio * 100}%` }} />
         </div>
-        <div className="mini-bar" title={`寿元 ${disciple.age.toFixed(0)} / ${lifespan} 年`}>
+        {/*
+          第 30 轮（需求 4）：玩家原话「弟子寿命显示有问题」。
+          原来写的是 `寿元 {age} / {lifespan} 年` —— **把"年龄"标成了"寿元"**，
+          而且不显示真正要紧的那个数：**还能活多少年**。
+          现在三个数都给出来，一眼能对上：年龄 / 寿元上限 / 剩余。
+        */}
+        <div
+          className="mini-bar"
+          title={`年龄 ${disciple.age.toFixed(0)} 岁 · 寿元上限 ${lifespan.toFixed(0)} 岁（还能活 ${Math.max(0, lifespan - disciple.age).toFixed(0)} 年）`}
+        >
           <div
             className="mini-bar__fill mini-bar__fill--age"
             style={{ width: `${ageRatio * 100}%` }}

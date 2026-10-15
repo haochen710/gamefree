@@ -193,7 +193,7 @@ export function AlchemyPanel() {
                   className="btn btn--primary"
                   disabled={locked || max < 1}
                   title={max > 0 ? '当前可炼 ' + max + ' 个' : '材料不足'}
-                  onClick={() => craftPill(pill.id, Math.max(1, max))}
+                  onClick={() => craftPill(pill.id, 1)}
                 >
                   炼制
                 </button>

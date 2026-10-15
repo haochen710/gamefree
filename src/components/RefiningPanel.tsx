@@ -153,7 +153,7 @@ export function RefiningPanel() {
                   className="btn btn--primary"
                   disabled={locked || max < 1}
                   title={max > 0 ? '当前可炼 ' + max + ' 个' : '材料不足'}
-                  onClick={() => craftArtifact(artifact.id, Math.max(1, max))}
+                  onClick={() => craftArtifact(artifact.id, 1)}
                 >
                   炼制
                 </button>
