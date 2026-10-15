@@ -8224,9 +8224,38 @@ section('[52] 商行卖出 · 商队 · 稀有货品（第 18 轮 需求 7）');
   /* ---- 卖出：卖价 = 买入价 × 40% ---- */
   {
     const s = forceBuild(base(), 'tradeHouse', 1);
-    // 拿"商行确实收"的一样东西：商品池里的第一件
-    const good = SHOP_GOODS[0];
+    /*
+     * 第 33 轮需求 4：基础材料（基础资源 + BASE_MATERIAL_IDS）商行不收，
+     * 所以这里挑一样**加工品**来验卖出结算。
+     * ⚠️ 第一次只排掉了 RESOURCE_IDS，结果挑中了 demonCore —— 它同样属于基础材料，
+     * 于是"卖出后扣货"假红。判据必须与 `isBaseGood` 完全一致。
+     */
+    const processed = SHOP_GOODS.find(
+      (g) =>
+        !(RESOURCE_IDS as readonly string[]).includes(g.item) &&
+        !(BASE_MATERIAL_IDS as readonly string[]).includes(g.item),
+    );
+    if (!processed) throw new Error('商品池里没有可卖的加工品，这条测试失去意义');
+    const good = processed;
     const withStock = grant(s, { [good.item]: '1000' } as never);
+
+    // 基础材料必须被拒（需求 4）
+    check(
+      '基础资源不能卖（需求 4）',
+      !caravan.canSell(s, 'qi' as never, 1).ok,
+      caravan.canSell(s, 'qi' as never, 1).reason ?? '',
+    );
+    check(
+      '基础材料不能卖（需求 4）',
+      !caravan.canSell(grant(s, { demonCore: '100' } as never), 'demonCore' as never, 1).ok,
+      caravan.canSell(grant(s, { demonCore: '100' } as never), 'demonCore' as never, 1).reason ?? '',
+    );
+    check(
+      '基础材料不出现在可卖清单里',
+      caravan.getSellableGoods(grant(s, { qi: '1e6', demonCore: '100' } as never)).every(
+        (g) => !(RESOURCE_IDS as readonly string[]).includes(g.id) && g.id !== 'demonCore',
+      ),
+    );
 
     const price = caravan.getSellPrice(withStock, good.item, 100);
     check('商行给得出卖价', price > 0, `💎${price}`);
@@ -8234,7 +8263,11 @@ section('[52] 商行卖出 · 商队 · 稀有货品（第 18 轮 需求 7）');
 
     const before = engine.getAmount(withStock, good.item as never);
     const sold = caravan.sellItem(withStock, good.item, 100);
-    check('卖出后扣货', engine.getAmount(sold.state, good.item as never).lt(before));
+    check(
+      '卖出后扣货',
+      engine.getAmount(sold.state, good.item as never).lt(before),
+      `卖的是 ${String(good.item)} · 结果：${sold.message}`,
+    );
     check('卖出后进灵石', sold.state.resources.stone.gt(withStock.resources.stone), `+${sold.gained}`);
     check('卖出写明得了多少', sold.message.includes('卖出'));
 

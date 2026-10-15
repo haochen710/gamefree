@@ -15,6 +15,8 @@
  */
 import Decimal, { D } from './decimal';
 import {
+  // 第 33 轮需求 4：基础材料不收购 —— 判定要用这两张表
+  BASE_MATERIAL_IDS,
   CARAVAN_INTERVAL_SECONDS,
   CARAVAN_MAX_WANTS,
   CARAVAN_STAY_SECONDS,
@@ -22,6 +24,8 @@ import {
   MATERIAL_MAP,
   RARE_GOODS,
   RARE_GOOD_MAP,
+  // 第 33 轮需求 4：基础资源（灵气/木料/灵矿/灵草/石料）也不收购
+  RESOURCE_IDS,
   SELL_RATIO,
   SHOP_GOODS,
   TALISMAN_MAP,
@@ -80,10 +84,28 @@ function getRealmPriceScale(state: GameState, kind: ShopGoodKind): number {
   }
 }
 
-/** 商行收不收这一样东西（只有商品池里的货才收） */
+/**
+ * 是不是**基础材料**（第 33 轮需求 4：玩家不能在商店售卖基础材料）。
+ *
+ * 玩家原话：「玩家不能在商店售卖基础材料」。
+ * 口径：**基础资源**（灵气/木料/灵矿/灵草/石料）与**基础材料**
+ * （妖丹/玄铁/灵蚕丝/火髓/寒玉）都不收。
+ *
+ * ⚠️ 加工品（灵液 / 精金 / 阵枢）**仍然可以卖** —— 它们是合成线的产物，
+ * "把原料加工了再卖"本来就是一条正当的赚钱路径，
+ * 玩家要堵的是"从山里挖出来直接换钱"这条。
+ */
+function isBaseGood(id: string): boolean {
+  if ((RESOURCE_IDS as readonly string[]).includes(id)) return true;
+  return (BASE_MATERIAL_IDS as readonly string[]).includes(id);
+}
+
+/** 商行收不收这一样东西（只有商品池里的货才收，且不收基础材料） */
 export function canSell(state: GameState, id: TradeItemId, amount: number): { ok: boolean; reason: string | null; price: number } {
   const price = getSellPrice(state, id, amount);
   if (price <= 0) return { ok: false, reason: '商行不收这样东西', price: 0 };
+  // 第 33 轮需求 4：基础材料不收购
+  if (isBaseGood(id)) return { ok: false, reason: '基础材料商行不收（要卖就先加工成灵液 / 精金之类）', price };
   if (!hasShop(state)) return { ok: false, reason: '还没有商行', price };
   if (amountOf(state, id).lt(amount)) return { ok: false, reason: '数量不足', price };
   return { ok: true, reason: null, price };
@@ -118,6 +140,8 @@ export function sellItem(state: GameState, id: TradeItemId, amount: number): Sel
 export function getSellableGoods(state: GameState): { id: TradeItemId; name: string; icon: string; have: string; price: number }[] {
   const out: { id: TradeItemId; name: string; icon: string; have: string; price: number }[] = [];
   for (const good of SHOP_GOODS) {
+    // 第 33 轮需求 4：基础材料不上架
+    if (isBaseGood(good.item)) continue;
     const have = amountOf(state, good.item);
     if (have.lte(0)) continue;
     const name = ITEM_MAP[good.item as ItemId]?.name ?? MATERIAL_MAP[good.item as MaterialId]?.name ?? String(good.item);
