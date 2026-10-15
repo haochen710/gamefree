@@ -13,7 +13,7 @@
  *   3. 名额从哪来（天工院 + 它的特殊升级）。
  */
 import type Decimal from '../game/decimal';
-import { fmt } from '../game/decimal';
+import { D, fmt } from '../game/decimal';
 import {
   BUILD_QUEUE_MAX_SLOTS,
   BUILDABLE_MAP,
@@ -24,14 +24,19 @@ import {
 import {
   canAfford,
   canUpgradeQueue,
-  getBuildGate,
+  // 第 33 轮需求 5：观天楼的等级、花费与门槛
+  canUpgradeObservatory,
+  observatoryUpgradeCost,
   getBuildingCount,
+  getBuildGate,
   getCost,
   getQueueSlots,
   getQueueUpgrade,
   hasQueueBuilding,
   maxAffordable,
 } from '../game/engine';
+// 第 33 轮需求 5：天机点产出速率（属于 content，不属于 engine）
+import { FATE_PER_SECOND } from '../game/content';
 import { useGame } from '../game/store';
 import Panel from './Panel';
 
@@ -46,6 +51,11 @@ export function BuildQueuePanel({ collapsible = false }: { collapsible?: boolean
   const queue = game.buildQueue;
   const upgrade = getQueueUpgrade(game);
   const upgradeCheck = canUpgradeQueue(game);
+  /* 第 33 轮需求 5：观天楼 —— 唯一建筑、随大境界升级、花钱是"海量"级 */
+  const upgradeObservatory = useGame((s) => s.upgradeObservatory);
+  const hasObservatory = getBuildingCount(game, 'observatory') > 0;
+  const obsCheck = canUpgradeObservatory(game);
+  const obsCost = observatoryUpgradeCost(game.observatoryLevel);
   const built = hasQueueBuilding(game);
   const full = slots >= BUILD_QUEUE_MAX_SLOTS;
 
@@ -153,6 +163,23 @@ export function BuildQueuePanel({ collapsible = false }: { collapsible?: boolean
             </li>
           ))}
         </ul>
+
+        {hasObservatory && (
+          <div className="queue__upgrade">
+            <div className="queue__upgrade-head">
+              🔭 <strong>观天楼 {game.observatoryLevel} 级</strong> —— 夜观星象得
+              <strong>天机 {game.fatePoints.toFixed(0)} 点</strong>（每秒 
+              {(FATE_PER_SECOND * game.observatoryLevel).toFixed(1)} 点）
+            </div>
+            <div className="queue__upgrade-cost">
+              升到 {game.observatoryLevel + 1} 级：灵气 {fmt(obsCost.qi ?? D(0))} · 木料 {fmt(obsCost.wood ?? D(0))} · 石料 {fmt(obsCost.stone ?? D(0))}
+            </div>
+            <button type="button" className="btn btn--primary" disabled={!obsCheck.ok} onClick={upgradeObservatory}>
+              升级观天楼（{game.observatoryLevel} → {game.observatoryLevel + 1}）
+              {!obsCheck.ok && obsCheck.reason && <span className="btn__sub">{obsCheck.reason}</span>}
+            </button>
+          </div>
+        )}
 
         {!full && upgrade && (
           <div className="queue__upgrade">

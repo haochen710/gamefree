@@ -33,6 +33,8 @@ import {
   type ServantJobId,
 } from './content';
 import * as engine from './engine';
+// 第 33 轮需求 5：升楼提示里要报产出速率
+import { FATE_PER_SECOND } from './content';
 import * as disciples from './disciples';
 // 第 33 轮需求 1：突破文案与弟子侧共用同一张表；记事函数也在那边
 import { BREAKTHROUGH_FLAVOR, pushJournal } from './disciples';
@@ -94,6 +96,8 @@ export interface GameStore {
    * 能突破就一定要吃丹，开关本身没有意义了。
    */
   breakthrough(): void;
+  /** 第 33 轮需求 5：升一级观天楼（要海量资源，且不高于"境界 + 1"） */
+  upgradeObservatory(): void;
   refineStone(times: number): void;
   ascend(): void;
   hardReset(): void;
@@ -392,6 +396,19 @@ export const useGame = create<GameStore>()((set, get) => ({
 
   advanceLayer: () => {
     set((s) => (engine.canAdvanceLayer(s.game) ? nextGame(s.game, engine.advanceLayer(s.game)) : {}));
+  },
+
+  upgradeObservatory: () => {
+    set((s) => {
+      const check = engine.canUpgradeObservatory(s.game);
+      if (!check.ok) return { notice: check.reason ?? '还不能升级观天楼' };
+      const next = engine.upgradeObservatory(s.game);
+      if (next === s.game) return {};
+      return {
+        ...nextGame(s.game, next),
+        notice: `观天楼升至 ${next.observatoryLevel} 级（天机点产出 ${(FATE_PER_SECOND * next.observatoryLevel).toFixed(1)}/秒）`,
+      };
+    });
   },
 
   breakthrough: () => {

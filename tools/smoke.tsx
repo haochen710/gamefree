@@ -272,6 +272,13 @@ import {
 } from '../src/game/content';
 import { createInitialState, type Disciple, type GameState } from '../src/game/state';
 import * as engine from '../src/game/engine';
+// 第 33 轮需求 5：观天楼的等级、花费与门槛（具名导入）
+import {
+  canUpgradeObservatory,
+  observatoryUpgradeCost,
+  produceFatePoints,
+  upgradeObservatory,
+} from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
 // 第 33 轮需求 1：突破文案表跟着 disciples 走（不在 content 里）
 import { BREAKTHROUGH_FLAVOR } from '../src/game/disciples';
@@ -9269,6 +9276,38 @@ section('[65] 观天楼与天机点（第 33 轮需求 5）');
   );
   check('天机点能存能读', Math.abs((saved?.fatePoints ?? 0) - 123.5) < 1e-6, String(saved?.fatePoints));
   check('观天楼等级能存能读', saved?.observatoryLevel === 4, String(saved?.observatoryLevel));
+}
+
+/* 观天楼升级（第 33 轮需求 5 的第二半）：跟着大境界走，且要海量资源 */
+{
+  const built: GameState = { ...forceBuild(createInitialState(0), 'observatory', 1), observatoryLevel: 1 };
+  const rich: GameState = {
+    ...built,
+    resources: { ...built.resources, qi: D(1e12), wood: D(1e9), stone: D(1e9) },
+  };
+
+  /* 境界 0（炼气）时，等级上限就是 1 —— 升不动 */
+  const atCap = canUpgradeObservatory(rich);
+  check('炼气期时观天楼已经是上限（等级 = 境界 + 1）', !atCap.ok, atCap.reason ?? '');
+  check('挡住时说明了它随境界提升', (atCap.reason ?? '').includes('境界'), atCap.reason ?? '');
+
+  /* 突破一个大境界后能升一级 */
+  const higher: GameState = { ...rich, realmIndex: 3 };
+  check('升了一个大境界后就能升楼', canUpgradeObservatory(higher).ok, canUpgradeObservatory(higher).reason ?? '');
+  const upgraded = upgradeObservatory(higher);
+  check('升楼后等级 +1', upgraded.observatoryLevel === 2, String(upgraded.observatoryLevel));
+  check('升楼真的扣了资源', upgraded.resources.qi.lt(higher.resources.qi));
+  check('升楼写进了宗门记事', upgraded.journal !== higher.journal);
+
+  /* 花费随等级指数增长（"海量"的落点） */
+  const c1 = observatoryUpgradeCost(1).qi ?? D(0);
+  const c2 = observatoryUpgradeCost(2).qi ?? D(0);
+  check('升楼花费随等级指数增长', c2.gt(c1.mul(2)), `${fmt(c1)} -> ${fmt(c2)}`);
+
+  /* 升完楼，同样的时间产得更多 */
+  const before = produceFatePoints(upgraded, 100).fatePoints;
+  const after = produceFatePoints({ ...upgraded, observatoryLevel: 4 }, 100).fatePoints;
+  check('等级越高，同样时间攒的天机越多', after > before, `${before} -> ${after}`);
 }
 
 console.log('');

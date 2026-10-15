@@ -105,6 +105,9 @@ import {
   // 第 33 轮需求 5：观天楼的天机点产出
   FATE_PER_SECOND,
   OBSERVATORY_MAX_LEVEL,
+  // 第 33 轮需求 5：升楼是海量开销，且随等级指数增长
+  OBSERVATORY_UPGRADE_BASE,
+  OBSERVATORY_UPGRADE_GROWTH,
   type ResourceId,
   type SecretRealmDef,
   type ServantJobId,
@@ -2248,6 +2251,58 @@ export function autoRefine(state: GameState, dt: number): GameState {
  * 但**不进资源表**（天机点不是材料），所以单独一个函数、单独一个字段。
  * 没建楼就一点都不产（而不是"有一级楼的底子"）。
  */
+/** 观天楼下一级要多少资源（第 33 轮需求 5）：随等级指数增长 */
+export function observatoryUpgradeCost(level: number): CostMap {
+  const mul = OBSERVATORY_UPGRADE_GROWTH ** Math.max(0, level - 1);
+  return toCostMap({
+    qi: Math.round(OBSERVATORY_UPGRADE_BASE.qi * mul),
+    wood: Math.round(OBSERVATORY_UPGRADE_BASE.wood * mul),
+    stone: Math.round(OBSERVATORY_UPGRADE_BASE.stone * mul),
+  });
+}
+
+/** 观天楼当前能升到几级：**跟着大境界走**（每升一个大境界才能再升一级） */
+export function observatoryLevelCap(state: GameState): number {
+  return Math.min(state.realmIndex + 1, OBSERVATORY_MAX_LEVEL);
+}
+
+/**
+ * 能不能升观天楼（第 33 轮需求 5）。
+ *
+ * 三条门槛，缺一不可：
+ *   1. 楼得先建起来；
+ *   2. **等级不能超过"境界 + 1"** —— 这是玩家原话里"每升一个大境界它也能升"的落点；
+ *   3. 资源要够（而且那是个"海量"数）。
+ */
+export function canUpgradeObservatory(state: GameState): { ok: boolean; reason: string | null } {
+  if (getBuildingCount(state, 'observatory') <= 0) return { ok: false, reason: '还没建观天楼' };
+  const cap = observatoryLevelCap(state);
+  if (state.observatoryLevel >= cap) {
+    const nextRealm = REALMS[Math.min(cap, REALMS.length - 1)]?.name ?? '更高境界';
+    return { ok: false, reason: `观天楼随境界提升，修至${nextRealm}方能再升一级` };
+  }
+  if (!canAfford(state, observatoryUpgradeCost(state.observatoryLevel))) {
+    return { ok: false, reason: '资源不足（升楼是海量开销）' };
+  }
+  return { ok: true, reason: null };
+}
+
+export function upgradeObservatory(state: GameState): GameState {
+  const check = canUpgradeObservatory(state);
+  if (!check.ok) return state;
+  const paid = payCost(state, observatoryUpgradeCost(state.observatoryLevel));
+  const level = state.observatoryLevel + 1;
+  return {
+    ...paid,
+    observatoryLevel: level,
+    journal: pushJournal(paid.journal, {
+      time: paid.playTime,
+      kind: 'good',
+      text: `观天楼升至 ${level} 级，夜观星象所得更盛`,
+    }),
+  };
+}
+
 export function produceFatePoints(state: GameState, dt: number): GameState {
   if (dt <= 0) return state;
   if ((state.buildings.observatory ?? 0) <= 0) return state;

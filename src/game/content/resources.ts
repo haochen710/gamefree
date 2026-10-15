@@ -456,3 +456,15 @@ export const FATE_COST_RESEARCH_PER_REALM = 3;
 
 /** 领悟一册功法要多少天机点（按品阶 1~5） */
 export const FATE_COST_CONTEMPLATE = [1, 2, 4, 8, 16] as const;
+
+/**
+ * 观天楼升级的**海量花费**（第 33 轮需求 5）。
+ *
+ * 玩家原话：「该建筑可升级，玩家每升一个大境界，该建筑也可升级，但需求海量资源」。
+ *
+ * 设计口径：**升级的花费明显高于同期的其它开销**（约为一次突破的 1~2 倍），
+ * 而且要随等级指数增长（每级 ×3）—— 这样"升楼"永远是一个需要专门攒钱的决定，
+ * 而不是顺手就点了。想调松紧只改这两个数。
+ */
+export const OBSERVATORY_UPGRADE_BASE = { qi: 5e5, wood: 2e4, stone: 1e4 } as const;
+export const OBSERVATORY_UPGRADE_GROWTH = 3;
