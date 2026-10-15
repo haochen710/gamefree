@@ -164,7 +164,7 @@ function TalismanRow({ def }: { def: TalismanDef }) {
             type="button"
             className="btn btn--primary"
             disabled={!check.ok}
-            title={check.reason ?? '把当前能画的全部画掉'}
+            title={check.reason ?? '绘制 1 张（想批量就用旁边的自动绘制）'}
             onClick={() => craft(def.id, 1)}
           >
             绘制
