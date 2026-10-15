@@ -182,6 +182,13 @@ export interface PersonalTravel {
 
 /** 一块地里正在长的东西（需求 5） */
 export interface Planting {
+  /**
+   * 种在哪块地上（第 33 轮需求 3）。
+   *
+   * 灵田的"阶"是**按块**记的，所以作物必须记得自己占的是哪一块；
+   * 没有这个字段就无法回答"这块地种过几次了"。
+   */
+  plot: number;
   id: string;
   material: MaterialId;
   progress: number;
@@ -492,6 +499,13 @@ export interface GameState {
   seeds: Record<string, number>;
   /** 正在生长的作物 */
   plantings: Planting[];
+  /**
+   * 每块地的**阶与累计种植次数**（第 33 轮需求 3），键是地块序号。
+   *
+   * 升阶时 `count` 归零（玩家原话：「每次升级后种植次数归零，不累计」）。
+   * 缺键即"一阶、种过 0 次"，所以老存档读进来天然是全新的一阶田。
+   */
+  plotTiers: Record<string, { tier: number; count: number }>;
   /** 用于生成作物 id 的自增计数器 */
   nextPlantingId: number;
 
@@ -686,7 +700,8 @@ export function createInitialState(now = Date.now()): GameState {
   autoCraftTimer: 0,
     autoRefineProgress: 0,
     seeds: {},
-    plantings: [],
+  plantings: [],
+  plotTiers: {},
     nextPlantingId: 1,
     techs: {},
     research: null,

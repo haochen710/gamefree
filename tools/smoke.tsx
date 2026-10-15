@@ -2603,7 +2603,7 @@ section('[21] 新字段的存档往返');
     techs: { alchemyArt: true, refiningArt: true },
     blueprints: { spiritBoatBlueprint: true },
     research: { id: 'storageArt', remaining: 12 },
-    plantings: [{ id: 'p1', material: 'demonCore', progress: 10, duration: 60 }],
+    plantings: [{ id: 'p1', material: 'demonCore', plot: 0, progress: 10, duration: 60 }],
     shop: {
       offers: [{ id: 'o1', kind: 'seed', item: 'demonCore', amount: 3, price: 120, sold: false }],
       secondsLeft: 42,

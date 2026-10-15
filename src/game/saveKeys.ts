@@ -67,6 +67,7 @@ export const SAVE_KEYS: Record<string, string> = {
   actm: '自动炼制的节拍（秒）',
   sd: '{ ...state.seeds }',
   pg: 'state.plantings',
+  plt: 'state.plotTiers',
   npi: 'state.nextPlantingId',
   tc: '{ ...state.techs }',
   rs: 'state.research',

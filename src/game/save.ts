@@ -57,6 +57,8 @@ import {
   clampRelation,
   type EndingId,
   PILL_MAP,
+  // 第 33 轮需求 3：清洗地块阶数时要夹上限
+  PLOT_TIER_THRESHOLDS,
   REALMS,
   RESOURCE_IDS,
   SECRET_REALMS,
@@ -176,6 +178,15 @@ export interface SerializedGame {
   /** plantings / nextPlantingId：地块（需求 5） */
   pg?: Planting[];
   npi?: number;
+  /**
+   * 每块地的阶与计数（第 33 轮需求 3）。
+   *
+   * ⚠️ 键名用 `plt` 而不是 `pt` —— **`pt` 已经是 `playTime`**，
+   * 我第一次就踩了这个（写完直接报"object literal cannot have multiple
+   * properties with the same name"）。短键名的碰撞是这类存档格式的固有风险，
+   * 加键前必须先搜一遍 `saveKeys.ts`。
+   */
+  plt?: Record<string, { tier: number; count: number }>;
   /** techs / research：钻研（需求 6） */
   tc?: Record<string, boolean>;
   rs?: ResearchState | null;
@@ -377,7 +388,9 @@ export function serialize(state: GameState): SerializedGame {
     act: { ...state.autoCraftTargets },
     actm: state.autoCraftTimer,
     sd: { ...state.seeds },
-    pg: state.plantings,
+  pg: state.plantings,
+  // 第 33 轮需求 3：每块地的阶与计数（键名 plt —— pt 已被 playTime 占用）
+  plt: state.plotTiers,
     npi: state.nextPlantingId,
     tc: { ...state.techs },
     rs: state.research,
@@ -937,6 +950,24 @@ function sanitizeTravel(raw: unknown): PersonalTravel | null {
   };
 }
 
+/**
+ * 清洗每块地的阶与计数（第 33 轮需求 3）。
+ *
+ * 规矩与其它清洗器一致：只认合法形状，坏数据一律丢掉而不是猜；
+ * 阶夹在 1..上限，计数夹在 0..该阶阈值，免得坏存档把地变成负数或永动机。
+ */
+function sanitizePlotTiers(raw: unknown): Record<string, { tier: number; count: number }> {
+  const out: Record<string, { tier: number; count: number }> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^\d+$/.test(key) || !value || typeof value !== "object") continue;
+    const v = value as { tier?: unknown; count?: unknown };
+    const tier = Math.min(Math.max(Math.floor(Number(v.tier) || 1), 1), PLOT_TIER_THRESHOLDS.length);
+    const count = Math.min(Math.max(Math.floor(Number(v.count) || 0), 0), 1e6);
+    out[key] = { tier, count };
+  }
+  return out;
+}
 function sanitizePlantings(raw: unknown, nextId: number): Planting[] {
   if (!Array.isArray(raw)) return [];
   const out: Planting[] = [];
@@ -950,6 +981,8 @@ function sanitizePlantings(raw: unknown, nextId: number): Planting[] {
     out.push({
       id: typeof p.id === 'string' && p.id ? p.id : `p${nextId + i}`,
       material: p.material as MaterialId,
+      // 第 33 轮需求 3：老存档没有地块号，一律落到第 0 块
+      plot: Math.max(0, Math.floor(Number(p.plot) || 0)),
       progress: toFloat(p.progress, 0, 0, 1e9),
       duration: toFloat(p.duration, seed?.growSeconds ?? 300, 1, 1e9),
     });
@@ -1243,7 +1276,8 @@ export function deserialize(raw: unknown): GameState | null {
     autoCraftTimer: toFloat(data.actm, 0, 0, 1e9),
     autoRefineProgress: toFloat(data.ap, 0, 0, 1e6),
     seeds: toSeedMap(data.sd),
-    plantings,
+  plantings,
+  plotTiers: sanitizePlotTiers(data.plt),
     nextPlantingId,
     techs: toBoolMap(data.tc, TECHS.map((t) => t.id)),
     research: sanitizeResearch(data.rs),

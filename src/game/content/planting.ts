@@ -92,6 +92,33 @@ export const SHOP_SEEDS: SeedDef[] = SEEDS.filter((s) => s.category === 'base');
 export const EXPLORATION_SEEDS: SeedDef[] = SEEDS;
 
 /** 稀有材料的种子，只能靠探索（需求 5 明文限制） */
+/**
+ * 灵田升阶所需的**种植次数**（第 33 轮需求 3）。
+ *
+ * 玩家原话：「每个灵田根据种植次数升级，比如一阶灵田需要种植10次升级，
+ * 二级灵田需要种植32次、三级64次以此类推（每次升级后种植次数归零，不累计）」。
+ *
+ * 原话给的是 10 -> 32 -> 64，不是等比；从三阶起按翻倍补齐成：
+ *   10 / 32 / 64 / 128 / 256 / 512 / 1024 …
+ * 表长即"最高阶"（越界按最后一项算，玩家不会撞到天花板就卡死）。
+ */
+export const PLOT_TIER_THRESHOLDS = [10, 32, 64, 128, 256, 512, 1024] as const;
+
+/** 每升一阶的产出加成（需求 3：一级 +1%、二级 +2%，即 N 阶 +N%） */
+export const PLOT_YIELD_PER_TIER = 0.01;
+
+/** 第 tier 阶升到下一阶需要种几次（tier 从 1 开始） */
+export function plotTierThreshold(tier: number): number {
+  const i = Math.min(Math.max(tier, 1), PLOT_TIER_THRESHOLDS.length) - 1;
+  return PLOT_TIER_THRESHOLDS[i];
+}
+
+/** 某阶灵田的产出倍率（1 阶 = ×1.01，10 阶 = ×1.10） */
+export function plotYieldMultiplier(tier: number): number {
+  return 1 + Math.max(0, tier) * PLOT_YIELD_PER_TIER;
+}
+
+/** 稀有材料的种子，只能靠探索（需求 5 明文限制） */
 export const RARE_SEEDS: SeedDef[] = SEEDS.filter((s) => RARE_MATERIAL_IDS.includes(s.material));
 
 /* ------------------------------------------------------------------ */

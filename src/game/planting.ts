@@ -16,6 +16,9 @@ import {
   HASTEN_QI_SECONDS,
   HASTEN_STONE_SECONDS,
   MATERIAL_MAP,
+  // 第 33 轮需求 3：灵田升阶曲线与产出加成
+  plotTierThreshold,
+  plotYieldMultiplier,
   SEED_MAP,
   hastenQiCost,
   hastenStoneCost,
@@ -107,9 +110,18 @@ export function plantSeed(
   if (count > 1) seeds[material] = count - 1;
   else delete seeds[material];
 
+  /*
+   * 第 33 轮需求 3：给作物分配一块**具体的**地（最低空闲序号）。
+   * 灵田的"阶"是按块记的，所以作物必须先有归属。
+   */
+  const usedPlots = new Set(state.plantings.map((p) => p.plot));
+  let plot = 0;
+  while (usedPlots.has(plot)) plot += 1;
+
   const planting: Planting = {
     id: randomId('p', random),
     material,
+    plot,
     progress: 0,
     /*
      * 沃土专精（设定集第 8.4 章：灵田成熟时间 −12%）。
@@ -196,8 +208,29 @@ export function harvestPlanting(state: GameState, id: string): HarvestResult {
   const amount = Math.max(1, Math.floor((seed?.yield ?? 1) * seasonal));
   const def = MATERIAL_MAP[planting.material];
 
-  let next = addItem(state, planting.material, D(amount));
-  next = { ...next, plantings: next.plantings.filter((p) => p.id !== id) };
+  /*
+   * 第 33 轮需求 3：这块地收完这一茬，就记一次"种植次数"。
+   *
+   *   - 达到该阶的阈值 → **升一阶，计数归零**（玩家原话：不累计）；
+   *   - 产出按**收获时**的阶算加成（N 阶 +N%）。
+   *
+   * 顺序很重要：先算产出（用**收获前**的阶），再升阶 ——
+   * 否则"这一茬刚好让它升阶"会立刻吃到新阶的加成，玩家会觉得跳了一下。
+   */
+  const before = state.plotTiers[String(planting.plot)] ?? { tier: 1, count: 0 };
+  const bonus = plotYieldMultiplier(before.tier);
+  const gained = Math.max(1, Math.floor(amount * bonus));
+  const counted = before.count + 1;
+  const need = plotTierThreshold(before.tier);
+  const after =
+    counted >= need ? { tier: before.tier + 1, count: 0 } : { tier: before.tier, count: counted };
+
+  let next = addItem(state, planting.material, D(gained));
+  next = {
+    ...next,
+    plotTiers: { ...next.plotTiers, [String(planting.plot)]: after },
+    plantings: next.plantings.filter((p) => p.id !== id),
+  };
 
   return {
     state: next,
