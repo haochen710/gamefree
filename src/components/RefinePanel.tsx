@@ -10,6 +10,7 @@
  */
 import { fmt } from '../game/decimal';
 import {
+  CRAFT_PER_CLICK,
   AUTO_REFINE_RATES,
   ITEM_MAP,
   MATERIAL_IDS,
@@ -139,8 +140,16 @@ export function RefinePanel({ collapsible = false }: { collapsible?: boolean } =
                           type="button"
                           className="btn btn--primary"
                           disabled={max < 1}
-                          title={`把能合成的全部合掉（当前可合成 ${max} 次）`}
-                          onClick={() => doRefine(recipe.id, max)}
+                          /*
+                           * 第 30 轮（玩家原话）：「合成也是点一下只合成一份」。
+                           *
+                           * 与炼丹/炼器/制符统一成同一个口径：**一个按钮只做一件事**。
+                           * 原来这里是 `doRefine(recipe.id, max)` —— "把能合的全都合掉"，
+                           * 把一次动作与批量混在一起（批量由旁边的「自动合成」负责）。
+                           * `可合成 N 次` 仍然显示在右边，玩家想知道能合几次看得见。
+                           */
+                          title={max > 0 ? `合成 1 份（当前可合成 ${max} 次；想批量就用旁边的自动合成）` : '材料不足'}
+onClick={() => doRefine(recipe.id, CRAFT_PER_CLICK)}
                         >
                           合成
                         </button>

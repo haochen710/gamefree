@@ -5,7 +5,7 @@
  * 都是用掉就没的**消耗品**，由「符房」里的制符产线造出来 ——
  * 制符技能、制符天赋、符房岗位的加成全都作用在这条线上。
  */
-import { TALISMAN_GRADE_NAMES, TALISMAN_KIND_NAMES, type TalismanDef } from '../game/content';
+import { CRAFT_PER_CLICK, TALISMAN_GRADE_NAMES, TALISMAN_KIND_NAMES, type TalismanDef } from '../game/content';
 // 第 30 轮：绘制按钮改成一次一张，所以不再需要 maxCraftable
 import { getCraftSuccessRate } from '../game/crafting';
 import {
@@ -165,7 +165,7 @@ function TalismanRow({ def }: { def: TalismanDef }) {
             className="btn btn--primary"
             disabled={!check.ok}
             title={check.reason ?? '绘制 1 张（想批量就用旁边的自动绘制）'}
-            onClick={() => craft(def.id, 1)}
+onClick={() => craft(def.id, CRAFT_PER_CLICK)}
           >
             绘制
           </button>

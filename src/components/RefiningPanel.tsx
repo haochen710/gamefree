@@ -6,7 +6,7 @@
  * 否则玩家会以为造几百把铁剑能把战力堆上天。
  */
 import { fmt } from '../game/decimal';
-import { ARTIFACTS, TIER_NAMES, tierName } from '../game/content';
+import { ARTIFACTS, CRAFT_PER_CLICK, TIER_NAMES, tierName } from '../game/content';
 import { toCostMap } from '../game/engine';
 import {
 
@@ -153,7 +153,7 @@ export function RefiningPanel() {
                   className="btn btn--primary"
                   disabled={locked || max < 1}
                   title={max > 0 ? '当前可炼 ' + max + ' 个' : '材料不足'}
-                  onClick={() => craftArtifact(artifact.id, 1)}
+onClick={() => craftArtifact(artifact.id, CRAFT_PER_CLICK)}
                 >
                   炼制
                 </button>

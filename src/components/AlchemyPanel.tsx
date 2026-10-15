@@ -5,7 +5,7 @@
  * 让玩家一眼看到"再盖两座丹房就能炼三品丹"这种目标。
  */
 import { fmt } from '../game/decimal';
-import { PILLS, TIER_NAMES, tierName, type PillDef } from '../game/content';
+import { CRAFT_PER_CLICK, PILLS, TIER_NAMES, tierName, type PillDef } from '../game/content';
 import { toCostMap } from '../game/engine';
 import { describeCraftRate, getAlchemyUpgradeStatus, getCraftSuccessRate, maxCraftable } from '../game/crafting';
 import { getPillDemand } from '../game/disciples';
@@ -198,7 +198,7 @@ export function AlchemyPanel() {
                   className="btn btn--primary"
                   disabled={locked || max < 1}
                   title={max > 0 ? '炼制 1 个（想批量就用旁边的自动炼制）' : '材料不足'}
-                  onClick={() => craftPill(pill.id, 1)}
+onClick={() => craftPill(pill.id, CRAFT_PER_CLICK)}
                 >
                   炼制
                 </button>
