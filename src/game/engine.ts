@@ -33,7 +33,8 @@ import {
   skillLevelOf,
   type SkillKind,
   BREAKTHROUGH_MAX_SUCCESS,
-  BREAKTHROUGH_PILL_GAP_RECOVERY,
+  BREAKTHROUGH_PILL_BONUSES,
+  BREAKTHROUGH_PILL_MAX,
   BUILDABLES,
   BUILDABLE_MAP,
   BUILD_QUEUE_BASE_SLOTS,
@@ -1752,7 +1753,17 @@ export function getSuccessRate(state: GameState): number {
   if (isFinalRealm(state)) return 1;
 
   const base = realm.baseSuccess;
-  const pill = (1 - base) * BREAKTHROUGH_PILL_GAP_RECOVERY;
+  /*
+   * 第 33 轮需求 2：丹药加成改成"逐颗递减的固定点数"。
+   *
+   * 玩家原话：「境界丹只能吃五颗，第一颗百分之五、然后百分之四，以此类推」。
+   * 实现上**由系统自动喂**：仓库里有几颗就吃几颗（最多 5 颗），
+   * 吃几颗就加几颗的点数（5/4/3/2/1）。所以成功率会随"身上备了多少丹"变化，
+   * 界面上的成功率数字也因此是"按现有丹药算的"。
+   */
+  const pillId = realm.breakthroughPill;
+  const havePills = pillId ? Math.min(state.pills[pillId] ?? 0, BREAKTHROUGH_PILL_MAX) : 0;
+  const pill = BREAKTHROUGH_PILL_BONUSES.slice(0, havePills).reduce((sum, v) => sum + v, 0);
   // 雷池等建筑也提供突破加成；天象（天雷劫云）也会临时加一点（需求 1）
   const building = getStructureBonus(state, 'breakthroughBonus');
   const weather = getWeatherEffects(state).breakthrough ?? 0;
@@ -1805,7 +1816,13 @@ export function breakthrough(
   // 丹药是门票：无论成败都消耗（这是需求 9 的核心代价）
   const pills = { ...state.pills };
   if (status.pillId && (pills[status.pillId] ?? 0) > 0) {
-    const left = (pills[status.pillId] ?? 0) - 1;
+    /*
+     * 第 33 轮需求 2：一次突破**最多吃 5 颗**，有几颗吃几颗。
+     * 成功率那边（`getSuccessRate`）按**同样颗数**加点，两处必须用同一个上限
+     * （`BREAKTHROUGH_PILL_MAX`）—— 否则会出现"显示 +15% 却只扣 1 颗"。
+     */
+    const eat = Math.min(pills[status.pillId] ?? 0, BREAKTHROUGH_PILL_MAX);
+    const left = (pills[status.pillId] ?? 0) - eat;
     if (left > 0) pills[status.pillId] = left;
     else delete pills[status.pillId];
   }

@@ -101,7 +101,7 @@ export const REALMS: RealmDef[] = [
     realmMultiplier: 1,
     breakthroughQi: 600,
     breakthroughPill: 'foundationPill',
-    baseSuccess: 0.8,
+    baseSuccess: 0.9,
     cultivationYears: 50,
     lifespan: 60,
     power: 1,
@@ -116,7 +116,7 @@ export const REALMS: RealmDef[] = [
     realmMultiplier: 2.5,
     breakthroughQi: 1.2e4,
     breakthroughPill: 'goldenCorePill',
-    baseSuccess: 0.68,
+    baseSuccess: 0.85,
     cultivationYears: 80,
     lifespan: 150,
     power: 3,
@@ -131,7 +131,7 @@ export const REALMS: RealmDef[] = [
     realmMultiplier: 8,
     breakthroughQi: 1.5e5,
     breakthroughPill: 'nascentPill',
-    baseSuccess: 0.58,
+    baseSuccess: 0.8,
     cultivationYears: 120,
     lifespan: 400,
     power: 10,
@@ -146,7 +146,7 @@ export const REALMS: RealmDef[] = [
     realmMultiplier: 25,
     breakthroughQi: 8e5,
     breakthroughPill: 'spiritPill',
-    baseSuccess: 0.5,
+    baseSuccess: 0.75,
     cultivationYears: 250,
     lifespan: 900,
     power: 30,
@@ -161,7 +161,7 @@ export const REALMS: RealmDef[] = [
     realmMultiplier: 80,
     breakthroughQi: 1.2e7,
     breakthroughPill: 'voidPill',
-    baseSuccess: 0.42,
+    baseSuccess: 0.7,
     cultivationYears: 400,
     lifespan: 2000,
     power: 100,
@@ -176,7 +176,7 @@ export const REALMS: RealmDef[] = [
     realmMultiplier: 250,
     breakthroughQi: 2e8,
     breakthroughPill: 'unityPill',
-    baseSuccess: 0.35,
+    baseSuccess: 0.65,
     cultivationYears: 700,
     lifespan: 4500,
     power: 300,
@@ -191,7 +191,7 @@ export const REALMS: RealmDef[] = [
     realmMultiplier: 780,
     breakthroughQi: 3.2e9,
     breakthroughPill: 'grandPill',
-    baseSuccess: 0.3,
+    baseSuccess: 0.6,
     cultivationYears: 1200,
     lifespan: 10000,
     power: 1000,
@@ -206,7 +206,7 @@ export const REALMS: RealmDef[] = [
     realmMultiplier: 2400,
     breakthroughQi: 6e10,
     breakthroughPill: 'tribulationPill',
-    baseSuccess: 0.25,
+    baseSuccess: 0.55,
     cultivationYears: 2000,
     lifespan: 22000,
     power: 3000,
@@ -221,7 +221,7 @@ export const REALMS: RealmDef[] = [
     realmMultiplier: 7200,
     breakthroughQi: 1.2e12,
     breakthroughPill: 'ascensionPill',
-    baseSuccess: 0.18,
+    baseSuccess: 0.5,
     cultivationYears: 5000,
     lifespan: 50000,
     power: 10000,
@@ -278,6 +278,33 @@ export const SECT_MIN_REALM = 2;
  *   炼气 80% → 92%、金丹 58% → 84%、渡劫 18% → 69%。
  * （`baseSuccess` 从此是**无丹药**的成功率；没丹药压根不允许突破，
  *   所以这个数只用来算"丹药补了多少"，不会直接展示给玩家。）
+ */
+/**
+ * 境界丹的成功率加成（第 33 轮需求 2）。
+ *
+ * 玩家原话：「突破筑基的基础概率为百分之90，后续每个大境界减少百分之五，
+ * 境界丹只能吃五颗，第一颗百分之五、然后百分之四，以此类推」。
+ *
+ * 所以丹药从"补掉差距的 62%"改成**逐颗递减的固定点数**：
+ * 第 1 颗 +5%、第 2 颗 +4%、第 3 颗 +3%、第 4 颗 +2%、第 5 颗 +1%（合计 +15%）。
+ *
+ * 这个形状有三个好处：
+ *   - 玩家能一眼算清"再吃一颗值多少"，不用去猜百分比补差；
+ *   - 边界清晰（最多 5 颗），不会出现"堆丹硬怼"；
+ *   - 高境界基础率低时，+15% 是**救命的**，低境界则锦上添花。
+ *
+ * 表长即上限：想改成"最多 6 颗"就往数组里加一项，别在这之外再写死数字。
+ */
+export const BREAKTHROUGH_PILL_BONUSES = [0.05, 0.04, 0.03, 0.02, 0.01] as const;
+
+/** 一次突破最多吃几颗（由上面的表长决定，避免同一个数存两份） */
+export const BREAKTHROUGH_PILL_MAX = BREAKTHROUGH_PILL_BONUSES.length;
+
+/**
+ * @deprecated 第 33 轮需求 2 起改用 `BREAKTHROUGH_PILL_BONUSES`（逐颗递减的固定点数）。
+ *
+ * 旧的"补差距 62%"模型：高境界救不了命、低境界又撞上限。
+ * 保留导出只为不一次性删爆引用，新代码不要再读它。
  */
 export const BREAKTHROUGH_PILL_GAP_RECOVERY = 0.62;
 

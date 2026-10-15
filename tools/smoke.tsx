@@ -81,6 +81,9 @@ import {
   AUTO_REFINE_PER_SECOND,
   BASE_KINDS_MIN,
   BASE_MATERIAL_IDS,
+  // 第 33 轮需求 2：丹药按"逐颗递减的固定点数"加成功率，最多五颗
+  BREAKTHROUGH_PILL_BONUSES,
+  BREAKTHROUGH_PILL_MAX,
   BLUEPRINTS,
   BLUEPRINT_MAP,
   ARTIFACT_MAP,
@@ -1070,9 +1073,20 @@ section('[5] 突破成功率与境界丹（需求 9：丹药是硬门槛）');
   check('炼气期对应的境界丹是筑基丹', status.pillId === 'foundationPill' && status.hasPill);
 
   const rate = engine.getSuccessRate(withPill);
-  const expectedRate =
-    REALMS[0].baseSuccess + (1 - REALMS[0].baseSuccess) * BREAKTHROUGH_PILL_GAP_RECOVERY;
-  check('需求 9：丹药补足「差额的 62%」', Math.abs(rate - expectedRate) < 1e-9, `${rate.toFixed(3)}`);
+  /*
+   * 第 33 轮需求 2：丹药加成从"补差距的 62%"改成**逐颗递减的固定点数**。
+   * 这个 fixture 身上有 5 颗丹，所以加成 = 5+4+3+2+1 = 15 个百分点。
+   */
+  const pillBonus = BREAKTHROUGH_PILL_BONUSES.reduce((a, b) => a + b, 0);
+  const expectedRate = Math.min(REALMS[0].baseSuccess + pillBonus, BREAKTHROUGH_MAX_SUCCESS);
+  check('第 33 轮：丹药加成是逐颗递减的固定点数（5/4/3/2/1）', Math.abs(rate - expectedRate) < 1e-9, `${rate.toFixed(3)}`);
+  check(
+    '基础 90% + 五颗丹 15% = 105%，被 95% 上限截住',
+    Math.abs(rate - BREAKTHROUGH_MAX_SUCCESS) < 1e-9,
+    `${REALMS[0].baseSuccess} + ${pillBonus} -> ${rate.toFixed(3)}`,
+  );
+  check('五颗丹合计 +15%', Math.abs(pillBonus - 0.15) < 1e-9, String(pillBonus));
+  check('最多只吃五颗', BREAKTHROUGH_PILL_MAX === 5, String(BREAKTHROUGH_PILL_MAX));
   check('需求 9：成功率上限对齐设定集的 95%', rate <= BREAKTHROUGH_MAX_SUCCESS + 1e-9, `${rate.toFixed(3)}`);
 
   // 高境界：丹药同样关键，而且服丹之后仍然比低境界难 —— 这是丹药"每个境界都值"的前提
@@ -1107,10 +1121,15 @@ section('[5] 突破成功率与境界丹（需求 9：丹药是硬门槛）');
   check('低境界标记为 safe', engine.getBreakthroughStatus(withPill).safe);
 
   // 需求 9 的核心：失败之后成功率**不会**变高
+  /*
+   * 第 33 轮：成功率现在会随"身上备了几颗丹"变（自动吃丹），
+   * 所以这条要**先补回丹药**再比 —— 否则比的是"丹变少了"，不是"失败有没有加成"。
+   */
+  const refilled = { ...failed!.state, pills: { ...withPill.pills } };
   check(
-    '需求 9：失败后成功率不叠加',
-    Math.abs(engine.getSuccessRate(failed!.state) - rate) < 1e-9,
-    `${rate.toFixed(3)} → ${engine.getSuccessRate(failed!.state).toFixed(3)}`,
+    '需求 9：失败后成功率不叠加（补回丹药后与失败前一致）',
+    Math.abs(engine.getSuccessRate(refilled) - rate) < 1e-9,
+    `${rate.toFixed(3)} → ${engine.getSuccessRate(refilled).toFixed(3)}`,
   );
   // 丹药吃完了，于是又回到"不能突破"的状态
   check('需求 9：丹药耗尽后又突破不了', !engine.getBreakthroughStatus(failed!.state).possible);
@@ -1141,7 +1160,11 @@ section('[5b] 高境界突破失败：道伤');
     Math.abs(failed!.state.resources.qi.toNumber() - (1e12 - REALMS[3].breakthroughQi * 0.5)) < 1e6,
   );
   check('高境界失败：留下道伤', failed!.state.injurySeconds > 0, `${failed!.injurySeconds} 秒`);
-  check('高境界失败：丹药不返还', (failed!.state.pills.spiritPill ?? 0) === 4);
+  /*
+ * 第 33 轮需求 2：一次突破最多吃 5 颗，所以 9 颗会剩 4 颗
+ * （原来只扣 1 颗，剩 8）。失败同样不返还。
+ */
+check('高境界失败：丹药不返还（5 颗全吃光，剩 0）', (failed!.state.pills.spiritPill ?? 0) === 0, String(failed!.state.pills.spiritPill ?? 0));
   check(
     '道伤时长随境界递增',
     INJURY_SECONDS[3] < INJURY_SECONDS[5] && INJURY_SECONDS[5] < INJURY_SECONDS[8],
