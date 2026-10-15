@@ -36,7 +36,7 @@ import {
   maxAffordable,
 } from '../game/engine';
 // 第 33 轮需求 5：天机点产出速率（属于 content，不属于 engine）
-import { FATE_PER_SECOND } from '../game/content';
+import { fateRate } from '../game/engine';
 import { useGame } from '../game/store';
 import Panel from './Panel';
 
@@ -169,7 +169,7 @@ export function BuildQueuePanel({ collapsible = false }: { collapsible?: boolean
             <div className="queue__upgrade-head">
               🔭 <strong>观天楼 {game.observatoryLevel} 级</strong> —— 夜观星象得
               <strong>天机 {game.fatePoints.toFixed(0)} 点</strong>（每秒 
-              {(FATE_PER_SECOND * game.observatoryLevel).toFixed(1)} 点）
+              {fateRate(game.observatoryLevel).toFixed(1)} 点）
             </div>
             <div className="queue__upgrade-cost">
               升到 {game.observatoryLevel + 1} 级：灵气 {fmt(obsCost.qi ?? D(0))} · 木料 {fmt(obsCost.wood ?? D(0))} · 石料 {fmt(obsCost.stone ?? D(0))}

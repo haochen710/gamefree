@@ -18,7 +18,7 @@ import { useEffect, useState } from 'react';
 import { D, fmt, fmtDuration, fmtRate } from '../game/decimal';
 import { MATERIALS, RESOURCES, RARITY_COLORS, type MaterialDef } from '../game/content';
 // 第 33 轮需求 5（玩家反馈）：天机点要显示在基础资源里，产出速率与观天楼判定都要读
-import { FATE_PER_SECOND } from '../game/content';
+import { fateRate } from '../game/engine';
 import { getBuildingCount, getProduction, getStorageCaps } from '../game/engine';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
@@ -212,9 +212,7 @@ export function ResourceBar() {
           </div>
           <div className="resource__amount">{Math.floor(game.fatePoints)}</div>
           <div className={hasObservatory ? 'resource__rate' : 'resource__rate resource__rate--zero'}>
-            {hasObservatory
-              ? fmtRate(D(FATE_PER_SECOND * game.observatoryLevel))
-              : '需先建观天楼'}
+            {hasObservatory ? fmtRate(D(fateRate(game.observatoryLevel))) : '需先建观天楼'}
           </div>
           <div className="resource__eta">
             {hasObservatory ? `观天楼 ${game.observatoryLevel} 级` : '开局可建，唯一建筑'}

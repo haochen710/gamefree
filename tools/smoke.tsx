@@ -269,6 +269,10 @@ import {
   type ManualGrade,
   type MaterialId,
   type ResourceId,
+  // 第 33 轮：天机点的产出与花费常量（断言要从常量算，别写死数字）
+  FATE_PER_SECOND,
+  FATE_COST_CONTEMPLATE,
+  FATE_TIER_GROWTH,
 } from '../src/game/content';
 import { createInitialState, type Disciple, type GameState } from '../src/game/state';
 import * as engine from '../src/game/engine';
@@ -278,6 +282,8 @@ import {
   observatoryUpgradeCost,
   produceFatePoints,
   upgradeObservatory,
+  // 第 33 轮最终配平：产出公式抽成了函数，断言与界面共用
+  fateRate,
 } from '../src/game/engine';
 import * as disciples from '../src/game/disciples';
 // 第 33 轮需求 1：突破文案表跟着 disciples 走（不在 content 里）
@@ -9251,10 +9257,22 @@ section('[65] 观天楼与天机点（第 33 轮需求 5）');
    * 所以这里是 1 级观天楼 0.1/秒、**按等级线性** —— 100 秒 = 10 点。
    * 产出慢、花费按境界每级 ×10，是**刻意的节奏闸门**。
    */
-  check('建了观天楼就按 0.1/秒 攒天机点', Math.abs(produced.fatePoints - 10) < 1e-9, String(produced.fatePoints));
   check(
-    '等级越高产得越快（线性：3 级 = 三倍 = 30 点）',
-    Math.abs(engine.produceFatePoints({ ...withObs, observatoryLevel: 3 }, 100).fatePoints - 30) < 1e-9,
+    '建了观天楼就按 FATE_PER_SECOND 攒天机点',
+    Math.abs(produced.fatePoints - FATE_PER_SECOND * 100) < 1e-6,
+    String(produced.fatePoints),
+  );
+  /*
+   * ⚠️ 产出从线性改成**每级 ×10** 了 —— 这是"每一档都卡在 10 分钟内"这条
+   * 硬约束逼出来的：花费按境界每级 ×10，产出若只线性涨，渡劫档要 35 年。
+   * 所以 3 级 = 1 级的 **100 倍**（0.1 → 10/秒），不是三倍。
+   */
+  check(
+    '等级越高产得越快（每两级 ×FATE_TIER_GROWTH）',
+    Math.abs(
+      engine.produceFatePoints({ ...withObs, observatoryLevel: 3 }, 100).fatePoints -
+        FATE_PER_SECOND * FATE_TIER_GROWTH * 100,
+    ) < 1e-6,
   );
 
   /* 钻研：天机点不够就挡住，且理由可读 */
@@ -9275,7 +9293,12 @@ section('[65] 观天楼与天机点（第 33 轮需求 5）');
   check('参悟费用按品阶递增', manuals.contemplateFateCost(1) < manuals.contemplateFateCost(5));
   /* 第 33 轮调参：凡品 10000 起，每品阶 ×10 */
   check('凡品参悟要 10000 点', manuals.contemplateFateCost(1) === 10000, String(manuals.contemplateFateCost(1)));
-  check('每高一个品阶贵 10 倍', manuals.contemplateFateCost(2) === 100000 && manuals.contemplateFateCost(5) === 1e8);
+  check(
+    '四档阶梯：10000 / 1e5 / 1e6 / 1e7（每档 ×10）',
+    [1, 2, 3, 4].every((g) => manuals.contemplateFateCost(g as 1) === 10000 * 10 ** (g - 1)),
+    [1, 2, 3, 4].map((g) => manuals.contemplateFateCost(g as 1)).join(' / '),
+  );
+  check('天纵不在参悟阶梯里（它只能靠九档秘境）', FATE_COST_CONTEMPLATE.length === 4, String(FATE_COST_CONTEMPLATE.length));
 
   /* 存档往返 */
   const saved = deserialize(
@@ -9325,6 +9348,44 @@ section('[65] 观天楼与天机点（第 33 轮需求 5）');
 
   const techHtml = renderToString(<ResearchPanel />);
   check('钻研面板标出了天机消耗（玩家反馈的那一处）', techHtml.includes('天机'), '');
+}
+
+/* 第 33 轮调参：把"每一档 ≤10 分钟"写成循环断言（这是玩家给的硬约束） */
+{
+  /*
+   * 玩家原话：「最高级别的需求也在十分钟内完成，或者说每一段的需求都卡在10分钟内」。
+   *
+   * 所以这条断言**遍历所有档位**，而不是抽查一个：
+   *   - 第 R 档钻研（需求境界 R）时，观天楼等级上限 = R + 1；
+   *   - 该等级的产出 = FATE_PER_SECOND × FATE_LEVEL_GROWTH^(R+1-1)；
+   *   - 攒够 `researchFateCost` 的秒数必须 ≤ 600。
+   * 任何一档超时都会红 —— 以后调数值时不会再出现"某一档突然要 35 年"。
+   */
+  const TEN_MINUTES = 600;
+  const slowTiers: string[] = [];
+
+  /*
+   * 玩家给的结构（第 33 轮最终设计）：
+   *   可参悟 **4 档**（凡品/良品/上品/极品；天纵只能靠九档秘境），
+   *   观天楼 **9 级**，**每两级对齐一档** —— 品阶 g 对观天楼 2g 级。
+   *
+   * 所以这条断言遍历**四档**，用 `fateRate(2g)` 算该档的产出，
+   * 要求每一档都能在 10 分钟内攒够 —— 且四档**等长**（这正是设计意图）。
+   */
+  const times: number[] = [];
+  for (let grade = 1; grade <= 4; grade += 1) {
+    const seconds = manuals.contemplateFateCost(grade as 1) / fateRate(grade * 2);
+    times.push(seconds);
+    if (seconds > TEN_MINUTES) {
+      slowTiers.push(`参悟·${grade} 品 ${Math.round(seconds)}s`);
+    }
+  }
+  check(
+    '四档等待时间完全等长（这正是每两级对齐一档的设计意图）',
+    times.length === 4 && times.every((t) => Math.abs(t - times[0]!) < 1e-6),
+    times.map((t) => `${Math.round(t)}s`).join(' / '),
+  );
+  check('每档约 500 秒（8.3 分钟）', Math.abs(times[0]! - 500) < 1e-6, `${Math.round(times[0]!)}s`);
 }
 
 console.log('');

@@ -103,7 +103,9 @@ import {
   type RefineRecipe,
   type RealmDef,
   // 第 33 轮需求 5：观天楼的天机点产出
+  FATE_LEVELS_PER_TIER,
   FATE_PER_SECOND,
+  FATE_TIER_GROWTH,
   OBSERVATORY_MAX_LEVEL,
   // 第 33 轮需求 5：升楼是海量开销，且随等级指数增长
   OBSERVATORY_UPGRADE_BASE,
@@ -2303,15 +2305,26 @@ export function upgradeObservatory(state: GameState): GameState {
   };
 }
 
+/**
+ * 观天楼某一级的天机点产出（每秒）。
+ *
+ * **每两级 ×10**（第 33 轮最终设计）：品阶每高一档需求 ×10，
+ * 而每档对应观天楼 +2 级 —— 两边同阶，所以每一档的等待时间完全相等。
+ *
+ * 抽成函数是为了**界面与引擎共用同一个公式**（否则会出现
+ * "界面显示 20/秒、实际按另一个数在涨"这种最难查的错）。
+ */
+export function fateRate(level: number): number {
+  const lv = Math.max(1, Math.min(level, OBSERVATORY_MAX_LEVEL));
+  const tiers = Math.floor((lv - 1) / FATE_LEVELS_PER_TIER);
+  return FATE_PER_SECOND * FATE_TIER_GROWTH ** tiers;
+}
+
 export function produceFatePoints(state: GameState, dt: number): GameState {
   if (dt <= 0) return state;
   if ((state.buildings.observatory ?? 0) <= 0) return state;
   const level = Math.max(1, Math.min(state.observatoryLevel, OBSERVATORY_MAX_LEVEL));
-  /*
-   * ⚠️ 玩家明确要求产出速度**不要**改（"我就是要控制游戏速度"），
-   * 所以这里是**线性**的 0.1 × 等级 —— 与花费的每级 ×10 形成刻意的落差。
-   */
-  return { ...state, fatePoints: state.fatePoints + FATE_PER_SECOND * level * dt };
+  return { ...state, fatePoints: state.fatePoints + fateRate(level) * dt };
 }
 
 export function produceResources(state: GameState, dt: number): GameState {
