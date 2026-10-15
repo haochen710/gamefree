@@ -11,14 +11,13 @@
 import { fmt } from '../game/decimal';
 import {
   CRAFT_PER_CLICK,
-  AUTO_REFINE_RATES,
   ITEM_MAP,
   MATERIAL_IDS,
   MATERIAL_MAP,
   REFINE_RECIPES,
   type ItemId,
 } from '../game/content';
-import { getAmount, getAutoRefineRate, getRefineGate, maxRefine, refineCostMap } from '../game/engine';
+import { getAmount, getRefineGate, maxRefine, refineCostMap } from '../game/engine';
 import { useGame } from '../game/store';
 import type { GameState } from '../game/state';
 import Panel from './Panel';
@@ -34,11 +33,10 @@ const DOWNSTREAM: Record<string, string> = {
 export function RefinePanel({ collapsible = false }: { collapsible?: boolean } = {}) {
   const game = useGame((s) => s.game);
   const doRefine = useGame((s) => s.refine);
-  const setAutoRefine = useGame((s) => s.setAutoRefine);
   const setAutoRefineTarget = useGame((s) => s.setAutoRefineTarget);
   // 第 28 轮：自动合成也有独立的开关了（不再靠"设个目标"来表达"开"）
   const setAutoRefineOn = useGame((s) => s.setAutoRefineOn);
-  const rate = getAutoRefineRate(game);
+  // 第 32 轮：不再有"全局速率档"，所以这里也不需要读速率了（每条配方各自每秒 1 份）
 
   return (
     <Panel
@@ -53,44 +51,24 @@ export function RefinePanel({ collapsible = false }: { collapsible?: boolean } =
       </p>
 
       {/*
-        本轮需求 2：「合成栏位内所有材料都可以自动合成，可以设置需要合成到多少」。
-        所以每条配方多一个"目标存量"输入框 + 总开关：填了数就自动补到那个数，补到就停。
+        第 32 轮（玩家要求）：「去除自动合成（全部配方共用）这个模块，
+        每个合成都是单独的每秒一个」。
+
+        所以这一整块"全局速度档"被删掉了 —— 它存在的意义只是"调节所有配方的总速率"，
+        而它同时是第 31 轮那个 bug 的来源（默认 0 档 = 关，玩家开了配方开关却不动它，
+        就什么都不发生）。现在：**每条配方自己的「自动合成」按钮就是开关，开着每秒 1 份**。
       */}
       <div className="auto-refine">
         <div className="auto-refine__head">
           <strong>自动合成</strong>
-          <span className="panel__hint">
-            {rate > 0 ? `${rate} 批/秒（全部配方共用）` : '未开启'}
-          </span>
+          <span className="panel__hint">每条配方各自每秒 1 份</span>
         </div>
         <p className="panel__note">
-          填一个<strong>目标存量</strong>，系统就会按下面的速率慢慢补到那个数、补到就停手。
-          0 表示那条不管。速率是所有配方<strong>共用</strong>的 —— 否则四条一起开会把灵气抽干。
+          每条配方下面都有一个「<strong>自动合成</strong>」按钮：
+          打开它，这条线就<strong>每秒合成 1 份</strong>，各条互不影响。
+          再填一个<strong>目标存量</strong>就补到那个数停手；<strong>不填就一直合下去</strong>。
+          ⚙️ 丹炉的"自动合成加速"会在这个基础上再加快。
         </p>
-        {/*
-          第 31 轮：玩家报「自动合成开启后实际没有合成」——
-          根因是这里和每条配方的开关**是两个旋钮**：配方的开关才是"开/关"，
-          而这一排是"多快"；玩家只按了前者、这一排还停在"关闭"，于是什么都没发生。
-          现在引擎侧已经保证"只要有一条配方开着就一定按最低速跑"，
-          这里再把两者的分工写清楚，免得下一个人再踩。
-        */}
-        <p className="panel__note">
-          ⚙️ 这一排是<strong>速度档</strong>（所有配方共用）；<strong>开不开</strong>由每条配方自己的
-          「自动合成」按钮决定。已经开着配方时，这里即使停在"关闭"也会按<strong>最低速</strong>运行。
-        </p>
-        <div className="btn-row btn-row--wrap">
-          {AUTO_REFINE_RATES.map((value, level) => (
-            <button
-              key={value}
-              type="button"
-              className={game.autoRefineLevel === level ? 'btn btn--primary' : 'btn'}
-              onClick={() => setAutoRefine(level)}
-            >
-              {level === 0 ? '最低速' : `档 ${level}`}
-              {level > 0 && <span className="btn__sub">{value} 批/秒</span>}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className="refine-list">

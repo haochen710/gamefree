@@ -78,8 +78,7 @@ import { D, fmt } from '../src/game/decimal';
 import {
   APTITUDES,
   APTITUDE_MAP,
-  AUTO_REFINE_LEVEL_MAX,
-  AUTO_REFINE_RATES,
+  AUTO_REFINE_PER_SECOND,
   BASE_KINDS_MIN,
   BASE_MATERIAL_IDS,
   BLUEPRINTS,
@@ -2156,9 +2155,9 @@ section('[17] 商行（需求 3 / 6）');
 /* ------------------------------------------------------------------ */
 section('[18] 灵石自动合成（需求 4）');
 {
-  check('默认是关闭的', createInitialState(0).autoRefineLevel === 0);
-  check('档位表从 0（关闭）开始', AUTO_REFINE_RATES[0] === 0);
-  check('有多个可选档位', AUTO_REFINE_LEVEL_MAX >= 2, `${AUTO_REFINE_LEVEL_MAX + 1} 档`);
+  /* 第 32 轮：没有全局档位了，改成「每条配方各自每秒 1 份」 */
+  check('默认没有任何配方开着自动合成', Object.keys(createInitialState(0).autoRefineOn ?? {}).length === 0);
+  check('每条配方每秒 1 份', AUTO_REFINE_PER_SECOND === 1, String(AUTO_REFINE_PER_SECOND));
 
   // 储物袋 ×10：灵气上限 20250 / 灵矿 8100 / 灵石 1250
   // 需求 10：上限要五种专库一起撑（单座库房只抬一项）
@@ -2178,7 +2177,6 @@ section('[18] 灵石自动合成（需求 4）');
   // 本轮需求 2：自动合成改成「按目标存量补齐」，所以要给灵石那条设一个目标
   const fast: GameState = {
     ...stocked,
-    autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
     autoRefineTargets: { stoneRefine: 100000 },
     // 第 28 轮：开关与目标分开，必须同时打开开关，否则按新语义什么都不做
     autoRefineOn: { stoneRefine: true },
@@ -2197,7 +2195,7 @@ section('[18] 灵石自动合成（需求 4）');
    */
   {
     const zeroLevel = applyTick(
-      { ...stocked, autoRefineLevel: 0, autoRefineOn: { stoneRefine: true } },
+      { ...stocked, autoRefineOn: { stoneRefine: true } },
       120,
       makeRandom(1),
     );
@@ -2213,7 +2211,7 @@ section('[18] 灵石自动合成（需求 4）');
     );
 
     // 一条配方都没开时，速度档 0 仍然是"真的关"
-    const allOff = applyTick({ ...stocked, autoRefineLevel: 0 }, 120, makeRandom(1));
+    const allOff = applyTick({ ...stocked }, 120, makeRandom(1));
     check(
       '一条配方都没开时，速度档 0 仍然什么都不做',
       allOff.resources.stone.eq(stocked.resources.stone),
@@ -2227,7 +2225,7 @@ section('[18] 灵石自动合成（需求 4）');
    */
   {
     const noTarget = applyTick(
-      { ...stocked, autoRefineLevel: AUTO_REFINE_LEVEL_MAX, autoRefineOn: { stoneRefine: true } },
+      { ...stocked, autoRefineOn: { stoneRefine: true } },
       60,
       makeRandom(1),
     );
@@ -2241,7 +2239,6 @@ section('[18] 灵石自动合成（需求 4）');
     const capped = applyTick(
       {
         ...stocked,
-        autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
         autoRefineOn: { stoneRefine: true },
         autoRefineTargets: { stoneRefine: 100 },
       },
@@ -2271,7 +2268,6 @@ section('[18] 灵石自动合成（需求 4）');
   /* ---- 灵气耗尽时不会凭空造灵石 ---- */
   const noQi: GameState = {
     ...grant(forceBuild(createInitialState(0), 'qiVault1', 10), { ore: '8000' }),
-    autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
     autoRefineTargets: { stoneRefine: 100000 },
   };
   const starved = applyTick(noQi, 60, makeRandom(1));
@@ -2281,7 +2277,6 @@ section('[18] 灵石自动合成（需求 4）');
   const stoneCap = engine.getStorageCap(stocked, 'stone');
   const full: GameState = {
     ...stocked,
-    autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
     autoRefineTargets: { stoneRefine: 100000 },
     resources: { ...stocked.resources, stone: stoneCap },
   };
@@ -2289,13 +2284,23 @@ section('[18] 灵石自动合成（需求 4）');
   check('灵石已满时不再消耗灵气', noRoom.resources.qi.eq(full.resources.qi), `${fmt(noRoom.resources.qi)}`);
   check('灵石被上限截断', noRoom.resources.stone.eq(stoneCap));
 
-  /* ---- 慢档比快档少烧灵气 ---- */
-  const slow = applyTick({ ...stocked, autoRefineLevel: 1, autoRefineOn: { stoneRefine: true }, autoRefineTargets: { stoneRefine: 100000 } }, 60, makeRandom(1));
-  check(
-    '慢档消耗少于快档',
-    slow.resources.qi.gt(on.resources.qi),
-    `${fmt(slow.resources.qi)} > ${fmt(on.resources.qi)}`,
-  );
+  /*
+   * 第 32 轮：**没有"档位"了**，所以原来那条「慢档比快档少烧灵气」整条删除。
+   * 取而代之的是更直白的量级检查：开着的配方**每秒恰好推进一份**，
+   * 所以 60 秒最多 60 份 —— 不会出现"一帧爆发式合成"把灵气抽干。
+   */
+  {
+    const oneMinute = applyTick(
+      { ...stocked, autoRefineOn: { stoneRefine: true } },
+      60,
+      makeRandom(1),
+    );
+    const made = oneMinute.resources.stone
+      .sub(stocked.resources.stone)
+      .div(STONE_REFINE_OUTPUT)
+      .toNumber();
+    check('每条配方每秒一份（60 秒不超过 60 份）', made > 0 && made <= 60, `一分钟合了 ${made} 份`);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -2567,7 +2572,6 @@ section('[21] 新字段的存档往返');
   const base = grantAll(createInitialState(0), { qi: '1e6', stone: '1e5' });
   const loaded: GameState = {
     ...base,
-    autoRefineLevel: 2,
     personalTravel: { kind: 'travel', regionId: 'mortalVillage', progress: 30, duration: 90 },
     techs: { alchemyArt: true, refiningArt: true },
     blueprints: { spiritBoatBlueprint: true },
@@ -2585,13 +2589,16 @@ section('[21] 新字段的存档往返');
     arenaTimer: 77,
     arenaBuffSeconds: 8,
     sectEventTimer: 31,
+    // 第 32 轮：自动合成现在只看"配方开关"，所以往返测试要把它设上
+    autoRefineOn: { stoneRefine: true },
+    autoRefineTargets: { stoneRefine: 100000 },
   };
   const withSeeds = planting.addSeeds(loaded, 'starSand', 5);
 
   const round = deserialize(JSON.parse(JSON.stringify(serialize(withSeeds))));
   check('存档往返成功', round !== null);
   if (round) {
-    check('自动合成档位保留', round.autoRefineLevel === 2);
+    check('自动合成的配方开关能存能读', round.autoRefineOn?.stoneRefine === true);
     check('游历状态保留', round.personalTravel?.regionId === 'mortalVillage');
     check('已钻技术保留', round.techs.alchemyArt === true && round.techs.refiningArt === true);
     check('图纸保留', round.blueprints.spiritBoatBlueprint === true);
@@ -2641,7 +2648,7 @@ section('[21] 新字段的存档往返');
     check('非布尔的大比开关按 false 处理', junk.arenaEnabled === false);
     check('负数的大比计时被夹回 0', junk.arenaTimer >= 0);
     check('非法的大比加速时长被夹回 0', junk.arenaBuffSeconds === 0);
-    check('档位被夹到合法范围', junk.autoRefineLevel <= AUTO_REFINE_LEVEL_MAX);
+    check('非法配方 id 会被读档丢掉', junk.autoRefineOn.notARecipe === undefined);
   }
 
   /* ---- v2 存档（没有这些新字段）要能平滑升级 ---- */
@@ -2720,7 +2727,6 @@ section('[22] 界面：非空状态渲染');
     layer: 3,
     servants: { wood: 3, ore: 2 },
     injurySeconds: 90,
-    autoRefineLevel: 2,
     discoveredRealms: { [STARTER_REALM_ID]: true, eastMountains_3_r0: true },
     realmCooldowns: { eastMountains_3_r0: 90 },
     discoveryFailures: 2,
@@ -2835,12 +2841,11 @@ section('[23] store 动作闭环');
 
   /* ---- 自动合成 ---- */
   seedState();
-  store.getState().setAutoRefine(3);
-  check('store.setAutoRefine 生效', store.getState().game.autoRefineLevel === 3);
-  store.getState().setAutoRefine(0);
-  check('store 可以关掉自动合成', store.getState().game.autoRefineLevel === 0);
-  store.getState().setAutoRefine(99);
-  check('档位会被夹到上限', store.getState().game.autoRefineLevel === AUTO_REFINE_LEVEL_MAX);
+  /* 第 32 轮：setAutoRefine（全局档位）已随那个模块一起删除 */
+  store.getState().setAutoRefineOn('stoneRefine', true);
+  check('store.setAutoRefineOn 生效', store.getState().game.autoRefineOn.stoneRefine === true);
+  store.getState().setAutoRefineOn('stoneRefine', false);
+  check('store 可以关掉某条配方的自动合成', store.getState().game.autoRefineOn.stoneRefine === undefined);
 
   /* ---- 游历 ---- */
   seedState();
@@ -5523,7 +5528,6 @@ section('[43] 自动合成 · 循环探索 · 聚灵阵 · 起步队伍');
     // 给「灵液」设目标 50：跑一会儿应该补到那个数附近并停手
     const targeted: GameState = {
       ...rich,
-      autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
 autoRefineTargets: { spiritEssenceRefine: 50 },
     autoRefineOn: { spiritEssenceRefine: true },
     };
@@ -5539,7 +5543,6 @@ autoRefineTargets: { spiritEssenceRefine: 50 },
     // ⚠️ 灵石是**有储存上限**的产出：先腾空仓库，否则"满了就不合"是对的、测试会误判
     const stoneRun: GameState = {
       ...grant(rich, { stone: '0', qi: '1e9', ore: '1e6' }),
-      autoRefineLevel: AUTO_REFINE_LEVEL_MAX,
 autoRefineTargets: { stoneRefine: 1000 },
     autoRefineOn: { stoneRefine: true },
     };
@@ -7301,21 +7304,19 @@ section('[48] 丹炉九件 · 弟子五装备栏 · 炼器');
      * 而它的注释还写着"作用在 engine.getAutoRefineRate 上" ——
      * 文档代理第五次核出这一类问题。这条断言就是为了让它不能再悄悄死掉。
      */
-    const refining: GameState = { ...plain, autoRefineLevel: 3 };
     check(
       '丹炉真的加快自动合成',
-      engine.getAutoRefineRate({ ...refining, furnaceId: 'primordialCauldron' }) > engine.getAutoRefineRate(refining),
-      `${engine.getAutoRefineRate(refining)} → ${engine.getAutoRefineRate({ ...refining, furnaceId: 'primordialCauldron' })}`,
+      engine.getAutoRefineRate({ ...plain, furnaceId: 'primordialCauldron' }) > engine.getAutoRefineRate(plain),
+      `${engine.getAutoRefineRate(plain)} → ${engine.getAutoRefineRate({ ...plain, furnaceId: 'primordialCauldron' })}`,
     );
     check(
       '自动合成加速的比例就是炉鼎的 refineSpeedBonus',
       Math.abs(
-        engine.getAutoRefineRate({ ...refining, furnaceId: 'primordialCauldron' }) /
-          engine.getAutoRefineRate(refining) -
+        engine.getAutoRefineRate({ ...plain, furnaceId: 'primordialCauldron' }) /
+          engine.getAutoRefineRate(plain) -
           (1 + FURNACE_MAP.primordialCauldron.refineSpeedBonus),
       ) < 1e-9,
     );
-    check('没开自动合成时炉鼎不该凭空变出速度', engine.getAutoRefineRate({ ...refining, autoRefineLevel: 0 }) === 0);
   }
 
   /* ---- 装备：数据与约束 ---- */

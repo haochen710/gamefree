@@ -11,7 +11,6 @@
 import { create } from 'zustand';
 import { fmt, fmtDuration } from './decimal';
 import {
-  AUTO_REFINE_LEVEL_MAX,
   BUILDABLE_MAP,
   ITEM_MAP,
   ENDING_MAP,
@@ -94,7 +93,6 @@ export interface GameStore {
    */
   breakthrough(): void;
   refineStone(times: number): void;
-  setAutoRefine(level: number): void;
   ascend(): void;
   hardReset(): void;
 
@@ -424,21 +422,6 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       const updated = nextGame(s.game, engine.refineStone(s.game, times));
       return updated.game ? { ...updated, notice: '灵石合成完成' } : {};
-    });
-  },
-
-  setAutoRefine: (level) => {
-    set((s) => {
-      const clamped = Math.min(Math.max(Math.floor(level), 0), AUTO_REFINE_LEVEL_MAX);
-      if (clamped === s.game.autoRefineLevel) return {};
-      const rate = clamped > 0 ? engine.getAutoRefineRate({ ...s.game, autoRefineLevel: clamped }) : 0;
-      return {
-        game: { ...s.game, autoRefineLevel: clamped, autoRefineProgress: clamped > 0 ? s.game.autoRefineProgress : 0 },
-        notice:
-          clamped === 0
-            ? '已关闭灵石自动合成'
-            : `灵石自动合成已开启（${rate} 批/秒）`,
-      };
     });
   },
 

@@ -465,8 +465,18 @@ function runSimulation(seed: number): SimResult {
       refinedGoldRefine: 1000,
       arrayCoreRefine: 1500,
     };
-    if (state.autoRefineLevel !== wantAuto) {
-      state = { ...state, autoRefineLevel: wantAuto, autoRefineProgress: wantAuto > 0 ? state.autoRefineProgress : 0 };
+    /*
+     * 第 32 轮：没有"全局速率档"了 —— 自动合成 = 把需要的配方开关打开，
+     * 每条配方各自每秒 1 份。所以这里改成维护 autoRefineOn 这张表。
+     */
+    const wantOn = wantAuto > 0;
+    const alreadyOn = Object.keys(state.autoRefineOn ?? {}).length > 0;
+    if (wantOn !== alreadyOn) {
+      state = {
+        ...state,
+        autoRefineOn: wantOn ? Object.fromEntries(REFINE_RECIPES.map((r) => [r.id, true])) : {},
+        autoRefineProgress: 0,
+      };
       if (wantAuto > 0 && !flags.firstAutoRefine) {
         flags.firstAutoRefine = true;
         record('开启自动合成');
@@ -1973,8 +1983,15 @@ function printDetail(result: SimResult): void {
           if (!d.cultivationManual) free += 1;
           if (!d.combatManual) free += 1;
         }
-        slots.push(`${MANUAL_GRADE_NAMES[grade]} ${free}`);
-      }
+    /* 第 32 轮：没有全局档位了，改报"有几条配方开着 + 每条每秒几份" */
+    console.log(
+      `  自动合成：${
+        Object.keys(state.autoRefineOn ?? {}).length === 0
+          ? '关闭'
+          : `${Object.keys(state.autoRefineOn ?? {}).length} 条配方开着（每条 ${engine.getAutoRefineRate(state)} 份/秒）`
+      }`,
+    );
+  }
       console.log(`  可装空位（按该品阶的境界门槛算）：${slots.join(' · ')}`);
       console.log(
         `  发书诊断：成功 ${result.equipOk} · 找不到合适弟子 ${result.equipNoTarget} · 装备被拒 ${result.equipRejected}`,
@@ -1984,7 +2001,9 @@ function printDetail(result: SimResult): void {
 
   /* ---- 需求 4：自动合成 ---- */
   console.log(
-    `  自动合成：${state.autoRefineLevel === 0 ? '关闭' : `${state.autoRefineLevel} 档（${engine.getAutoRefineRate(state)} 批/秒）`}`,
+      Object.keys(state.autoRefineOn ?? {}).length === 0
+        ? '关闭'
+        : `${Object.keys(state.autoRefineOn ?? {}).length} 条配方开着（每条 ${engine.getAutoRefineRate(state)} 份/秒）`
   );
 
   /* ---- 需求 5：种植 ---- */

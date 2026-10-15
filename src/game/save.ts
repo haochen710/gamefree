@@ -11,7 +11,6 @@ import Decimal, { D } from './decimal';
 import { gameRandom, type RandomSource } from './random';
 import {
   APTITUDE_ORDER,
-  AUTO_REFINE_LEVEL_MAX,
   ARTIFACT_MAP,
   REFINE_RECIPE_MAP,
   BLUEPRINT_MAP,
@@ -170,7 +169,6 @@ export interface SerializedGame {
   inj: number;
   /** personalTravel：掌门游历（需求 1） */
   pv?: PersonalTravel | null;
-  /** autoRefineLevel / autoRefineProgress：自动合成（需求 4） */
   au?: number;
   ap?: number;
   /** seeds：材料种子（需求 5） */
@@ -370,7 +368,6 @@ export function serialize(state: GameState): SerializedGame {
     sv: { ...state.servants },
     inj: state.injurySeconds,
     pv: state.personalTravel,
-    au: state.autoRefineLevel,
     ap: state.autoRefineProgress,
     art: { ...state.autoRefineTargets },
     /* 第 28 轮：自动的开关（与目标存量分开）——键名取 aro / aco */
@@ -1239,7 +1236,6 @@ export function deserialize(raw: unknown): GameState | null {
     servants,
     injurySeconds: toFloat(data.inj, 0, 0, 1e9),
     personalTravel: sanitizeTravel(data.pv),
-    autoRefineLevel: toInt(data.au, 0, 0, AUTO_REFINE_LEVEL_MAX),
     autoRefineTargets: sanitizeAutoRefineTargets(data.art),
     autoRefineOn: sanitizeFlagMap(data.aro, (id) => REFINE_RECIPE_MAP[id] !== undefined),
     autoCraftOn: sanitizeFlagMap(data.aco, (id) => PILL_MAP[id] !== undefined || ARTIFACT_MAP[id] !== undefined || TALISMAN_MAP[id] !== undefined),

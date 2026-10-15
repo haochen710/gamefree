@@ -1524,5 +1524,21 @@ export const BUILDABLE_MAP: Record<string, BuildableDef> = BUILDABLES.reduce(
  * 现在改成"一个总闸门 + 每条配方设目标存量"：玩家说的是"我要 2000 灵液"，
  * 系统按总速率慢慢补到那个数就停。
  */
-export const AUTO_REFINE_RATES = [0, 0.05, 0.2, 0.8] as const;
+/**
+ * 自动合成：**每条配方每秒几份**（第 32 轮）。
+ *
+ * 玩家原话：「去除自动合成（全部配方共用）这个模块，每个合成都是单独的每秒一个」。
+ * 所以不再有全局速率档 —— 开着的配方各自每秒 1 份，互不抢速率。
+ * 丹炉的加速仍作用其上（那是你造了什么炉子，不是你又设了什么开关）。
+ */
+export const AUTO_REFINE_PER_SECOND = 1;
+
+/**
+ * @deprecated 第 32 轮起改用 `AUTO_REFINE_PER_SECOND`（每条配方各自每秒 1 份）。
+ *
+ * 保留导出只为不一次性删爆引用，**新代码不要再读它**。
+ * 这套全局速率档正是第 31 轮那个 bug 的来源：档位默认 0，
+ * 玩家开了配方开关却没设档位，于是什么都不发生。
+ */
+export const AUTO_REFINE_RATES = [0, AUTO_REFINE_PER_SECOND] as const;
 export const AUTO_REFINE_LEVEL_MAX = AUTO_REFINE_RATES.length - 1;

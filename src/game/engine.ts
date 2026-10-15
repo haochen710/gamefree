@@ -16,8 +16,7 @@ import {
   ASCENSION_MIN_REALM,
   ARENA_BUFF_BONUS,
   ARTIFACTS,
-  AUTO_REFINE_LEVEL_MAX,
-  AUTO_REFINE_RATES,
+  AUTO_REFINE_PER_SECOND,
   type ArtifactDef,
   BASE_STORAGE,
   BLUEPRINT_MAP,
@@ -2085,29 +2084,20 @@ export function refineStone(state: GameState, times: number): GameState {
  * 现在真的接上了，并且冒烟里有断言守着。
  */
 export function getAutoRefineRate(state: GameState): number {
-  const level = Math.min(Math.max(Math.floor(state.autoRefineLevel), 0), AUTO_REFINE_LEVEL_MAX);
-  let base = AUTO_REFINE_RATES[level];
   /*
-   * 🚨 第 31 轮修的 bug：玩家反馈「工坊自动合成开启后，实际没有自动合成，
-   * 资源无消耗，合成产物无增加」。
+   * 第 32 轮（玩家要求）：「去除自动合成（全部配方共用）这个模块，
+   * 每个合成都是单独的每秒一个」。
    *
-   * 根因：速率档的第 0 档是 **0 批/秒**（历史上"自动合成"只有这一个开关，
-   * 所以 0 档就是"关"）。而第 28 轮把"每条配方各自的开关"独立出来之后，
-   * 就出现了**两个开关**：玩家打开了配方开关、却没动上面那个速度档，
-   * 于是 `base <= 0` 直接 return —— 开关看起来打开了，实际什么都不会发生。
+   * ⚠️ 这里原来是"全局速率档"（`AUTO_REFINE_RATES = [0, 0.05, 0.2, 0.8]`，
+   * 所有配方共用），第 0 档就是 0 —— 于是第 28 轮把配方开关独立出来之后，
+   * 就出现了"开着配方开关、速度档却还停在 0 → 什么都不发生"的暗门
+   * （第 31 轮修过一次，但玩家反馈仍然不直观）。
    *
-   * 修法：**把"开/关"的所有权交给配方开关，速度档只负责"多快"**。
-   * 只要还有任何一条配方开着，速度档为 0 时就按**最低档**跑，
-   * 而不是当成"全关"—— 玩家按下的开关必须真的有用。
-   * （一条都没开时仍然是 0：此时速度档的"关"就是真的关。）
+   * 现在没有档位了：**每条配方各自每秒 1 份**，丹炉的加速仍然作用其上
+   * （它是"你造了什么炉子"，不是"你又设了什么开关"）。
+   * `AUTO_REFINE_RATES` / `autoRefineLevel` 都已废弃，仅保留字段以兼容旧存档。
    */
-  if (base <= 0) {
-    const anyOn = Object.values(state.autoRefineOn ?? {}).some((v) => v === true);
-    if (!anyOn) return 0;
-    base = AUTO_REFINE_RATES[1];
-  }
-  // 丹炉九件（设定集第 11 章）：当前那口炉子的自动合成加速
-  return base * (1 + getFurnaceRefineSpeedBonus(state));
+  return AUTO_REFINE_PER_SECOND * (1 + getFurnaceRefineSpeedBonus(state));
 }
 
 /**
@@ -2176,47 +2166,44 @@ function autoRefineShortfall(state: GameState, recipeId: string): number {
 }
 
 /**
- * 自动合成（本轮需求 2：从"只管灵石"扩到"管全部配方"）。
+ * 自动合成。
  *
- * 需求原文：「合成栏位内所有材料都可以自动合成，可以设置需要合成到多少」。
+ * 第 32 轮（玩家要求）：「去除自动合成（全部配方共用）这个模块，
+ * 每个合成都是单独的每秒一个」。所以规则现在是：
+ *   - **每条配方各自一个开关**（`autoRefineOn`），各自**每秒 1 份**；
+ *   - 设了目标就补到目标停手；**没设目标就一直合**（第 28 轮定的口径）；
+ *   - 全部配方**同时**推进（不再"按缺口抢同一份速率"）。
  *
- * 所以规则从"按速率产灵石"改成"**按目标存量补齐**"：
- *   - 玩家给每条配方设一个目标数（0 = 那条不管）；
- *   - 总速率由 `autoRefineLevel` 决定（所有配方共用，见 AUTO_REFINE_RATES 的注释）；
- *   - 每一批优先补**缺口最大**的那条配方，补到目标就自动停手。
- *
- * 这样"我要 2000 灵液"是一句话就能表达的意图，而不是"开 0.8 批/秒然后盯着屏幕"。
+ * ⚠️ 原来这里是"一个全局速率 + 所有配方抢它" —— 于是
+ * ① 玩家得先设速度档（不设就是 0，开关形同虚设：第 31 轮那个 bug）；
+ * ② 四条配方一起开时它们互相抢速率，谁先谁后还取决于缺口排序，
+ *    玩家很难预期"我开着的这条到底会不会动"。
+ * 现在每条配方自成一档，"开着就每秒一份"是能一句话说清的规则。
  */
 export function autoRefine(state: GameState, dt: number): GameState {
-  const rate = getAutoRefineRate(state);
-  if (rate <= 0 || dt <= 0) return state;
+  if (dt <= 0) return state;
+  const on = state.autoRefineOn ?? {};
+  const active = REFINE_RECIPES.filter((r) => on[r.id] === true);
+  if (active.length === 0) return state;
 
+  const rate = getAutoRefineRate(state);
   const demanded = state.autoRefineProgress + rate * dt;
-  let wanted = Math.floor(demanded);
-  // 还没攒够一批，先记账
-  if (wanted <= 0) return { ...state, autoRefineProgress: demanded };
+  let seconds = Math.floor(demanded);
+  // 还没攒够一秒，先记账
+  if (seconds <= 0) return { ...state, autoRefineProgress: demanded };
 
   let next = state;
-  let done = 0;
   let guard = 0;
-  while (done < wanted && guard < 64) {
+  while (seconds > 0 && guard < 600) {
     guard += 1;
-    // 挑"缺口最大且还炼得动"的那条
-    const candidates = REFINE_RECIPES.map((r) => ({
-      id: r.id,
-      short: autoRefineShortfall(next, r.id),
-    }))
-      .filter((c) => c.short > 0)
-      .filter((c) => maxAutoRefineBatchesFor(next, c.id) > 0)
-      .sort((a, b) => b.short - a.short);
-
-    const pick = candidates[0];
-    if (!pick) break;
-
-    const paid = refine(next, pick.id, 1);
-    if (paid === next) break;
-    next = paid;
-    done += 1;
+    seconds -= 1;
+    // 每过一秒：**每条开着的配方各合一份**（互不抢速率）
+    for (const recipe of active) {
+      if (autoRefineShortfall(next, recipe.id) <= 0) continue;
+      if (maxAutoRefineBatchesFor(next, recipe.id) <= 0) continue;
+      const paid = refine(next, recipe.id, 1);
+      if (paid !== next) next = paid;
+    }
   }
 
   /*

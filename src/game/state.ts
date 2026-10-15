@@ -448,8 +448,10 @@ export interface GameState {
   personalTravel: PersonalTravel | null;
 
   /* ---- 自动合成（需求 4） ---- */
-  /** 自动合成的**全局**速率档位，0 表示关闭；见 AUTO_REFINE_RATES */
-  autoRefineLevel: number;
+  /**
+   * @deprecated 第 32 轮起不再使用（自动合成改成每条配方各自每秒 1 份）。
+   * 保留字段只为旧存档能读进来，已无任何逻辑读它。
+   */
   /**
    * 各条合成配方的**目标存量**（本轮需求 2）：键是配方 id，值是「我要攒到多少」。
    * 0 或缺省 = 那条不参与自动合成。
@@ -677,7 +679,6 @@ export function createInitialState(now = Date.now()): GameState {
     servants: {},
     injurySeconds: 0,
     personalTravel: null,
-    autoRefineLevel: 0,
   autoRefineTargets: {},
   autoRefineOn: {},
   autoCraftTargets: {},

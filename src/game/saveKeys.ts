@@ -56,7 +56,6 @@ export const SAVE_KEYS: Record<string, string> = {
   sv: '{ ...state.servants }',
   inj: 'state.injurySeconds',
   pv: 'state.personalTravel',
-  au: 'state.autoRefineLevel',
   ap: 'state.autoRefineProgress',
   art: '{ ...state.autoRefineTargets }',
   // 第 28 轮：自动的开关（与目标存量 art/act 分开）
