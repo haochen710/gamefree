@@ -57,6 +57,9 @@ import {
   SURVEY_DURATION_RATIO,
   SURVEY_MAX_PARTY,
   SURVEY_RARE_CHANCE,
+  RARE_DROP_BASE,
+  RARE_DROP_FALLOFF,
+  RARE_MATERIAL_IDS,
   SURVEY_YIELD_MULT,
   YIELD_VARIANCE_MAX,
   YIELD_VARIANCE_MIN,
@@ -518,11 +521,27 @@ export function resolveExpedition(
   const rareBonus = getFarmTalentBonus(state, 'rareDrop');
   const pool = def.loot
     .filter((entry) => !entry.guaranteed)
-    .map((entry) =>
-      rareBonus > 0 && isRareMaterial(entry.item)
-        ? { ...entry, weight: entry.weight * (1 + rareBonus) }
-        : entry,
-    );
+    .map((entry) => {
+      /*
+       * 第 33 轮需求 7（玩家原话）：「稀有材料里面，各个材料的掉落率降低，
+       * 且越是在高境界需要的材料，掉落概率越低」。
+       *
+       * 实现只用**一条规则**：按 `RARE_MATERIAL_IDS` 里的**位次**逐级衰减 ——
+       * 那张表的顺序本来就是"解锁顺序，越靠后越稀有"（见 resources.ts 的注释），
+       * 于是"位次"天然就是"它属于哪个境界段"。所以不需要给 36 处秘境
+       * 一一改权重（那样既容易漏、又会与表的顺序脱节）。
+       *
+       * 位次 0（月华露）约 ×0.60，往后每级再乘 0.72：
+       *   0.60 / 0.43 / 0.31 / 0.22 / 0.16 / 0.12 / 0.08 …
+       * 越稀有的材料，越要"多跑几趟才见一次"。
+       */
+      const base =
+        rareBonus > 0 && isRareMaterial(entry.item)
+          ? { ...entry, weight: entry.weight * (1 + rareBonus) }
+          : entry;
+      const multi = rareDropMultiplier(base.item);
+      return multi === 1 ? base : { ...base, weight: base.weight * multi };
+    });
   const guaranteed = def.loot.filter((entry) => entry.guaranteed);
   const picked: LootEntry[] = [...guaranteed, ...weightedDraw(pool, getLootRolls(def, partySize), random)];
 
@@ -1272,6 +1291,24 @@ export function resolveSurvey(
 /* ------------------------------------------------------------------ */
 
 /** 探索速度倍率：丹药增益 × 器物 × 建筑（灵舟坊） */
+/**
+ * 稀有材料的掉落权重倍率（第 33 轮需求 7）。
+ *
+ * 玩家原话：「稀有材料里面，各个材料的掉落率降低，
+ * 且越是在高境界需要的材料，掉落概率越低」。
+ *
+ * 按 `RARE_MATERIAL_IDS` 的**位次**衰减：位次 0 约 ×0.60，往后每级再 ×0.72。
+ * 那张表的顺序就是"解锁顺序，越靠后越稀有"，所以位次即"境界段"，
+ * 不必给几十处秘境的掉落表一一改权重。
+ *
+ * 非稀有材料返回 1（不受影响）。
+ */
+export function rareDropMultiplier(item: string): number {
+  const idx = (RARE_MATERIAL_IDS as readonly string[]).indexOf(item);
+  if (idx < 0) return 1;
+  return RARE_DROP_BASE * RARE_DROP_FALLOFF ** idx;
+}
+
 export function getExpeditionSpeed(state: GameState): number {
   const artifacts = getArtifactBonuses(state);
   const buildings = getStructureBonus(state, 'expeditionSpeedBonus');

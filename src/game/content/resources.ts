@@ -420,3 +420,14 @@ export const TIER_NAMES = [
 export function tierName(tier: number): string {
   return TIER_NAMES[tier] ?? `${tier}品`;
 }
+
+/**
+ * 稀有材料的掉落权重（第 33 轮需求 7）。
+ *
+ * 玩家原话：「稀有材料里面，各个材料的掉落率降低，且越是在高境界需要的材料，
+ * 掉落概率越低」。权重按 RARE_MATERIAL_IDS 的位次逐级衰减：位次 0 乘 RARE_DROP_BASE，
+ * 之后每级再乘 RARE_DROP_FALLOFF。改这两个数就能整体调松/调紧，
+ * 不必去动几十处秘境的掉落表。
+ */
+export const RARE_DROP_BASE = 0.6;
+export const RARE_DROP_FALLOFF = 0.72;

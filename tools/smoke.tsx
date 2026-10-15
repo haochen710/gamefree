@@ -9094,6 +9094,40 @@ section('[62] 大境界突破的文字解说（第 33 轮需求 1）');
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* 63. 第 33 轮需求 7：稀有材料掉落率降低、越高境界越低                  */
+/* ------------------------------------------------------------------ */
+section('[63] 稀有材料掉落权重（第 33 轮需求 7）');
+{
+  /*
+   * 玩家原话：「稀有材料里面，各个材料的掉落率降低，
+   * 且越是在高境界需要的材料，掉落概率越低」。
+   *
+   * 实现只用一条规则：按 RARE_MATERIAL_IDS 的位次逐级衰减
+   * （位次 0 乘 RARE_DROP_BASE，之后每级再乘 RARE_DROP_FALLOFF）。
+   * 所以断言也只盯这条规则的两个性质：**都变低了**、**越后越低**。
+   */
+  const first = expeditions.rareDropMultiplier(RARE_MATERIAL_IDS[0]);
+  check('最靠前的稀有材料掉落率也被压低（< 1）', first < 1, `×${first.toFixed(3)}`);
+
+  let monotonic = true;
+  const seen: string[] = [];
+  for (let i = 0; i < RARE_MATERIAL_IDS.length; i += 1) {
+    const m = expeditions.rareDropMultiplier(RARE_MATERIAL_IDS[i]);
+    seen.push(m.toFixed(2));
+    if (i > 0 && m >= expeditions.rareDropMultiplier(RARE_MATERIAL_IDS[i - 1])) monotonic = false;
+  }
+  check('越靠后（越高境界才需要）的稀有材料，掉落率越低', monotonic, seen.join(' / '));
+
+  const last = expeditions.rareDropMultiplier(RARE_MATERIAL_IDS[RARE_MATERIAL_IDS.length - 1]);
+  check('最后一种稀有材料明显更难掉（不到最前的三分之一）', last < first / 3, `×${last.toFixed(4)}`);
+
+  check(
+    '非稀有材料不受影响（倍率恒为 1）',
+    expeditions.rareDropMultiplier('herb') === 1 && expeditions.rareDropMultiplier('qi') === 1,
+  );
+}
+
 console.log('');
 console.log('='.repeat(64));
 if (!passed) {
