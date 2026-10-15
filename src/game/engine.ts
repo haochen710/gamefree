@@ -2307,6 +2307,10 @@ export function produceFatePoints(state: GameState, dt: number): GameState {
   if (dt <= 0) return state;
   if ((state.buildings.observatory ?? 0) <= 0) return state;
   const level = Math.max(1, Math.min(state.observatoryLevel, OBSERVATORY_MAX_LEVEL));
+  /*
+   * ⚠️ 玩家明确要求产出速度**不要**改（"我就是要控制游戏速度"），
+   * 所以这里是**线性**的 0.1 × 等级 —— 与花费的每级 ×10 形成刻意的落差。
+   */
   return { ...state, fatePoints: state.fatePoints + FATE_PER_SECOND * level * dt };
 }
 

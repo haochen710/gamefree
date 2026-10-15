@@ -9246,9 +9246,14 @@ section('[65] 观天楼与天机点（第 33 轮需求 5）');
 
   const withObs: GameState = { ...forceBuild(bare, 'observatory', 1), observatoryLevel: 1 };
   const produced = engine.produceFatePoints(withObs, 100);
+  /*
+   * ⚠️ 玩家明确要求过：「天机点的产出速度别改，我就是要控制游戏速度」。
+   * 所以这里是 1 级观天楼 0.1/秒、**按等级线性** —— 100 秒 = 10 点。
+   * 产出慢、花费按境界每级 ×10，是**刻意的节奏闸门**。
+   */
   check('建了观天楼就按 0.1/秒 攒天机点', Math.abs(produced.fatePoints - 10) < 1e-9, String(produced.fatePoints));
   check(
-    '等级越高产得越快（等级 3 = 三倍）',
+    '等级越高产得越快（线性：3 级 = 三倍 = 30 点）',
     Math.abs(engine.produceFatePoints({ ...withObs, observatoryLevel: 3 }, 100).fatePoints - 30) < 1e-9,
   );
 
@@ -9268,7 +9273,9 @@ section('[65] 观天楼与天机点（第 33 轮需求 5）');
 
   /* 参悟：同样要烧天机点，费用按品阶递增 */
   check('参悟费用按品阶递增', manuals.contemplateFateCost(1) < manuals.contemplateFateCost(5));
-  check('最低品阶也要 1 点天机', manuals.contemplateFateCost(1) === 1, String(manuals.contemplateFateCost(1)));
+  /* 第 33 轮调参：凡品 10000 起，每品阶 ×10 */
+  check('凡品参悟要 10000 点', manuals.contemplateFateCost(1) === 10000, String(manuals.contemplateFateCost(1)));
+  check('每高一个品阶贵 10 倍', manuals.contemplateFateCost(2) === 100000 && manuals.contemplateFateCost(5) === 1e8);
 
   /* 存档往返 */
   const saved = deserialize(

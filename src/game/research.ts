@@ -10,7 +10,8 @@
  */
 import {
   // 第 33 轮需求 5：钻研额外消耗天机点
-  FATE_COST_RESEARCH_PER_REALM,
+  FATE_COST_RESEARCH_BASE,
+  FATE_COST_RESEARCH_GROWTH,
   REALMS,
   TECH_MAP,
   type TechDef,
@@ -75,7 +76,7 @@ export function canStartResearch(state: GameState, id: string): ResearchCheck {
 
 /** 钻研一项技术要多少天机点（第 33 轮需求 5） */
 export function researchFateCost(def: TechDef): number {
-  return (def.requiresRealm + 1) * FATE_COST_RESEARCH_PER_REALM;
+  return FATE_COST_RESEARCH_BASE * FATE_COST_RESEARCH_GROWTH ** def.requiresRealm;
 }
 
 export function startResearch(state: GameState, id: string): GameState {
