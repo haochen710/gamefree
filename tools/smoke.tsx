@@ -12,6 +12,20 @@
  *
  *     pnpm smoke
  */
+/// <reference types="node" />
+/*
+ * ⚠️ 上面那行**只给本文件**引入 Node 类型。
+ *
+ * `tsconfig` 的 `types: ["vite/client"]` 是白名单，默认不装 Node 类型 ——
+ * 而前端代码本来也不该看见 `fs` / `process` 这些东西。
+ * 但**测试**需要读源码：见第 60 节，按钮的 onClick 在 `renderToString` 的输出里
+ * 是看不到的，只能扫源码。所以按需在这一行引用，
+ * 而不是把 "node" 加进 tsconfig 去污染整个项目。
+ *
+ * 第 30 轮收尾时我因为这条限制放弃了源码级守卫（当时只写了"共享常量 + 断言其值"）；
+ * 玩家同意加开发依赖之后，真正的源码级守卫补在了第 60 节。
+ */
+import { readFileSync } from 'node:fs';
 import { renderToString } from 'react-dom/server';
 import type React from 'react';
 import App from '../src/App';
@@ -8884,17 +8898,48 @@ section('[60] 合成 / 炼制 / 绘制 都是"按一下做一份"（第 30 轮�
    * 这条规则我已经**反复过一次**：
    *   第 27 轮把「炼制 / 合成」做成"把能做的全都做掉"；
    *   第 30 轮玩家反馈"按一下会炼制很多"，才改回"一份"。
+   * 更糟的是那次**只改了一半**：四处里改了三处，合成漏网（玩家第二次指出）。
    *
-   * 所以四个按钮现在共用 `CRAFT_PER_CLICK` 这一个常量，而不是各自写字面量 ——
-   * 这样"一次做几份"只有一处定义，改的时候不可能只改一半
-   * （第 30 轮就出现过"行为改了、title/注释没跟上"）。
+   * 所以这里做两层防护：
+   *   ① 四个按钮共用 `CRAFT_PER_CLICK`（一处定义，不可能只改一半）；
+   *   ② **源码级**断言：直接读四个组件、检查 onClick 传的就是这个常量。
    *
-   * ⚠️ 我原本想写一条**源码级**断言直接扫 onClick（SSR 输出里看不到事件处理器），
-   * 但本项目 `tsconfig` 只装了 `vite/client` 类型、没有 `@types/node`，
-   * `node:fs` 过不了 typecheck —— 而我不该为了一个测试去加依赖。
-   * 所以退而求其次：**共享常量 + 在这里钉住它的值**。
+   * 为什么必须扫源码：按钮的点击行为在 `renderToString` 的输出里**看不到**
+   * （SSR 不输出事件处理器），而"按一下做几份"恰恰只在 onClick 里。
+   * 这也正是为什么这一节需要 `fs`（见文件顶部的三斜线引用）。
    */
   check('按一下做一份（CRAFT_PER_CLICK === 1）', CRAFT_PER_CLICK === 1, String(CRAFT_PER_CLICK));
+
+  const buttons: { file: string; call: string; label: string }[] = [
+    { file: 'AlchemyPanel.tsx', call: 'craftPill(pill.id,', label: '炼丹·炼制' },
+    { file: 'RefiningPanel.tsx', call: 'craftArtifact(artifact.id,', label: '炼器·炼制' },
+    { file: 'TalismanPanel.tsx', call: 'craft(def.id,', label: '制符·绘制' },
+    { file: 'RefinePanel.tsx', call: 'doRefine(recipe.id,', label: '工坊·合成' },
+  ];
+
+  for (const b of buttons) {
+    /*
+     * ⚠️ 路径用 `process.cwd()` 拼，而不是 `new URL(..., import.meta.url)` ——
+     * 冒烟是**打成 CJS**（`tools/.smoke.cjs`）再跑的，`import.meta.url` 在那里是
+     * undefined，`new URL(相对路径, undefined)` 会直接抛 `ERR_INVALID_URL`。
+     * `pnpm smoke` 固定从项目根目录跑，所以 cwd 就是仓库根。
+     */
+    const source = readFileSync(`${process.cwd()}/src/components/${b.file}`, 'utf8');
+    /*
+     * ⚠️ 只看**带 onClick 的那一行**。
+     *
+     * 第一次写这条时用的是"第一行含 `doRefine(recipe.id,` 的"——
+     * 结果命中了注释里的旧代码（`* 原来这里是 doRefine(recipe.id, max) ...`），
+     * 于是断言假红。**注释里提到被替换掉的旧调用是很常见的**，
+     * 所以判据必须落在"真正会执行的那一行"上。
+     */
+    const line = source.split(/\r?\n/).find((l) => l.includes('onClick') && l.includes(b.call));
+    check(
+      `${b.label} 的按钮只做一份（源码级）`,
+      line !== undefined && line.includes('CRAFT_PER_CLICK'),
+      line?.trim() ?? `没找到 ${b.call}`,
+    );
+  }
 }
 
 console.log('');
