@@ -111,6 +111,8 @@ import {
   GIFT_OPTIONS,
   FAME_TIERS,
   FAME_GAIN_CAP,
+  // 第 33 轮需求 6：要核声望货架的碎片权重占比
+  FAME_GOODS,
   ENDING_MAP,
   ENDINGS,
   FARM_TALENTS,
@@ -9009,6 +9011,34 @@ section('[60] 合成 / 炼制 / 绘制 都是"按一下做一份"（第 30 轮�
       line?.trim() ?? `没找到 ${b.call}`,
     );
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 61. 第 33 轮：声望商店不该是功法碎片的主要来源                        */
+/* ------------------------------------------------------------------ */
+section('[61] 声望商店的碎片权重被压低（第 33 轮需求 6）');
+{
+  /*
+   * 玩家原话：「宗门声望商店刷新功法碎片的概率降低，
+   * 功法碎片主要来源应该是领悟功法」。
+   *
+   * 判据用**权重占比**（货架是按权重不放回抽的，所以占比就是"露面的可能性"）：
+   * 碎片的总权重必须明显低于三成 —— 主要来源留给藏经阁的参悟 / 领悟。
+   */
+  const fragments = FAME_GOODS.filter((g) => g.kind === 'fragment');
+  const totalW = FAME_GOODS.reduce((s, g) => s + g.weight, 0);
+  const fragW = fragments.reduce((s, g) => s + g.weight, 0);
+  const share = totalW > 0 ? fragW / totalW : 1;
+  check(
+    '碎片总权重不到三成（第 33 轮需求 6）',
+    share < 0.3,
+    `${fragW}/${totalW} = ${(share * 100).toFixed(1)}%`,
+  );
+  check(
+    '碎片权重确实被压低过（不再是 10/8/6/4）',
+    fragments.length === 4 && fragments.every((g) => g.weight <= 3),
+    fragments.map((g) => String(g.weight)).join('/'),
+  );
 }
 
 console.log('');

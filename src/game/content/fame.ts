@@ -162,7 +162,7 @@ export const FAME_GOODS: FameGoodDef[] = [
     desc: '随机一本凡品功法的碎片 ×2。',
     price: 60,
     amount: 2,
-    weight: 10,
+    weight: 3,
   },
   {
     id: 'fameFragmentFine',
@@ -172,7 +172,7 @@ export const FAME_GOODS: FameGoodDef[] = [
     desc: '随机一本良品功法的碎片 ×2。',
     price: 140,
     amount: 2,
-    weight: 8,
+    weight: 2,
   },
   {
     id: 'fameFragmentRare',
@@ -183,7 +183,7 @@ export const FAME_GOODS: FameGoodDef[] = [
     price: 320,
     amount: 2,
     minTier: 'known',
-    weight: 6,
+    weight: 2,
   },
   {
     id: 'fameFragmentEpic',
@@ -194,7 +194,7 @@ export const FAME_GOODS: FameGoodDef[] = [
     price: 700,
     amount: 2,
     minTier: 'power',
-    weight: 4,
+    weight: 1,
   },
   {
     id: 'fameMaterialStarSand',
